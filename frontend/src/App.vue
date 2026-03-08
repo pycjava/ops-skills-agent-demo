@@ -5,6 +5,7 @@ import MessageBubble from './components/MessageBubble.vue'
 import SkillPanel from './components/SkillPanel.vue'
 import ConversationList from './components/ConversationList.vue'
 import MemoryPanel from './components/MemoryPanel.vue'
+import McpPanel from './components/McpPanel.vue'
 import { getMillisecondsUntilNextShanghaiMidnight, resolveGreeting } from './utils/greeting'
 
 const chatStore = useChatStore()
@@ -25,7 +26,7 @@ const showSidebar = ref(true)
 const isDark = ref(storedTheme === 'dark')
 const showInspector = ref(false)
 const showAgentOverflowMenu = ref(false)
-const rightPanelTab = ref<'skills' | 'memory'>('skills')
+const rightPanelTab = ref<'skills' | 'mcp' | 'memory'>('skills')
 const currentTime = ref(new Date())
 const pendingMemoryOpenPath = ref<string | null>(null)
 const visibleAgentCount = ref(Number.POSITIVE_INFINITY)
@@ -236,7 +237,7 @@ function handleWindowResize() {
   resizeComposerInput()
 }
 
-function openInspector(tab: 'skills' | 'memory' = 'skills') {
+function openInspector(tab: 'skills' | 'mcp' | 'memory' = 'skills') {
   rightPanelTab.value = tab
   showInspector.value = true
 }
@@ -269,6 +270,7 @@ onMounted(async () => {
   await chatStore.fetchAgents()
   await chatStore.fetchConversations()
   await chatStore.fetchSkills()
+  await chatStore.fetchMcpServers()
   await nextTick()
   resizeComposerInput()
   recalculateVisibleAgents()
@@ -667,6 +669,13 @@ watch(scrollTrigger, async () => {
                 </button>
                 <button
                   class="inspector-tab"
+                  :class="{ active: rightPanelTab === 'mcp' }"
+                  @click="rightPanelTab = 'mcp'"
+                >
+                  MCP
+                </button>
+                <button
+                  class="inspector-tab"
                   :class="{ active: rightPanelTab === 'memory' }"
                   @click="rightPanelTab = 'memory'"
                 >
@@ -681,6 +690,7 @@ watch(scrollTrigger, async () => {
 
             <div class="inspector-body">
               <SkillPanel v-if="rightPanelTab === 'skills'" :skills="chatStore.skills" />
+              <McpPanel v-else-if="rightPanelTab === 'mcp'" />
               <MemoryPanel
                 v-else
                 :nodes="chatStore.memoryTree"

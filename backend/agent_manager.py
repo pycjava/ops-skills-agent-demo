@@ -17,6 +17,7 @@ from agent_profiles import (
     list_agent_profiles,
 )
 from config import MODEL_NAME, PROJECT_DIR, SQLITE_PATH
+from services.mcp_registry import McpRegistryService
 from skill_catalog import resolve_skill_paths
 from utils.agent_backend import FriendlyLocalShellBackend
 from utils.logger import logger
@@ -50,6 +51,7 @@ class AgentManager:
         self._resource_stack: AsyncExitStack | None = None
         self._llm: ChatAnthropic | None = None
         self._runtimes: dict[str, Any] = {}
+        self._mcp_registry = McpRegistryService()
         self._init_lock = asyncio.Lock()
         self._runtime_lock = asyncio.Lock()
 
@@ -95,7 +97,7 @@ class AgentManager:
                 temperature=1,
                 thinking={"type": "enabled", "budget_tokens": 10000},
             )
-            logger.info("Multi-agent SQLite checkpointer + store 初始化完成")
+            logger.info("Multi-agent SQLite checkpointer + store initialized")
 
     async def close(self):
         if self._resource_stack is not None:
@@ -106,7 +108,12 @@ class AgentManager:
         self._resource_stack = None
         self._llm = None
         self._runtimes.clear()
-        logger.info("Multi-agent 运行时资源已关闭")
+        logger.info("Multi-agent runtime resources released")
+
+    async def invalidate_runtime_cache(self):
+        async with self._runtime_lock:
+            self._runtimes.clear()
+        logger.info("Deep Agent runtime cache invalidated")
 
     async def get_runtime(self, agent_id: str):
         profile = self.get_profile(agent_id)
@@ -121,26 +128,62 @@ class AgentManager:
             if cached is not None:
                 return cached
 
-            runtime = self._build_runtime(profile)
+            runtime = await self._build_runtime(profile)
             self._runtimes[profile.id] = runtime
             logger.info(
-                f"Deep Agent 初始化完成: agent_id={profile.id}, skills={list(profile.skills)}"
+                "Deep Agent initialized: "
+                f"agent_id={profile.id}, skills={list(profile.skills)}"
             )
             return runtime
 
-    def _build_runtime(self, profile: AgentProfile):
+    async def _build_runtime(self, profile: AgentProfile):
         if self._llm is None or self._sqlite_store is None or self._sqlite_saver is None:
-            raise RuntimeError("AgentManager 尚未初始化")
+            raise RuntimeError("AgentManager is not initialized")
 
+        mcp_tools = await self._load_mcp_tools(profile.id)
         return create_deep_agent(
             model=self._llm,
             system_prompt=self._compose_system_prompt(profile),
             skills=resolve_skill_paths(profile.skills),
+            tools=mcp_tools,
             store=self._sqlite_store,
             backend=self._make_backend,
             checkpointer=self._sqlite_saver,
             name=profile.id,
         )
+
+    async def _load_mcp_tools(self, agent_id: str) -> list[Any]:
+        try:
+            connections = await self._mcp_registry.get_agent_connections(agent_id)
+        except Exception as exc:
+            logger.warning(f"Failed to resolve MCP servers for agent {agent_id}: {exc}")
+            return []
+
+        if not connections:
+            return []
+
+        try:
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+        except Exception as exc:
+            logger.warning(f"Failed to import MCP adapters: {exc}")
+            return []
+
+        client = MultiServerMCPClient(connections, tool_name_prefix=True)
+        tools: list[Any] = []
+
+        for server_name in connections:
+            try:
+                server_tools = await client.get_tools(server_name=server_name)
+            except Exception as exc:
+                logger.warning(
+                    f"Skipping MCP server {server_name} for agent {agent_id}: {exc}"
+                )
+                continue
+            tools.extend(server_tools)
+
+        if tools:
+            logger.info(f"Loaded {len(tools)} MCP tools for agent {agent_id}")
+        return tools
 
     def _compose_system_prompt(self, profile: AgentProfile) -> str:
         project_root = Path(PROJECT_DIR)
@@ -152,7 +195,7 @@ class AgentManager:
                 content = prompt_path.read_text(encoding="utf-8").strip()
             except FileNotFoundError as exc:
                 raise RuntimeError(
-                    f"找不到 agent prompt 文件: {relative_path}"
+                    f"Missing agent prompt file: {relative_path}"
                 ) from exc
             if content:
                 sections.append(content)
@@ -174,9 +217,9 @@ class AgentManager:
             f"- 你的风险等级是：{profile.risk_level}。\n"
             f"- 当前执行模式是：{profile.execution_mode}。\n"
             f"- 当前允许的 handoff 目标：{allowed_handoffs}。\n"
-            f"- 当需要写入新的长期记忆时，优先写入 `{memory_root}`。\n"
-            "- 当前会话固定绑定到你这个 Agent；如果问题明显超出你的职责范围，应明确说明并建议切换 Agent。\n"
-            "- 你只能使用当前 runtime 已注入的 Skills，不要假装可以调用未授权技能。"
+            f"- 需要写入新的长期记忆时，优先写入 `{memory_root}`。\n"
+            "- 当前会话固定绑定到你这个 Agent；如果问题明显超出职责范围，应明确说明并建议切换 Agent。\n"
+            "- 你只能使用当前 runtime 已注入的 Skills 和工具，不要假装能够调用未授权能力。"
         )
 
     def _make_backend(self, runtime):

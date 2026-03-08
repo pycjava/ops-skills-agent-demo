@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agent import init_agent_runtime, list_agent_profiles
-from api.routers import agent, agents, conversations, memories, skills
+from api.routers import agent, agents, conversations, mcp, memories, skills
 from api.ws import chat
 from config import ANTHROPIC_API_KEY, SKILLS_DIR
 from db.session import close_db, init_db
@@ -60,6 +60,7 @@ async def shutdown():
 app.include_router(conversations.router)
 app.include_router(agents.router)
 app.include_router(skills.router)
+app.include_router(mcp.router)
 app.include_router(agent.router)
 app.include_router(memories.router)
 app.include_router(chat.router)

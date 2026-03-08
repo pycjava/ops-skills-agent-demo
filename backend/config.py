@@ -23,6 +23,7 @@ SKILLS_DIR = str(BASE_DIR / "skills")
 # Agent 配置
 MODEL_NAME = os.getenv("MODEL_NAME", "claude-sonnet-4-5-20250929")
 MAX_TURNS = int(os.getenv("MAX_TURNS", "10"))
+MCP_DEFAULT_TIMEOUT_SECONDS = 15.0
 
 # ─── SQLite 配置 ──────────────────────────────────────
 DEFAULT_SQLITE_PATH = "data/app.db"

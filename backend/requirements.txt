@@ -1,5 +1,6 @@
 deepagents>=0.4.7,<0.5
 langchain-anthropic>=0.3.0
+langchain-mcp-adapters>=0.1.8
 fastapi>=0.115.0
 uvicorn[standard]>=0.34.0
 websockets>=14.0

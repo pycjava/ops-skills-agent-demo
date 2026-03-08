@@ -46,6 +46,10 @@ async def close_agent_runtime():
     await _manager.close()
 
 
+async def invalidate_runtime_cache():
+    await _manager.invalidate_runtime_cache()
+
+
 async def get_runtime(agent_id: str):
     return await _manager.get_runtime(agent_id)
 
