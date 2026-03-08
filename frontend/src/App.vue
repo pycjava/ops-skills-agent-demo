@@ -8,30 +8,29 @@ import MemoryPanel from './components/MemoryPanel.vue'
 import { getMillisecondsUntilNextShanghaiMidnight, resolveGreeting } from './utils/greeting'
 
 const chatStore = useChatStore()
+const HOME_COMPOSER_MIN_HEIGHT = 48
+const HOME_COMPOSER_MAX_HEIGHT = 320
+const CHAT_COMPOSER_MIN_HEIGHT = 36
+const CHAT_COMPOSER_MAX_HEIGHT = 220
 
 const storedTheme = localStorage.getItem('theme')
 const inputText = ref('')
+const composerInput = ref<HTMLTextAreaElement | null>(null)
 const chatContainer = ref<HTMLElement | null>(null)
+const agentSelector = ref<HTMLElement | null>(null)
+const agentSelectorWrap = ref<HTMLElement | null>(null)
+const moreMeasureRef = ref<HTMLElement | null>(null)
+const agentMeasureRefs = ref<HTMLElement[]>([])
 const showSidebar = ref(true)
 const isDark = ref(storedTheme === 'dark')
 const showInspector = ref(false)
+const showAgentOverflowMenu = ref(false)
 const rightPanelTab = ref<'skills' | 'memory'>('skills')
 const currentTime = ref(new Date())
+const pendingMemoryOpenPath = ref<string | null>(null)
+const visibleAgentCount = ref(Number.POSITIVE_INFINITY)
 
-const quickPrompts = [
-  {
-    label: '查看目录',
-    prompt: '帮我查看当前目录下的文件列表',
-  },
-  {
-    label: '读取 hosts',
-    prompt: '读取 /etc/hosts 文件的内容',
-  },
-  {
-    label: '系统信息',
-    prompt: '查看当前系统信息',
-  },
-]
+const quickPrompts: Array<{ label: string; prompt: string }> = []
 
 const showMentions = ref(false)
 const mentionSearch = ref('')
@@ -44,6 +43,8 @@ const agentLabels = computed(() =>
 const activeAgentLabel = computed(
   () => chatStore.activeAgent?.label || agentLabels.value[chatStore.activeAgentId] || chatStore.activeAgentId,
 )
+const visibleAgents = computed(() => chatStore.agents.slice(0, visibleAgentCount.value))
+const overflowAgents = computed(() => chatStore.agents.slice(visibleAgentCount.value))
 
 const filteredSkills = computed(() => {
   if (!showMentions.value) return []
@@ -110,6 +111,8 @@ function scrollActiveIntoView() {
 }
 
 function handleInput() {
+  resizeComposerInput()
+
   const value = inputText.value
   const match = value.match(/@([\w-]*)$/)
   if (match) {
@@ -125,10 +128,112 @@ function handleInput() {
 function selectMention(skillName: string) {
   inputText.value = inputText.value.replace(/@([\w-]*)$/, `@${skillName} `)
   showMentions.value = false
+  nextTick(() => resizeComposerInput())
 }
 
 function sendQuickPrompt(prompt: string) {
   chatStore.sendMessage(prompt)
+}
+
+function resizeComposerInput() {
+  const textarea = composerInput.value
+  if (!textarea) return
+
+  const minHeight = hasMessages.value ? CHAT_COMPOSER_MIN_HEIGHT : HOME_COMPOSER_MIN_HEIGHT
+  const maxHeight = hasMessages.value ? CHAT_COMPOSER_MAX_HEIGHT : HOME_COMPOSER_MAX_HEIGHT
+
+  textarea.style.height = 'auto'
+
+  const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)
+  textarea.style.height = `${nextHeight}px`
+  textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
+}
+
+function setAgentMeasureRef(element: unknown, index: number) {
+  const target =
+    element instanceof HTMLElement
+      ? element
+      : element &&
+          typeof element === 'object' &&
+          '$el' in element &&
+          element.$el instanceof HTMLElement
+        ? element.$el
+        : null
+
+  if (!target) return
+  agentMeasureRefs.value[index] = target
+}
+
+function closeAgentOverflowMenu() {
+  showAgentOverflowMenu.value = false
+}
+
+function toggleAgentOverflowMenu() {
+  showAgentOverflowMenu.value = !showAgentOverflowMenu.value
+}
+
+function selectAgent(agentId: string) {
+  chatStore.setDraftAgent(agentId)
+  closeAgentOverflowMenu()
+}
+
+function recalculateVisibleAgents() {
+  nextTick(() => {
+    if (!agentSelector.value) {
+      visibleAgentCount.value = chatStore.agents.length
+      return
+    }
+
+    const containerWidth = agentSelector.value.clientWidth
+    const gap = 10
+    const itemWidths = chatStore.agents
+      .map((_, index) => agentMeasureRefs.value[index]?.offsetWidth ?? 0)
+      .filter((width) => width > 0)
+
+    if (itemWidths.length === 0) {
+      visibleAgentCount.value = chatStore.agents.length
+      return
+    }
+
+    const moreWidth = moreMeasureRef.value?.offsetWidth ?? 0
+    let usedWidth = 0
+    let count = 0
+
+    for (let index = 0; index < itemWidths.length; index += 1) {
+      const itemWidth = itemWidths[index] ?? 0
+      const nextWidth = usedWidth + (count > 0 ? gap : 0) + itemWidth
+      const hasHiddenItems = index < itemWidths.length - 1
+      const reservedForMore = hasHiddenItems ? gap + moreWidth : 0
+
+      if (nextWidth + reservedForMore <= containerWidth) {
+        usedWidth = nextWidth
+        count += 1
+        continue
+      }
+
+      break
+    }
+
+    if (count === 0 && chatStore.agents.length > 0) {
+      visibleAgentCount.value = 1
+      return
+    }
+
+    visibleAgentCount.value = count
+  })
+}
+
+function handleDocumentClick(event: MouseEvent) {
+  if (!showAgentOverflowMenu.value) return
+  const target = event.target
+  if (!(target instanceof Node)) return
+  if (agentSelectorWrap.value?.contains(target)) return
+  closeAgentOverflowMenu()
+}
+
+function handleWindowResize() {
+  recalculateVisibleAgents()
+  resizeComposerInput()
 }
 
 function openInspector(tab: 'skills' | 'memory' = 'skills') {
@@ -140,23 +245,66 @@ function closeInspector() {
   showInspector.value = false
 }
 
+async function handleOpenMemory(path: string) {
+  if (!path.startsWith('/memories/')) return
+
+  pendingMemoryOpenPath.value = path
+  rightPanelTab.value = 'memory'
+  showInspector.value = true
+
+  try {
+    await nextTick()
+    await chatStore.openMemoryDocument(path)
+  } finally {
+    pendingMemoryOpenPath.value = null
+  }
+}
+
 onMounted(async () => {
   document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
   syncGreetingClock()
+  document.addEventListener('click', handleDocumentClick)
+  window.addEventListener('resize', handleWindowResize)
   chatStore.connect()
   await chatStore.fetchAgents()
   await chatStore.fetchConversations()
   await chatStore.fetchSkills()
+  await nextTick()
+  resizeComposerInput()
+  recalculateVisibleAgents()
 })
 
 onBeforeUnmount(() => {
   clearGreetingRefreshTimer()
+  document.removeEventListener('click', handleDocumentClick)
+  window.removeEventListener('resize', handleWindowResize)
 })
 
 watch([rightPanelTab, showInspector], ([tab, visible]) => {
-  if (visible && tab === 'memory') {
+  if (visible && tab === 'memory' && !pendingMemoryOpenPath.value) {
     chatStore.fetchMemoryTree(true)
   }
+})
+
+watch(
+  () => chatStore.agents.map((agent) => `${agent.id}:${agent.label}`).join('|'),
+  () => {
+    showAgentOverflowMenu.value = false
+    agentMeasureRefs.value = []
+    recalculateVisibleAgents()
+  },
+)
+
+watch(showSidebar, () => {
+  recalculateVisibleAgents()
+})
+
+watch(inputText, () => {
+  nextTick(() => resizeComposerInput())
+})
+
+watch(hasMessages, () => {
+  nextTick(() => resizeComposerInput())
 })
 
 function toggleTheme() {
@@ -311,22 +459,6 @@ watch(scrollTrigger, async () => {
         <div class="hero-panel">
           <h1 class="hero-title">{{ heroTitle }}</h1>
 
-          <div v-if="chatStore.agents.length > 0" class="agent-selector">
-            <span class="agent-selector-label">新对话 Agent</span>
-            <div class="agent-selector-list">
-              <button
-                v-for="agent in chatStore.agents"
-                :key="agent.id"
-                class="agent-selector-item"
-                :class="{ active: agent.id === chatStore.draftAgentId }"
-                @click="chatStore.setDraftAgent(agent.id)"
-              >
-                <span class="agent-selector-name">{{ agent.label }}</span>
-                <span class="agent-selector-id">{{ agent.id }}</span>
-              </button>
-            </div>
-          </div>
-
           <div class="composer composer-home">
             <div v-if="showMentions && filteredSkills.length > 0" class="mentions-popup">
               <div
@@ -343,10 +475,11 @@ watch(scrollTrigger, async () => {
             </div>
 
             <textarea
+              ref="composerInput"
               v-model="inputText"
               class="composer-input composer-input-home"
               :placeholder="inputPlaceholder"
-              rows="4"
+              rows="1"
               :disabled="!chatStore.isConnected"
               @keydown="handleKeyDown"
               @input="handleInput"
@@ -369,7 +502,67 @@ watch(scrollTrigger, async () => {
             </div>
           </div>
 
-          <div class="quick-actions">
+          <div v-if="chatStore.agents.length > 0" ref="agentSelectorWrap" class="agent-selector">
+            <div ref="agentSelector" class="agent-selector-list">
+              <button
+                v-for="agent in visibleAgents"
+                :key="agent.id"
+                class="agent-selector-item"
+                :class="{ active: agent.id === chatStore.draftAgentId }"
+                @click="selectAgent(agent.id)"
+              >
+                <span class="agent-selector-name">{{ agent.label }}</span>
+                <span class="agent-selector-id">{{ agent.id }}</span>
+              </button>
+
+              <div v-if="overflowAgents.length > 0" class="agent-overflow">
+                <button
+                  class="agent-selector-item agent-selector-more"
+                  :class="{ active: showAgentOverflowMenu }"
+                  @click.stop="toggleAgentOverflowMenu"
+                >
+                  <span class="agent-selector-name">更多</span>
+                  <span class="agent-selector-arrow">⌄</span>
+                </button>
+
+                <div v-if="showAgentOverflowMenu" class="agent-overflow-menu">
+                  <button
+                    v-for="agent in overflowAgents"
+                    :key="agent.id"
+                    class="agent-overflow-item"
+                    :class="{ active: agent.id === chatStore.draftAgentId }"
+                    @click="selectAgent(agent.id)"
+                  >
+                    <span class="agent-selector-name">{{ agent.label }}</span>
+                    <span class="agent-selector-id">{{ agent.id }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="agent-measure" aria-hidden="true">
+              <button
+                v-for="(agent, index) in chatStore.agents"
+                :key="`${agent.id}-measure`"
+                :ref="(element) => setAgentMeasureRef(element, index)"
+                class="agent-selector-item agent-selector-measure"
+                tabindex="-1"
+              >
+                <span class="agent-selector-name">{{ agent.label }}</span>
+                <span class="agent-selector-id">{{ agent.id }}</span>
+              </button>
+              <button
+                ref="moreMeasureRef"
+                class="agent-selector-item agent-selector-more agent-selector-measure"
+                tabindex="-1"
+              >
+                <span class="agent-selector-name">更多</span>
+                <span class="agent-selector-arrow">⌄</span>
+              </button>
+            </div>
+          </div>
+
+          <div v-if="quickPrompts.length > 0" class="quick-actions">
             <button
               v-for="item in quickPrompts"
               :key="item.label"
@@ -397,6 +590,7 @@ watch(scrollTrigger, async () => {
               v-for="message in chatStore.messages"
               :key="message.id"
               :message="message"
+              @open-memory="handleOpenMemory"
             />
 
             <div v-if="chatStore.isLoading" class="typing-indicator">
@@ -423,10 +617,11 @@ watch(scrollTrigger, async () => {
             </div>
 
             <textarea
+              ref="composerInput"
               v-model="inputText"
               class="composer-input composer-input-chat"
               :placeholder="inputPlaceholder"
-              rows="2"
+              rows="1"
               :disabled="!chatStore.isConnected"
               @keydown="handleKeyDown"
               @input="handleInput"
@@ -733,7 +928,7 @@ input {
     'Songti SC',
     'STSong',
     serif;
-  font-size: clamp(38px, 5vw, 66px);
+  font-size: clamp(28px, 4.0vw, 50px);
   font-weight: 500;
   letter-spacing: 0.02em;
   text-align: center;
@@ -744,19 +939,17 @@ input {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.agent-selector-label {
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  position: relative;
 }
 
 .agent-selector-list {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
   gap: 10px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .agent-selector-item {
@@ -773,6 +966,8 @@ input {
     transform 0.15s ease,
     border-color 0.15s ease,
     background 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .agent-selector-item:hover {
@@ -785,6 +980,78 @@ input {
   border-color: rgba(139, 115, 255, 0.35);
   background: rgba(139, 115, 255, 0.12);
   color: var(--text-strong);
+}
+
+.agent-selector-more {
+  gap: 6px;
+}
+
+.agent-selector-arrow {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.agent-overflow {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.agent-overflow-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 180px;
+  max-width: min(320px, 80vw);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--card-strong);
+  box-shadow: var(--shadow-card);
+  z-index: 12;
+}
+
+.agent-overflow-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.agent-overflow-item:hover {
+  background: var(--hover);
+}
+
+.agent-overflow-item.active {
+  background: rgba(139, 115, 255, 0.12);
+  color: var(--text-strong);
+}
+
+.agent-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+  height: 0;
+  overflow: hidden;
+}
+
+.agent-selector-measure {
+  transform: none !important;
 }
 
 .agent-selector-name {
@@ -835,16 +1102,19 @@ input {
   background: transparent;
   color: var(--text-strong);
   line-height: 1.75;
+  overflow-y: hidden;
+  display: block;
 }
 
 .composer-input-home {
-  min-height: 150px;
+  min-height: 48px;
+  max-height: 320px;
   font-size: 18px;
 }
 
 .composer-input-chat {
-  min-height: 72px;
-  max-height: 180px;
+  min-height: 36px;
+  max-height: 220px;
   font-size: 16px;
 }
 
@@ -1164,7 +1434,7 @@ input {
   }
 
   .hero-title {
-    font-size: clamp(32px, 4vw, 48px);
+    font-size: clamp(28px, 3.6vw, 40px);
   }
 }
 

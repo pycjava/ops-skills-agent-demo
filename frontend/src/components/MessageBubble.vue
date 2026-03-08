@@ -5,6 +5,9 @@ import type { ArtifactKind, ChatMessage } from '../stores/chat'
 import { useChatStore } from '../stores/chat'
 
 const chatStore = useChatStore()
+const emit = defineEmits<{
+  (e: 'open-memory', path: string): void
+}>()
 
 const props = defineProps<{
   message: ChatMessage
@@ -138,16 +141,11 @@ function downloadArtifact() {
   URL.revokeObjectURL(url)
 }
 
-async function openMemoryArtifact() {
-  if (!fileArtifact.value || fileArtifact.value.kind !== 'memory') return
-  await chatStore.openMemoryDocument(fileArtifact.value.path)
-}
-
 function handleArtifactAction() {
   if (!fileArtifact.value) return
 
   if (fileArtifact.value.kind === 'memory') {
-    void openMemoryArtifact()
+    emit('open-memory', fileArtifact.value.path)
     return
   }
 
