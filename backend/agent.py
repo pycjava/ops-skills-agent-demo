@@ -5,18 +5,18 @@
 """
 
 import os
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
-from langchain_core.messages import HumanMessage
-from langchain_anthropic import ChatAnthropic
 from deepagents import create_deep_agent
 from deepagents.backends import LocalShellBackend, CompositeBackend, StoreBackend
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.store.postgres import AsyncPostgresStore
-from psycopg_pool import AsyncConnectionPool
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.store.sqlite.aio import AsyncSqliteStore
 
-from config import MODEL_NAME, PROJECT_DIR, MAX_TURNS, DATABASE_URL_SYNC
+from config import MAX_TURNS, MODEL_NAME, PROJECT_DIR, SQLITE_PATH
 from utils.logger import logger
 
 
@@ -50,13 +50,15 @@ def _build_shell_env_overrides() -> dict[str, str]:
 
     candidate_bins = [
         project_dir / ".venv" / "bin",  # backend/.venv/bin
+        project_dir / ".venv" / "Scripts",  # backend/.venv/Scripts (Windows)
         project_dir.parent / ".venv" / "bin",  # repo/.venv/bin
+        project_dir.parent / ".venv" / "Scripts",  # repo/.venv/Scripts (Windows)
     ]
     existing_bins = [str(p) for p in candidate_bins if p.exists()]
 
     if existing_bins:
         path_items = existing_bins + ([current_path] if current_path else [])
-        overrides["PATH"] = ":".join(path_items)
+        overrides["PATH"] = os.pathsep.join(path_items)
         overrides["VIRTUAL_ENV"] = str(Path(existing_bins[0]).parent)
 
     return overrides
@@ -64,35 +66,46 @@ def _build_shell_env_overrides() -> dict[str, str]:
 
 # ─── 持久化存储（延迟异步初始化） ──────────────────────────────
 
-# 异步版本需要在 async 上下文中初始化，在 FastAPI startup 中调用 init_pg()
-_pg_saver: AsyncPostgresSaver | None = None
-_pg_store: AsyncPostgresStore | None = None
+# 异步版本需要在 async 上下文中初始化，在 FastAPI startup 中调用 init_agent_runtime()
+_sqlite_saver: AsyncSqliteSaver | None = None
+_sqlite_store: AsyncSqliteStore | None = None
+_resource_stack: AsyncExitStack | None = None
 _agent = None
 
 
-async def init_pg():
-    """在 FastAPI startup 中调用，异步初始化 PostgresSaver 和 PostgresStore"""
-    global _pg_saver, _pg_store, _agent
+def get_memory_store() -> AsyncSqliteStore | None:
+    return _sqlite_store
 
-    # 手动创建连接池，由我们控制生命周期（不使用 from_conn_string 的上下文管理器）
-    # autocommit=True: LangGraph setup() 会执行 CREATE INDEX CONCURRENTLY，
-    # 该语句不能在事务块内运行，必须开启 autocommit
-    pool = AsyncConnectionPool(
-        conninfo=DATABASE_URL_SYNC,
-        open=False,
-        kwargs={"autocommit": True},
-    )
-    await pool.open()
 
-    # checkpointer: Agent 对话上下文跨重启保留
-    _pg_saver = AsyncPostgresSaver(pool)
-    await _pg_saver.setup()
+async def init_agent_runtime():
+    """在 FastAPI startup 中调用，异步初始化 SQLite checkpointer、store 和 Agent。"""
+    global _sqlite_saver, _sqlite_store, _resource_stack, _agent
 
-    # store: Agent 长期记忆，跨会话共享
-    _pg_store = AsyncPostgresStore(pool)
-    await _pg_store.setup()
+    if _agent is not None:
+        return
 
-    logger.info("PostgresSaver + PostgresStore 初始化完成")
+    Path(SQLITE_PATH).parent.mkdir(parents=True, exist_ok=True)
+
+    _resource_stack = AsyncExitStack()
+
+    try:
+        _sqlite_saver = await _resource_stack.enter_async_context(
+            AsyncSqliteSaver.from_conn_string(SQLITE_PATH)
+        )
+        await _sqlite_saver.setup()
+
+        _sqlite_store = await _resource_stack.enter_async_context(
+            AsyncSqliteStore.from_conn_string(SQLITE_PATH)
+        )
+        await _sqlite_store.setup()
+    except Exception:
+        await _resource_stack.aclose()
+        _resource_stack = None
+        _sqlite_saver = None
+        _sqlite_store = None
+        raise
+
+    logger.info("SQLite checkpointer + store 初始化完成")
 
     # ─── 初始化 Agent ──────────────────────────────────────────
     _llm = ChatAnthropic(
@@ -105,11 +118,25 @@ async def init_pg():
         model=_llm,
         memory=["./AGENTS.md"],
         skills=["./skills/"],
-        store=_pg_store,
+        store=_sqlite_store,
         backend=_make_backend,
-        checkpointer=_pg_saver,
+        checkpointer=_sqlite_saver,
     )
     logger.info("Deep Agent 初始化完成")
+
+
+async def close_agent_runtime():
+    """关闭 Agent 运行时持有的 SQLite 资源。"""
+    global _sqlite_saver, _sqlite_store, _resource_stack, _agent
+
+    if _resource_stack is not None:
+        await _resource_stack.aclose()
+
+    _sqlite_saver = None
+    _sqlite_store = None
+    _resource_stack = None
+    _agent = None
+    logger.info("Deep Agent 运行时资源已关闭")
 
 
 # ─── Backend 路由 ──────────────────────────────────────────────
@@ -141,6 +168,9 @@ async def run_agent(
     """
     使用 deepagents (LangGraph) 运行 Agent，并处理细粒度的流式事件。
     """
+    if _agent is None:
+        raise RuntimeError("Agent 尚未初始化，请先调用 init_agent_runtime()")
+
     inputs = {"messages": [HumanMessage(content=user_message)]}
 
     try:

@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from urllib.parse import quote_plus
+
 from dotenv import load_dotenv
 
 # 项目 backend 根目录
@@ -24,18 +24,20 @@ SKILLS_DIR = str(BASE_DIR / "skills")
 MODEL_NAME = os.getenv("MODEL_NAME", "claude-sonnet-4-5-20250929")
 MAX_TURNS = int(os.getenv("MAX_TURNS", "10"))
 
-# ─── PostgreSQL 配置 ──────────────────────────────────
-DB_IP = os.getenv("DB_IP", "127.0.0.1")
-DB_PORT = os.getenv("DB_PORT", "30306")
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-DB_NAME = os.getenv("DB_NAME", "claude_agent")
+# ─── SQLite 配置 ──────────────────────────────────────
+DEFAULT_SQLITE_PATH = "data/app.db"
 
-# SQLAlchemy 异步连接串 (asyncpg 驱动)
-DATABASE_URL = f"postgresql+asyncpg://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}@{DB_IP}:{DB_PORT}/{DB_NAME}?ssl=disable"
+_sqlite_file = Path(os.getenv("SQLITE_PATH", DEFAULT_SQLITE_PATH))
+if not _sqlite_file.is_absolute():
+    _sqlite_file = BASE_DIR / _sqlite_file
 
-# psycopg 同步连接串 (PostgresSaver / PostgresStore 用)
-DATABASE_URL_SYNC = f"postgresql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}@{DB_IP}:{DB_PORT}/{DB_NAME}?sslmode=disable"
+SQLITE_FILE = _sqlite_file.resolve()
+SQLITE_FILE.parent.mkdir(parents=True, exist_ok=True)
+SQLITE_PATH = SQLITE_FILE.as_posix()
+
+# SQLAlchemy 异步 / 同步连接串
+DATABASE_URL = f"sqlite+aiosqlite:///{SQLITE_PATH}"
+DATABASE_URL_SYNC = f"sqlite:///{SQLITE_PATH}"
 
 # ─── 日志配置 ────────────────────────────────────────
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

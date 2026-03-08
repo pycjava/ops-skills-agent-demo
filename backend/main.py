@@ -9,11 +9,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import ANTHROPIC_API_KEY, SKILLS_DIR
-from db.session import init_db
+from db.session import close_db, init_db
 from utils.logger import logger
 
 # Import API routers
-from api.routers import conversations, skills, agent
+from api.routers import conversations, skills, agent, memories
 from api.ws import chat
 
 # ─── 初始化 ─────────────────────────────────────────────
@@ -34,10 +34,10 @@ async def startup():
     # 初始化数据库
     await init_db()
 
-    # 初始化 PostgresSaver + PostgresStore + Agent
-    from agent import init_pg
+    # 初始化 SQLite checkpointer + store + Agent
+    from agent import init_agent_runtime
 
-    await init_pg()
+    await init_agent_runtime()
 
     logger.info(f"Skills 目录: {SKILLS_DIR}")
     if ANTHROPIC_API_KEY:
@@ -55,11 +55,20 @@ async def startup():
         logger.info(f"发现 {len(skill_dirs)} 个 Skills: {skill_dirs}")
 
 
+@app.on_event("shutdown")
+async def shutdown():
+    from agent import close_agent_runtime
+
+    await close_agent_runtime()
+    await close_db()
+
+
 # ─── 包含路由 ────────────────────────────────────────────
 
 app.include_router(conversations.router)
 app.include_router(skills.router)
 app.include_router(agent.router)
+app.include_router(memories.router)
 app.include_router(chat.router)
 
 

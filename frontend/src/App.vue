@@ -1,7 +1,95 @@
 <script setup lang="ts">
-import { ref, nextTick, watch, computed, onMounted } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useChatStore } from './stores/chat'
+import MessageBubble from './components/MessageBubble.vue'
+import SkillPanel from './components/SkillPanel.vue'
+import ConversationList from './components/ConversationList.vue'
+import MemoryPanel from './components/MemoryPanel.vue'
+import { getMillisecondsUntilNextShanghaiMidnight, resolveGreeting } from './utils/greeting'
 
-// 滚动选中项到可见区域
+const chatStore = useChatStore()
+
+const storedTheme = localStorage.getItem('theme')
+const inputText = ref('')
+const chatContainer = ref<HTMLElement | null>(null)
+const showSidebar = ref(true)
+const isDark = ref(storedTheme === 'dark')
+const showInspector = ref(false)
+const rightPanelTab = ref<'skills' | 'memory'>('skills')
+const currentTime = ref(new Date())
+
+const quickPrompts = [
+  {
+    label: '查看目录',
+    prompt: '帮我查看当前目录下的文件列表',
+  },
+  {
+    label: '读取 hosts',
+    prompt: '读取 /etc/hosts 文件的内容',
+  },
+  {
+    label: '系统信息',
+    prompt: '查看当前系统信息',
+  },
+]
+
+const showMentions = ref(false)
+const mentionSearch = ref('')
+const mentionIndex = ref(0)
+
+const hasMessages = computed(() => chatStore.messages.length > 0)
+
+const filteredSkills = computed(() => {
+  if (!showMentions.value) return []
+  const search = mentionSearch.value.toLowerCase()
+  return chatStore.skills.filter((skill) => skill.name.toLowerCase().includes(search))
+})
+
+const currentConversation = computed(() =>
+  chatStore.conversations.find((conversation) => conversation.id === chatStore.currentConversationId) ?? null,
+)
+
+const derivedConversationTitle = computed(() => {
+  const firstUserMessage = chatStore.messages.find((message) => message.role === 'user')
+  if (!firstUserMessage?.content) return '新对话'
+
+  const title = firstUserMessage.content
+    .replace(/\s+/g, ' ')
+    .replace(/<system_hint>[\s\S]*?<\/system_hint>/g, '')
+    .trim()
+
+  if (!title) return '新对话'
+  return title.length > 22 ? `${title.slice(0, 22)}…` : title
+})
+
+const currentConversationTitle = computed(
+  () => currentConversation.value?.title || derivedConversationTitle.value,
+)
+
+const currentConversationSubtitle = computed(() =>
+  hasMessages.value ? '对话由 AI 生成' : '',
+)
+
+const heroTitle = computed(() => resolveGreeting(currentTime.value).title)
+
+const inputPlaceholder = computed(() =>
+  hasMessages.value ? '发送消息...' : '给我发消息或布置任务',
+)
+
+let greetingRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearGreetingRefreshTimer() {
+  if (!greetingRefreshTimer) return
+  clearTimeout(greetingRefreshTimer)
+  greetingRefreshTimer = null
+}
+
+function syncGreetingClock() {
+  currentTime.value = new Date()
+  clearGreetingRefreshTimer()
+  greetingRefreshTimer = setTimeout(syncGreetingClock, getMillisecondsUntilNextShanghaiMidnight(currentTime.value) + 50)
+}
+
 function scrollActiveIntoView() {
   nextTick(() => {
     const popup = document.querySelector('.mentions-popup')
@@ -11,39 +99,18 @@ function scrollActiveIntoView() {
     }
   })
 }
-import { useChatStore } from './stores/chat'
-import MessageBubble from './components/MessageBubble.vue'
-import SkillPanel from './components/SkillPanel.vue'
-import ConversationList from './components/ConversationList.vue'
-
-const chatStore = useChatStore()
-const inputText = ref('')
-const chatContainer = ref<HTMLElement | null>(null)
-const showSidebar = ref(true)
-const isDark = ref(localStorage.getItem('theme') !== 'light')
-const showSkills = ref(true)
-
-// Mentions State
-const showMentions = ref(false)
-const mentionSearch = ref('')
-const mentionIndex = ref(0)
-
-const filteredSkills = computed(() => {
-  if (!showMentions.value) return []
-  const search = mentionSearch.value.toLowerCase()
-  return chatStore.skills.filter(s => s.name.toLowerCase().includes(search))
-})
 
 function handleInput() {
-  const val = inputText.value
-  const match = val.match(/@([\w-]*)$/)
+  const value = inputText.value
+  const match = value.match(/@([\w-]*)$/)
   if (match) {
     showMentions.value = true
     mentionSearch.value = match[1] || ''
     mentionIndex.value = 0
-  } else {
-    showMentions.value = false
+    return
   }
+
+  showMentions.value = false
 }
 
 function selectMention(skillName: string) {
@@ -51,12 +118,35 @@ function selectMention(skillName: string) {
   showMentions.value = false
 }
 
+function sendQuickPrompt(prompt: string) {
+  chatStore.sendMessage(prompt)
+}
+
+function openInspector(tab: 'skills' | 'memory' = 'skills') {
+  rightPanelTab.value = tab
+  showInspector.value = true
+}
+
+function closeInspector() {
+  showInspector.value = false
+}
+
 onMounted(() => {
-  // 应用保存的主题
   document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
+  syncGreetingClock()
   chatStore.connect()
   chatStore.fetchSkills()
   chatStore.fetchConversations()
+})
+
+onBeforeUnmount(() => {
+  clearGreetingRefreshTimer()
+})
+
+watch([rightPanelTab, showInspector], ([tab, visible]) => {
+  if (visible && tab === 'memory') {
+    chatStore.fetchMemoryTree(true)
+  }
 })
 
 function toggleTheme() {
@@ -70,100 +160,100 @@ function handleSend() {
   const text = inputText.value.trim()
   if (!text || chatStore.isLoading) return
 
-  let finalContent = text
-  let implicitPrompt = ""
-  
+  let implicitPrompt = ''
+
   const matches = text.match(/@([\w-]+)/g)
   if (matches) {
-    const mentionedSkills = matches.map(m => m.slice(1)).filter(name => chatStore.skills.some(s => s.name === name))
+    const mentionedSkills = matches
+      .map((match) => match.slice(1))
+      .filter((name) => chatStore.skills.some((skill) => skill.name === name))
+
     if (mentionedSkills.length > 0) {
-       const uniqueSkills = [...new Set(mentionedSkills)]
-       implicitPrompt = `\n\n<system_hint>\n[系统内部指令：用户已明确指定使用工具 ${uniqueSkills.map(s => '"' + s + '"').join(', ')}。请你必须优先、立即调用这些工具来处理请求，在工具返回结果之前不要做任何多余回答。]\n</system_hint>`
+      const uniqueSkills = [...new Set(mentionedSkills)]
+      implicitPrompt = `\n\n<system_hint>\n[系统内部指令：用户已明确指定使用工具 ${uniqueSkills
+        .map((skill) => `"${skill}"`)
+        .join(', ')}。请你必须优先、立即调用这些工具来处理请求，在工具返回结果之前不要做任何多余回答。]\n</system_hint>`
     }
   }
 
-  chatStore.sendMessage(finalContent, finalContent + implicitPrompt)
+  chatStore.sendMessage(text, text + implicitPrompt)
   inputText.value = ''
   showMentions.value = false
 }
 
-function handleKeyDown(e: KeyboardEvent) {
+function handleKeyDown(event: KeyboardEvent) {
   if (showMentions.value && filteredSkills.value.length > 0) {
-    if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      e.stopPropagation()
-      mentionIndex.value = (mentionIndex.value - 1 + filteredSkills.value.length) % filteredSkills.value.length
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      event.stopPropagation()
+      mentionIndex.value =
+        (mentionIndex.value - 1 + filteredSkills.value.length) % filteredSkills.value.length
       scrollActiveIntoView()
       return
     }
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      e.stopPropagation()
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      event.stopPropagation()
       mentionIndex.value = (mentionIndex.value + 1) % filteredSkills.value.length
       scrollActiveIntoView()
       return
     }
-    if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault()
+
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault()
       const selected = filteredSkills.value[mentionIndex.value]
       if (selected) {
         selectMention(selected.name)
       }
       return
     }
-    if (e.key === 'Escape') {
+
+    if (event.key === 'Escape') {
       showMentions.value = false
       return
     }
   }
 
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-    e.preventDefault()
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault()
     handleSend()
   }
 }
 
-// 监听消息数量和最后一条消息内容的变化，实现流式输出时自动滚动到底部
 const scrollTrigger = computed(() => {
-  const len = chatStore.messages.length
-  const lastContent = len > 0 ? chatStore.messages[len - 1]?.content?.length : 0
-  return `${len}-${lastContent}`
+  const length = chatStore.messages.length
+  const lastContentLength = length > 0 ? chatStore.messages[length - 1]?.content?.length ?? 0 : 0
+  return `${length}-${lastContentLength}`
 })
 
-watch(
-  scrollTrigger,
-  async () => {
-    await nextTick()
-    if (chatContainer.value) {
-      chatContainer.value.scrollTop = chatContainer.value.scrollHeight
-    }
+watch(scrollTrigger, async () => {
+  if (!hasMessages.value) return
+
+  await nextTick()
+  if (chatContainer.value) {
+    chatContainer.value.scrollTop = chatContainer.value.scrollHeight
   }
-)
-
-const statusText = computed(() => {
-  if (!chatStore.isConnected) return '● DISCONNECTED'
-  if (chatStore.isLoading) return '● RUNNING...'
-  return '● CONNECTED'
-})
-
-const statusClass = computed(() => {
-  if (!chatStore.isConnected) return 'status-off'
-  if (chatStore.isLoading) return 'status-busy'
-  return 'status-on'
 })
 </script>
 
 <template>
-  <div class="app">
-    <!-- 侧边栏 -->
-    <aside class="sidebar" v-if="showSidebar">
-      <div class="sidebar-head">
-        <span class="sidebar-title">CONVERSATIONS</span>
-        <button class="sidebar-close" @click="showSidebar = false">✕</button>
+  <div class="app-shell">
+    <aside v-if="showSidebar" class="sidebar-frame">
+      <div class="sidebar-brand">
+        <div class="brand-mark">C</div>
+        <div class="brand-copy">
+          <span class="brand-name">Claude Agent</span>
+          <span class="brand-subtitle">智能对话工作台</span>
+        </div>
+        <button class="icon-btn subtle" title="收起侧栏" @click="showSidebar = false">
+          ‹
+        </button>
       </div>
+
       <ConversationList
         :conversations="chatStore.conversations"
-        :currentId="chatStore.currentConversationId"
+        :current-id="chatStore.currentConversationId"
         @select="chatStore.switchConversation"
         @create="chatStore.createConversation"
         @delete="chatStore.deleteConversation"
@@ -171,561 +261,549 @@ const statusClass = computed(() => {
       />
     </aside>
 
-    <!-- 主区域 -->
-    <main class="main">
-      <!-- 顶栏 -->
-      <header class="topbar">
-        <div class="topbar-left">
-          <button v-if="!showSidebar" class="icon-btn" @click="showSidebar = true" title="显示侧栏">☰</button>
-          <span class="app-name">claude-agent</span>
-          <span class="app-ver">v0.1.0</span>
-        </div>
-        <div class="topbar-right">
-          <span class="status" :class="statusClass">{{ statusText }}</span>
-          <button class="theme-btn" @click="toggleTheme" :title="isDark ? '切换浅色' : '切换深色'">
-            {{ isDark ? '☀' : '☾' }}
-          </button>
-          <button class="text-btn" @click="chatStore.clearChat">clear</button>
-          <button v-if="!showSkills" class="icon-btn" style="margin-left: 8px;" @click="showSkills = true" title="显示 Skills">⚡</button>
-        </div>
-      </header>
-
-      <!-- 终端输出区 -->
-      <div class="terminal" ref="chatContainer">
-        <div v-if="chatStore.messages.length === 0" class="welcome">
-          <pre class="ascii-logo">
-   _____ _                 _
-  / ____| |               | |
- | |    | | __ _ _   _  __| | ___
- | |    | |/ _` | | | |/ _` |/ _ \
- | |____| | (_| | |_| | (_| |  __/
-  \_____|_|\__,_|\__,_|\__,_|\___|
-          </pre>
-          <p class="welcome-text">Claude Agent Terminal — 输入指令开始</p>
-          <div class="quick-cmds">
-            <button @click="chatStore.sendMessage('帮我查看当前目录下的文件列表')">$ ls -la</button>
-            <button @click="chatStore.sendMessage('读取 /etc/hosts 文件的内容')">$ cat /etc/hosts</button>
-            <button @click="chatStore.sendMessage('查看当前系统信息')">$ uname -a</button>
-          </div>
-        </div>
-
-        <MessageBubble
-          v-for="msg in chatStore.messages"
-          :key="msg.id"
-          :message="msg"
-        />
-
-        <div v-if="chatStore.isLoading" class="cursor-line">
-          <span class="prompt">agent $</span>
-          <span class="cursor-blink">█</span>
-        </div>
-      </div>
-
-      <!-- 输入区 -->
-      <div class="input-bar" style="position: relative;">
-        <!-- Mentions 弹出框 -->
-        <div v-if="showMentions && filteredSkills.length > 0" class="mentions-popup">
-          <div 
-            v-for="(skill, idx) in filteredSkills" 
-            :key="skill.name" 
-            class="mention-item" 
-            :class="{ 'active': idx === mentionIndex }"
-            @click="selectMention(skill.name)"
-            @mouseenter="mentionIndex = idx"
+    <main class="workspace" :class="{ 'workspace-chat': hasMessages }">
+      <div class="workspace-toolbar">
+        <div class="toolbar-left">
+          <button
+            v-if="!showSidebar"
+            class="icon-btn"
+            title="显示侧栏"
+            @click="showSidebar = true"
           >
-            <span class="mention-name">@{{ skill.name }}</span>
-            <span class="mention-desc">{{ skill.description }}</span>
+            ☰
+          </button>
+        </div>
+
+        <div class="toolbar-right">
+          <button
+            class="icon-btn"
+            :disabled="chatStore.messages.length === 0"
+            title="清空当前对话"
+            @click="chatStore.clearChat"
+          >
+            ⌫
+          </button>
+          <button
+            class="icon-btn"
+            :title="isDark ? '切换浅色模式' : '切换深色模式'"
+            @click="toggleTheme"
+          >
+            {{ isDark ? '☾' : '☀' }}
+          </button>
+          <button class="icon-btn" title="打开右侧面板" @click="openInspector('skills')">
+            ☷
+          </button>
+        </div>
+      </div>
+
+      <section v-if="!hasMessages" class="empty-state">
+        <div class="hero-panel">
+          <h1 class="hero-title">{{ heroTitle }}</h1>
+
+          <div class="composer composer-home">
+            <div v-if="showMentions && filteredSkills.length > 0" class="mentions-popup">
+              <div
+                v-for="(skill, index) in filteredSkills"
+                :key="skill.name"
+                class="mention-item"
+                :class="{ active: index === mentionIndex }"
+                @click="selectMention(skill.name)"
+                @mouseenter="mentionIndex = index"
+              >
+                <span class="mention-name">@{{ skill.name }}</span>
+                <span class="mention-desc">{{ skill.description }}</span>
+              </div>
+            </div>
+
+            <textarea
+              v-model="inputText"
+              class="composer-input composer-input-home"
+              :placeholder="inputPlaceholder"
+              rows="4"
+              :disabled="!chatStore.isConnected"
+              @keydown="handleKeyDown"
+              @input="handleInput"
+            />
+
+            <div class="composer-footer">
+              <div class="composer-hints">
+                <span class="hint-pill">@ 指定技能</span>
+                <span class="hint-pill">Enter 发送</span>
+                <span class="hint-pill">Shift + Enter 换行</span>
+              </div>
+
+              <button
+                class="send-btn"
+                :disabled="!inputText.trim() || !chatStore.isConnected"
+                @click="handleSend"
+              >
+                →
+              </button>
+            </div>
+          </div>
+
+          <div class="quick-actions">
+            <button
+              v-for="item in quickPrompts"
+              :key="item.label"
+              class="quick-action"
+              @click="sendQuickPrompt(item.prompt)"
+            >
+              {{ item.label }}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section v-else class="chat-state">
+        <div class="chat-header">
+          <span class="chat-kicker">{{ currentConversationSubtitle }}</span>
+          <h2 class="chat-title">{{ currentConversationTitle }}</h2>
+        </div>
+
+        <div ref="chatContainer" class="chat-scroll">
+          <div class="chat-column">
+            <MessageBubble
+              v-for="message in chatStore.messages"
+              :key="message.id"
+              :message="message"
+            />
+
+            <div v-if="chatStore.isLoading" class="typing-indicator">
+              <span class="typing-dot"></span>
+              <span>正在生成回复…</span>
+            </div>
           </div>
         </div>
 
-        <span class="input-prompt">❯</span>
-        <textarea
-          v-model="inputText"
-          @keydown="handleKeyDown"
-          @input="handleInput"
-          placeholder="输入 @ 指定工具..."
-          rows="3"
-          :disabled="!chatStore.isConnected"
-        ></textarea>
-        <button
-          v-if="chatStore.isLoading"
-          class="send-btn stop-btn"
-          @click="chatStore.abortAgent()"
-        >
-          ■ STOP
-        </button>
-        <button
-          v-else
-          class="send-btn"
-          @click="handleSend"
-          :disabled="!inputText.trim() || !chatStore.isConnected"
-        >
-          RUN
-        </button>
-      </div>
-    </main>
+        <div class="composer-dock">
+          <div class="composer composer-chat">
+            <div v-if="showMentions && filteredSkills.length > 0" class="mentions-popup">
+              <div
+                v-for="(skill, index) in filteredSkills"
+                :key="skill.name"
+                class="mention-item"
+                :class="{ active: index === mentionIndex }"
+                @click="selectMention(skill.name)"
+                @mouseenter="mentionIndex = index"
+              >
+                <span class="mention-name">@{{ skill.name }}</span>
+                <span class="mention-desc">{{ skill.description }}</span>
+              </div>
+            </div>
 
-    <!-- 右侧边栏 (Skills) -->
-    <aside class="sidebar sidebar-right" v-if="showSkills">
-      <div class="sidebar-head">
-        <span class="sidebar-title">SKILLS ({{ chatStore.skills.length }})</span>
-        <button class="sidebar-close" @click="showSkills = false">✕</button>
-      </div>
-      <div class="section-body full-height">
-        <SkillPanel :skills="chatStore.skills" />
-      </div>
-    </aside>
+            <textarea
+              v-model="inputText"
+              class="composer-input composer-input-chat"
+              :placeholder="inputPlaceholder"
+              rows="2"
+              :disabled="!chatStore.isConnected"
+              @keydown="handleKeyDown"
+              @input="handleInput"
+            />
+
+            <div class="composer-footer">
+              <div class="composer-hints">
+                <span class="hint-pill">@ 指定技能</span>
+                <span class="hint-pill">Enter 发送</span>
+              </div>
+
+              <button
+                v-if="chatStore.isLoading"
+                class="send-btn stop-btn"
+                @click="chatStore.abortAgent()"
+              >
+                ■
+              </button>
+              <button
+                v-else
+                class="send-btn"
+                :disabled="!inputText.trim() || !chatStore.isConnected"
+                @click="handleSend"
+              >
+                →
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <transition name="drawer-fade">
+        <div v-if="showInspector" class="inspector-overlay" @click.self="closeInspector">
+          <aside class="inspector-drawer">
+            <div class="inspector-head">
+              <div class="inspector-tabs">
+                <button
+                  class="inspector-tab"
+                  :class="{ active: rightPanelTab === 'skills' }"
+                  @click="rightPanelTab = 'skills'"
+                >
+                  Skills
+                </button>
+                <button
+                  class="inspector-tab"
+                  :class="{ active: rightPanelTab === 'memory' }"
+                  @click="rightPanelTab = 'memory'"
+                >
+                  Memory
+                </button>
+              </div>
+
+              <button class="icon-btn subtle" title="关闭面板" @click="closeInspector">
+                ✕
+              </button>
+            </div>
+
+            <div class="inspector-body">
+              <SkillPanel v-if="rightPanelTab === 'skills'" :skills="chatStore.skills" />
+              <MemoryPanel
+                v-else
+                :nodes="chatStore.memoryTree"
+                :selected-path="chatStore.selectedMemoryPath"
+                :document="chatStore.memoryContent"
+                :is-loading="chatStore.isMemoryLoading"
+                :error="chatStore.memoryError"
+                @select="chatStore.fetchMemoryContent"
+                @refresh="chatStore.fetchMemoryTree(true)"
+              />
+            </div>
+          </aside>
+        </div>
+      </transition>
+    </main>
   </div>
 </template>
 
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
-
-/* ─── 深色主题 (Tokyo Night) ───── */
 :root,
-[data-theme="dark"] {
-  --bg: #1a1b26;
-  --bg-light: #1f2133;
-  --bg-panel: #24283b;
-  --bg-hover: #292e42;
-  --bg-input: #1a1b26;
-  --text: #a9b1d6;
-  --text-bright: #c0caf5;
-  --text-dim: #565f89;
-  --green: #9ece6a;
-  --blue: #7aa2f7;
-  --cyan: #7dcfff;
-  --yellow: #e0af68;
-  --red: #f7768e;
-  --magenta: #bb9af7;
-  --orange: #ff9e64;
-  --border: #292e42;
-  --selection: rgba(122, 162, 247, 0.15);
+[data-theme='light'] {
+  --bg: #f7f4ed;
+  --bg-soft: #f0ece2;
+  --sidebar-bg: #f3efe6;
+  --card: rgba(255, 255, 255, 0.76);
+  --card-strong: #fbfaf6;
+  --card-muted: #ece6d9;
+  --hover: #ebe4d7;
+  --border: rgba(137, 121, 92, 0.18);
+  --border-strong: rgba(122, 108, 82, 0.28);
+  --text: #5d5648;
+  --text-strong: #1f1a14;
+  --text-muted: #9a907d;
+  --text-soft: #b6aa95;
+  --selection: rgba(126, 112, 83, 0.1);
+  --bubble-user: #ede8dd;
+  --success: #71936f;
+  --warning: #b38a59;
+  --danger: #c86f64;
+  --accent: #8b73ff;
+  --shadow-soft: 0 20px 50px rgba(86, 73, 51, 0.08);
+  --shadow-card: 0 12px 32px rgba(86, 73, 51, 0.08);
 }
 
-/* ─── 浅色主题 ───── */
-[data-theme="light"] {
-  --bg: #fafafa;
-  --bg-light: #f0f0f0;
-  --bg-panel: #ffffff;
-  --bg-hover: #e8e8e8;
-  --bg-input: #ffffff;
-  --text: #4a4a4a;
-  --text-bright: #1a1a1a;
-  --text-dim: #999999;
-  --green: #50a14f;
-  --blue: #4078f2;
-  --cyan: #0184bc;
-  --yellow: #c18401;
-  --red: #e45649;
-  --magenta: #a626a4;
-  --orange: #d75f00;
-  --border: #d4d4d4;
-  --selection: rgba(64, 120, 242, 0.1);
+[data-theme='dark'] {
+  --bg: #151618;
+  --bg-soft: #1d1f23;
+  --sidebar-bg: #181a1f;
+  --card: rgba(29, 31, 35, 0.92);
+  --card-strong: #20242b;
+  --card-muted: #23262d;
+  --hover: #262a31;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --text: #d0d4db;
+  --text-strong: #f5f7fa;
+  --text-muted: #8f97a3;
+  --text-soft: #6f7782;
+  --selection: rgba(255, 255, 255, 0.06);
+  --bubble-user: #2a2e35;
+  --success: #86b381;
+  --warning: #d4a66b;
+  --danger: #d97d73;
+  --accent: #9e8eff;
+  --shadow-soft: 0 24px 60px rgba(0, 0, 0, 0.32);
+  --shadow-card: 0 16px 36px rgba(0, 0, 0, 0.28);
 }
 
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
 }
 
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
 body {
-  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-family:
+    Inter,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-#app {
-  width: 100vw;
-  height: 100vh;
+button,
+textarea,
+input {
+  font: inherit;
 }
 
-.app {
+.app-shell {
   display: flex;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
+  background: var(--bg);
 }
 
-/* ─── Sidebar ───── */
-.sidebar {
-  width: 260px;
-  background: var(--bg-panel);
-  border-right: 1px solid var(--border);
+.sidebar-frame {
+  width: 272px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
 }
 
-.sidebar-right {
-  border-right: none;
-  border-left: 1px solid var(--border);
-}
-
-.sidebar-section {
-  border-top: 1px solid var(--border);
-}
-
-.section-toggle {
+.sidebar-brand {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 8px 14px;
-  font-size: 11px;
-  font-weight: 600;
-  font-family: inherit;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
-  background: none;
-  border: none;
-  cursor: pointer;
-  transition: color 0.1s;
+  gap: 12px;
+  padding: 20px 18px 12px;
 }
 
-.section-toggle:hover {
-  color: var(--text);
+.brand-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #ff58c2 0%, var(--accent) 100%);
+  box-shadow: 0 10px 20px rgba(139, 115, 255, 0.24);
 }
 
-.skill-count {
-  font-size: 10px;
-  background: var(--bg-hover);
-  color: var(--text-dim);
-  padding: 1px 6px;
-  border-radius: 8px;
-}
-
-.section-body {
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.full-height {
-  flex: 1;
-  max-height: none;
-  overflow-y: auto;
-}
-
-.sidebar-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.sidebar-title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: var(--text-dim);
-}
-
-.sidebar-close {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 2px 4px;
-}
-
-.sidebar-close:hover {
-  color: var(--text);
-}
-
-/* ─── Main ───── */
-.main {
-  flex: 1;
+.brand-copy {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-/* ─── Topbar ───── */
-.topbar {
+.brand-name {
+  color: var(--text-strong);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.brand-subtitle {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.workspace {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(circle at top center, rgba(255, 255, 255, 0.5), transparent 34%),
+    var(--bg);
+}
+
+.workspace-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-  height: 40px;
+  padding: 18px 24px 0;
+  position: relative;
+  z-index: 2;
 }
 
-.topbar-left, .topbar-right {
+.toolbar-left,
+.toolbar-right {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
 .icon-btn {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 16px;
-  padding: 2px;
-}
-
-.icon-btn:hover {
-  color: var(--text);
-}
-
-.app-name {
-  color: var(--cyan);
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.app-ver {
-  color: var(--text-dim);
-  font-size: 11px;
-}
-
-.status {
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.status-on { color: var(--green); }
-.status-busy { color: var(--yellow); animation: blink 1s step-end infinite; }
-.status-off { color: var(--red); }
-
-@keyframes blink {
-  50% { opacity: 0.4; }
-}
-
-.text-btn {
-  background: none;
+  width: 40px;
+  height: 40px;
   border: 1px solid var(--border);
-  color: var(--text-dim);
-  padding: 3px 10px;
-  font-size: 11px;
-  font-family: inherit;
-  cursor: pointer;
-  border-radius: 3px;
-}
-
-.text-btn:hover {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.58);
   color: var(--text);
-  border-color: var(--text-dim);
-}
-
-.theme-btn {
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--yellow);
-  padding: 3px 8px;
-  font-size: 14px;
   cursor: pointer;
-  border-radius: 3px;
-  transition: all 0.15s;
-  line-height: 1;
-}
-
-.theme-btn:hover {
-  border-color: var(--yellow);
-  background: var(--bg-hover);
-}
-
-/* ─── Terminal ───── */
-.terminal {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  scroll-behavior: smooth;
-}
-
-.terminal::-webkit-scrollbar {
-  width: 6px;
-}
-
-.terminal::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.terminal::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
-}
-
-/* ─── Welcome ───── */
-.welcome {
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
-  gap: 16px;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+  backdrop-filter: blur(8px);
 }
 
-.ascii-logo {
-  color: var(--cyan);
-  font-size: 11px;
-  line-height: 1.3;
-  opacity: 0.6;
+[data-theme='dark'] .icon-btn {
+  background: rgba(32, 36, 43, 0.72);
 }
 
-.welcome-text {
-  color: var(--text-dim);
-  font-size: 13px;
+.icon-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: var(--card-strong);
+  color: var(--text-strong);
 }
 
-.quick-cmds {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
-.quick-cmds button {
-  padding: 6px 14px;
-  font-size: 12px;
-  font-family: inherit;
-  background: var(--bg-panel);
-  color: var(--green);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
+.icon-btn.subtle {
+  width: 34px;
+  height: 34px;
 }
 
-.quick-cmds button:hover {
-  background: var(--bg-hover);
-  border-color: var(--green);
-}
-
-/* ─── Cursor ───── */
-.cursor-line {
+.empty-state {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  font-size: 13px;
+  justify-content: center;
+  padding: 24px 48px 48px;
 }
 
-.prompt {
-  color: var(--magenta);
-}
-
-.cursor-blink {
-  color: var(--text-bright);
-  animation: cursor 1s step-end infinite;
-}
-
-@keyframes cursor {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-/* ─── Input Bar ───── */
-/* ─── Mentions Popup ───── */
-.mentions-popup {
-  position: absolute;
-  bottom: 100%;
-  left: 30px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.1);
-  margin-bottom: 8px;
-  max-height: 200px;
-  max-width: 400px;
-  min-width: 250px;
-  overflow-y: auto;
-  z-index: 1000;
-  padding: 4px;
-}
-
-.mention-item {
-  padding: 6px 12px;
+.hero-panel {
+  width: min(100%, 920px);
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  cursor: pointer;
-  border-radius: 4px;
+  align-items: center;
+  gap: 28px;
 }
 
-.mention-item.active {
-  background: var(--bg-hover);
+.hero-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-family:
+    'Noto Serif SC',
+    'Songti SC',
+    'STSong',
+    serif;
+  font-size: clamp(38px, 5vw, 66px);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-align: center;
 }
 
-.mention-name {
-  color: var(--cyan);
-  font-weight: 600;
-  font-size: 13px;
+.composer {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 28px;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(12px);
 }
 
-.mention-desc {
-  color: var(--text-dim);
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.composer-home {
+  max-width: 820px;
+  padding: 20px 20px 18px;
 }
 
-.input-bar {
+.composer-chat {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 16px 18px 14px;
+  border-radius: 24px;
+  box-shadow: var(--shadow-card);
+}
+
+.composer:focus-within {
+  border-color: rgba(139, 115, 255, 0.28);
+  box-shadow:
+    var(--shadow-card),
+    0 0 0 4px rgba(139, 115, 255, 0.08);
+}
+
+.composer-input {
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-strong);
+  line-height: 1.75;
+}
+
+.composer-input-home {
+  min-height: 150px;
+  font-size: 18px;
+}
+
+.composer-input-chat {
+  min-height: 72px;
+  max-height: 180px;
+  font-size: 16px;
+}
+
+.composer-input::placeholder {
+  color: var(--text-soft);
+}
+
+.composer-footer {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-panel);
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
 }
 
-.input-prompt {
-  color: var(--green);
-  font-size: 16px;
-  font-weight: 700;
-  flex-shrink: 0;
+.composer-hints {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.input-bar textarea {
-  flex: 1;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  color: var(--text-bright);
-  font-size: 13px;
-  font-family: inherit;
-  padding: 12px 14px;
-  border-radius: 4px;
-  resize: vertical;
-  outline: none;
-  min-height: 60px;
-  max-height: 250px;
-  line-height: 1.5;
-}
-
-.input-bar textarea:focus {
-  border-color: var(--blue);
-}
-
-.input-bar textarea::placeholder {
-  color: var(--text-dim);
+.hint-pill {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .send-btn {
-  padding: 8px 16px;
-  font-size: 11px;
-  font-weight: 700;
-  font-family: inherit;
-  letter-spacing: 0.08em;
-  background: var(--green);
-  color: var(--bg);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
+  width: 44px;
+  height: 44px;
   flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--text-strong);
+  color: var(--card-strong);
+  font-size: 18px;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    opacity 0.15s ease,
+    background 0.15s ease;
 }
 
 .send-btn:hover:not(:disabled) {
-  filter: brightness(1.1);
+  transform: translateY(-1px);
 }
 
 .send-btn:disabled {
@@ -734,17 +812,284 @@ body {
 }
 
 .stop-btn {
-  background: var(--red) !important;
-  color: #fff !important;
-  animation: pulse-stop 1.5s ease-in-out infinite;
+  background: var(--danger);
+  color: #fff;
 }
 
-.stop-btn:hover {
-  filter: brightness(1.2) !important;
+.quick-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
-@keyframes pulse-stop {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+.quick-action {
+  padding: 12px 18px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.quick-action:hover {
+  background: var(--card-strong);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+.chat-state {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 28px 24px;
+}
+
+.chat-header {
+  width: min(100%, 880px);
+  margin: 0 auto;
+  padding: 2px 8px 10px;
+}
+
+.chat-kicker {
+  display: inline-flex;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.chat-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: clamp(24px, 3vw, 34px);
+  font-weight: 700;
+}
+
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 0 24px;
+}
+
+.chat-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+
+.chat-column {
+  width: min(100%, 880px);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 8px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow:
+    12px 0 0 rgba(139, 115, 255, 0.5),
+    24px 0 0 rgba(139, 115, 255, 0.25);
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.composer-dock {
+  padding-top: 12px;
+}
+
+.mentions-popup {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: calc(100% + 12px);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  background: var(--card-strong);
+  box-shadow: var(--shadow-card);
+  z-index: 8;
+}
+
+.mention-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.mention-item:hover,
+.mention-item.active {
+  background: var(--hover);
+}
+
+.mention-name {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mention-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inspector-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px;
+  background: rgba(31, 26, 20, 0.12);
+}
+
+[data-theme='dark'] .inspector-overlay {
+  background: rgba(0, 0, 0, 0.26);
+}
+
+.inspector-drawer {
+  width: min(420px, 100%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--card-strong);
+  box-shadow: var(--shadow-soft);
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inspector-tabs {
+  display: inline-flex;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+}
+
+.inspector-tab {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.inspector-tab.active {
+  background: var(--card-strong);
+  color: var(--text-strong);
+  box-shadow: 0 4px 12px rgba(86, 73, 51, 0.08);
+}
+
+.inspector-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.drawer-fade-enter-active,
+.drawer-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.drawer-fade-enter-active .inspector-drawer,
+.drawer-fade-leave-active .inspector-drawer {
+  transition: transform 0.2s ease;
+}
+
+.drawer-fade-enter-from,
+.drawer-fade-leave-to {
+  opacity: 0;
+}
+
+.drawer-fade-enter-from .inspector-drawer,
+.drawer-fade-leave-to .inspector-drawer {
+  transform: translateX(18px);
+}
+
+@media (max-width: 1100px) {
+  .sidebar-frame {
+    width: 248px;
+  }
+
+  .hero-title {
+    font-size: clamp(32px, 4vw, 48px);
+  }
+}
+
+@media (max-width: 820px) {
+  .app-shell {
+    position: relative;
+  }
+
+  .sidebar-frame {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 15;
+    box-shadow: var(--shadow-soft);
+  }
+
+  .workspace-toolbar,
+  .chat-state,
+  .empty-state {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .composer-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .send-btn {
+    align-self: flex-end;
+  }
 }
 </style>

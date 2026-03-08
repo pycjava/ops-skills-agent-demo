@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from db.session import AsyncSessionLocal
 from models import Conversation, Message
@@ -16,7 +16,8 @@ async def list_conversations(q: str | None = None):
     async with AsyncSessionLocal() as session:
         stmt = select(Conversation)
         if q and q.strip():
-            stmt = stmt.where(Conversation.title.ilike(f"%{q.strip()}%"))
+            keyword = f"%{q.strip().lower()}%"
+            stmt = stmt.where(func.lower(Conversation.title).like(keyword))
         stmt = stmt.order_by(Conversation.updated_at.desc())
         result = await session.execute(stmt)
         conversations = result.scalars().all()

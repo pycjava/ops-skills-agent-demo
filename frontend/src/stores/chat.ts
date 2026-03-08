@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, reactive } from "vue";
+import { ref, reactive, computed } from "vue";
 
 export interface ChatMessage {
   id: string;
@@ -27,6 +27,21 @@ export interface ConversationItem {
   updated_at: string | null;
 }
 
+export interface MemoryNode {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+  children?: MemoryNode[];
+  updated_at?: string | null;
+}
+
+export interface MemoryDocument {
+  path: string;
+  name: string;
+  content: string;
+  updated_at: string | null;
+}
+
 export const useChatStore = defineStore("chat", () => {
   // 默认使用相对路径，依赖 Nginx 的 proxy_pass 反向代理到 backend
   // 如果本地开发 npm run dev 配置了 VITE_WS_URL 则使用本地的直连代理
@@ -46,12 +61,45 @@ export const useChatStore = defineStore("chat", () => {
   const skills = ref<Skill[]>([]);
   const conversations = ref<ConversationItem[]>([]);
   const currentConversationId = ref<string | null>(null);
+  const memoryTree = ref<MemoryNode[]>([]);
+  const selectedMemoryPath = ref<string | null>(null);
+  const memoryContent = ref<MemoryDocument | null>(null);
+  const memoryError = ref<string | null>(null);
+  const isMemoryTreeLoading = ref(false);
+  const isMemoryContentLoading = ref(false);
+  const isMemoryTreeLoaded = ref(false);
+  const isMemoryLoading = computed(
+    () => isMemoryTreeLoading.value || isMemoryContentLoading.value
+  );
 
   let ws: WebSocket | null = null;
   let messageIdCounter = 0;
 
   function genId(): string {
     return `msg-${Date.now()}-${messageIdCounter++}`;
+  }
+
+  function findFirstMemoryFile(nodes: MemoryNode[]): string | null {
+    for (const node of nodes) {
+      if (node.kind === "file") return node.path;
+      if (node.children?.length) {
+        const childPath = findFirstMemoryFile(node.children);
+        if (childPath) return childPath;
+      }
+    }
+
+    return null;
+  }
+
+  function treeContainsPath(nodes: MemoryNode[], targetPath: string): boolean {
+    for (const node of nodes) {
+      if (node.path === targetPath) return true;
+      if (node.children?.length && treeContainsPath(node.children, targetPath)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   // ─── WebSocket ──────────────────────────────
@@ -342,6 +390,74 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
+  async function fetchMemoryTree(force = false) {
+    if (isMemoryTreeLoading.value) return;
+    if (isMemoryTreeLoaded.value && !force) return;
+
+    isMemoryTreeLoading.value = true;
+    memoryError.value = null;
+
+    try {
+      const res = await fetch(`${backendUrl}/api/memories/tree`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const tree: MemoryNode[] = await res.json();
+      memoryTree.value = tree;
+      isMemoryTreeLoaded.value = true;
+
+      const nextPath =
+        selectedMemoryPath.value && treeContainsPath(tree, selectedMemoryPath.value)
+          ? selectedMemoryPath.value
+          : findFirstMemoryFile(tree);
+
+      if (!nextPath) {
+        selectedMemoryPath.value = null;
+        memoryContent.value = null;
+        return;
+      }
+
+      if (force || memoryContent.value?.path !== nextPath) {
+        await fetchMemoryContent(nextPath);
+      }
+    } catch (e) {
+      memoryError.value = "加载记忆失败";
+      console.warn("加载记忆树失败:", e);
+      if (!memoryTree.value.length) {
+        selectedMemoryPath.value = null;
+        memoryContent.value = null;
+      }
+    } finally {
+      isMemoryTreeLoading.value = false;
+    }
+  }
+
+  async function fetchMemoryContent(path: string) {
+    if (!path) return;
+
+    selectedMemoryPath.value = path;
+    isMemoryContentLoading.value = true;
+    memoryError.value = null;
+
+    try {
+      const res = await fetch(
+        `${backendUrl}/api/memories/content?path=${encodeURIComponent(path)}`
+      );
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      memoryContent.value = await res.json();
+    } catch (e) {
+      memoryContent.value = null;
+      memoryError.value = "读取记忆失败";
+      console.warn("读取记忆文档失败:", e);
+    } finally {
+      isMemoryContentLoading.value = false;
+    }
+  }
+
   function disconnect() {
     ws?.close();
     ws = null;
@@ -358,6 +474,11 @@ export const useChatStore = defineStore("chat", () => {
     skills,
     conversations,
     currentConversationId,
+    memoryTree,
+    selectedMemoryPath,
+    memoryContent,
+    memoryError,
+    isMemoryLoading,
     connect,
     sendMessage,
     clearChat,
@@ -367,6 +488,8 @@ export const useChatStore = defineStore("chat", () => {
     switchConversation,
     deleteConversation,
     fetchSkills,
+    fetchMemoryTree,
+    fetchMemoryContent,
     disconnect
   };
 });

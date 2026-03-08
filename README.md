@@ -8,7 +8,7 @@
 - **打字机流式输出 (Streaming)**：真正的逐 Token 细粒度推流（通过 WebSocket），前端实时回显思考及回答过程。
 - **全自动零代码技能 (Skills)**：后端取消硬编码，仅需丢入 Markdown 技能描述（`backend/skills/`），Agent 热插拔即可拥有系统级能力。
 - **原生上下文记忆**：集成 `MemorySaver`，数据库与图状态协同，真正记住你在历史会话里聊了什么。
-- **持久化存储 (PostgreSQL)**：彻底从内存切到数据库，持久化你的全部对话列表与消息，前端随时加载漫游。
+- **持久化存储 (SQLite)**：彻底从内存切到数据库，持久化你的全部对话列表、消息与 Agent 状态，前端随时加载漫游。
 - **高颜值纯享 UI**：分离左右双侧边栏（会话列表与动态技能表），黑暗/明亮模式无缝切换，参数结果代码块高亮。
 
 ## 📸 界面预览
@@ -35,28 +35,28 @@
 
 - Python >= 3.10
 - Node.js >= 18
-- PostgreSQL >= 14
+- SQLite（随 Python 内置，无需额外数据库服务）
 
 ### 1. 配置数据库与环境变量
 
 ```bash
 cd backend
 cp .env.example .env
-# 编辑 .env：填入你的 ANTHROPIC_API_KEY 以及 PostgreSQL 的 DB_USER/DB_PASSWORD
+# 编辑 .env：填入你的 ANTHROPIC_API_KEY，按需调整 SQLITE_PATH
 ```
 
 ### 2. 初始化与启动后端
 
 #### 方法 A：使用 Docker Compose（推荐）
 
-项目根目录提供了 `docker-compose.yml` 文件，可通过容器方式一键启动 PostgreSQL 数据库与后端服务。
+项目根目录提供了 `docker-compose.yml` 文件，可通过容器方式一键启动后端服务，并将 SQLite 数据文件持久化到宿主机。
 
 ```bash
 # 在项目根目录执行
 docker-compose up -d --build
 ```
 
-> **提示**：如果使用 Docker 启动，您不需要在本地安装 Python 依赖或配置单独的 PostgreSQL 服务。第一次启动时会自动创建数据库及表结构。
+> **提示**：如果使用 Docker 启动，您不需要配置单独的数据库服务。第一次启动时会自动创建 SQLite 数据文件及表结构。
 > 后端服务运行在 `http://127.0.0.1:8000`。
 > 注意：环境变量文件 `.env` 依然需要配置，特别提供 `ANTHROPIC_API_KEY`。
 
@@ -68,7 +68,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 初次运行时，代码中的 init_db 会自动在 PostgreSQL 里创建表格
+# 初次运行时，代码中的 init_db 会自动在 SQLite 中创建表格
 python main.py
 ```
 
@@ -102,7 +102,7 @@ demo-agent/
 ├── backend/                  # FastAPI 核心处理层
 │   ├── main.py               # 路由入口与静态挂载
 │   ├── agent.py              # Deepagent Graph 定义与流式解析
-│   ├── config.py             # 配置模块（含 PostgreSQL, 目录等）
+│   ├── config.py             # 配置模块（含 SQLite, 目录等）
 │   ├── AGENTS.md             # ⭐️ 核心 Agent 系统提示词/人设注入
 │   ├── api/
 │   │   ├── routers/skills.py # Restful 技能查询接口

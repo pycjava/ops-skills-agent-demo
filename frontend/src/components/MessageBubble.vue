@@ -14,13 +14,11 @@ marked.setOptions({ breaks: true, gfm: true })
 
 const renderedContent = computed(() => {
   if (props.message.type === 'tool_result') {
-    let content = props.message.content || ''
+    const content = props.message.content || ''
     return marked.parse(`\`\`\`text\n${content}\n\`\`\``) as string
   }
 
   const raw = props.message.content || ''
-
-  // 流式输出时使用轻量渲染，避免每次 token 都重新解析完整 Markdown
   if (props.message.streaming) {
     return raw
       .replace(/&/g, '&amp;')
@@ -39,380 +37,387 @@ const toolInputJson = computed(() => {
   return ''
 })
 
-const linePrefix = computed(() => {
-  switch (props.message.role) {
-    case 'user': return { icon: '❯', label: 'you', cls: 'prefix-user' }
-    case 'assistant': return { icon: '◆', label: 'agent', cls: 'prefix-agent' }
-    case 'system': return { icon: '⚙', label: 'sys', cls: 'prefix-sys' }
-    default: return { icon: '?', label: '', cls: '' }
-  }
-})
+const isUser = computed(() => props.message.role === 'user' && props.message.type === 'text')
+const isAssistant = computed(
+  () => props.message.role === 'assistant' && props.message.type === 'text',
+)
+const isToolCall = computed(() => props.message.type === 'tool_call')
+const isToolResult = computed(() => props.message.type === 'tool_result')
+const isError = computed(() => props.message.type === 'error')
+
+const showThinking = ref(false)
+const showSystemContent = ref(false)
 
 const toolLabel = computed(() => {
-  if (props.message.type === 'tool_call') return `→ ${props.message.toolName}`
-  if (props.message.type === 'tool_result') return `← ${props.message.toolName}`
+  if (props.message.type === 'tool_call') return props.message.toolName || '工具调用'
+  if (props.message.type === 'tool_result') return props.message.toolName || '工具结果'
   return ''
 })
 
-const showThinking = ref(false)
-const showSysContent = ref(false)
+const metaLabel = computed(() => {
+  if (isToolCall.value) return '工具调用'
+  if (isToolResult.value) return '工具结果'
+  if (isError.value) return '系统提示'
+  return '系统消息'
+})
 
 const formattedTime = computed(() => {
   if (!props.message.timestamp) return ''
-  const d = new Date(props.message.timestamp)
-  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+  return new Date(props.message.timestamp).toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
 })
 </script>
 
 <template>
   <div class="msg" :class="[`msg-${message.role}`, `msg-${message.type}`]">
-    <!-- 标签行 -->
-    <div class="msg-head">
-      <span class="msg-prefix" :class="linePrefix.cls">
-        <span v-if="message.type === 'tool_call' && chatStore.isLoading" class="spinner"></span>
-        <span v-else>{{ linePrefix.icon }}</span> 
-        {{ linePrefix.label }}
-      </span>
-      <span v-if="toolLabel" class="msg-tool">{{ toolLabel }}</span>
-      <span v-if="message.type === 'error'" class="msg-err-badge">ERROR</span>
-      <span v-if="formattedTime" class="msg-time">{{ formattedTime }}</span>
+    <div v-if="isUser" class="user-row">
+      <div class="user-bubble">
+        <div v-html="renderedContent"></div>
+      </div>
     </div>
-    <!-- 内容 -->
-    <div class="msg-body">
-      <!-- Thinking 折叠区 -->
+
+    <article v-else-if="isAssistant" class="assistant-row">
       <div v-if="message.thinking" class="thinking-panel">
         <div class="thinking-header" @click="showThinking = !showThinking">
-          <span class="thinking-icon">{{ message.streaming ? '✨' : '💡' }}</span>
-          <span class="thinking-label">{{ message.streaming ? '思考中...' : '思考过程' }}</span>
-          <span class="thinking-toggle">{{ showThinking ? '▴' : '▾' }}</span>
+          <span class="thinking-badge">{{ message.streaming ? '思考中' : '思考过程' }}</span>
+          <span class="thinking-toggle">{{ showThinking ? '收起' : '展开' }}</span>
         </div>
         <div v-if="showThinking" class="thinking-body">
           {{ message.thinking }}
         </div>
       </div>
 
-      <!-- 工具调用：可折叠显示 -->
-      <div v-if="message.type === 'tool_call'" class="sys-panel">
-        <div class="sys-header" @click="showSysContent = !showSysContent">
-          <span class="sys-icon">⚙</span>
-          <span class="sys-label">{{ message.content }}</span>
-          <span class="sys-toggle">{{ showSysContent ? '▴' : '▾' }}</span>
+      <div class="assistant-content" v-html="renderedContent"></div>
+    </article>
+
+    <div v-else class="system-row">
+      <div class="system-meta">
+        <span class="system-badge" :class="{ danger: isError }">{{ metaLabel }}</span>
+        <span v-if="toolLabel" class="system-tool">{{ toolLabel }}</span>
+        <span v-if="formattedTime" class="system-time">{{ formattedTime }}</span>
+      </div>
+
+      <div v-if="isToolCall" class="sys-panel">
+        <div class="sys-header" @click="showSystemContent = !showSystemContent">
+          <span class="sys-title">{{ message.content }}</span>
+          <span v-if="message.type === 'tool_call' && chatStore.isLoading" class="spinner"></span>
+          <span v-else class="sys-toggle">{{ showSystemContent ? '收起' : '展开' }}</span>
         </div>
-        <div v-if="showSysContent" class="sys-body">
+
+        <div v-if="showSystemContent" class="sys-body">
           <pre v-if="toolInputJson"><code>{{ toolInputJson }}</code></pre>
           <span v-else class="sys-empty">无参数</span>
         </div>
       </div>
-      <!-- 工具结果：可折叠显示 -->
-      <div v-else-if="message.type === 'tool_result'" class="sys-panel sys-panel-result">
-        <div class="sys-header" @click="showSysContent = !showSysContent">
-          <span class="sys-icon">←</span>
-          <span class="sys-label">返回结果：{{ message.toolName }}</span>
-          <span class="sys-toggle">{{ showSysContent ? '▴' : '▾' }}</span>
+
+      <div v-else-if="isToolResult" class="sys-panel sys-panel-result">
+        <div class="sys-header" @click="showSystemContent = !showSystemContent">
+          <span class="sys-title">查看工具返回结果</span>
+          <span class="sys-toggle">{{ showSystemContent ? '收起' : '展开' }}</span>
         </div>
-        <div v-if="showSysContent" class="sys-body">
+
+        <div v-if="showSystemContent" class="sys-body">
           <div v-html="renderedContent"></div>
         </div>
       </div>
-      <div v-else v-html="renderedContent"></div>
+
+      <div v-else class="system-note" :class="{ 'system-note-error': isError }">
+        {{ message.content }}
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
 .msg {
-  padding: 6px 0;
-  line-height: 1.6;
-  animation: fadeIn 0.15s ease;
+  width: 100%;
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.msg-head {
+.user-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 12px;
+  justify-content: flex-end;
 }
 
-.spinner {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-radius: 50%;
-  border-top-color: var(--cyan);
-  animation: spin 1s ease-in-out infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.msg-prefix {
-  font-weight: 600;
-  font-size: 12px;
-}
-
-.prefix-user { color: var(--green); }
-.prefix-agent { color: var(--cyan); }
-.prefix-sys { color: var(--yellow); }
-
-.msg-tool {
-  color: var(--magenta);
-  font-size: 11px;
-}
-
-.msg-err-badge {
-  background: var(--red);
-  color: var(--bg);
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: 2px;
-  letter-spacing: 0.05em;
-}
-
-.msg-time {
-  margin-left: auto;
-  color: var(--text);
-  font-size: 10px;
-  opacity: 0.8;
-}
-
-/* ─── 内容区 ───── */
-.msg-body {
-  padding-left: 20px;
-  color: var(--text);
-}
-
-.msg-user .msg-body {
-  color: var(--text-bright);
-}
-
-.msg-error .msg-body {
-  color: var(--red);
-}
-
-/* tool_call / tool_result 紧凑显示 */
-.msg-tool_call,
-.msg-tool_result {
-  padding: 2px 12px;
-  margin: 4px 0;
-  border-radius: 4px;
-}
-
-/* ─── Sys 可折叠面板 ───── */
-.sys-panel {
+.user-bubble {
+  max-width: min(100%, 340px);
+  padding: 14px 18px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--bg-light);
-  border-left: 2px solid var(--magenta);
+  border-radius: 20px;
+  background: var(--bubble-user);
+  color: var(--text-strong);
+  box-shadow: 0 8px 20px rgba(86, 73, 51, 0.05);
 }
 
-.sys-panel-result {
-  border-left-color: var(--green);
+.user-bubble :deep(p) {
+  margin: 0;
+  line-height: 1.7;
+  word-break: break-word;
 }
 
-.sys-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 12px;
-  transition: background 0.1s;
+.assistant-row {
+  width: 100%;
+  color: var(--text-strong);
 }
 
-.sys-header:hover {
-  background: var(--bg-hover);
+.assistant-content {
+  font-size: 18px;
+  line-height: 1.85;
 }
 
-.sys-icon {
-  font-size: 12px;
-  color: var(--yellow);
-  flex-shrink: 0;
+.assistant-content :deep(p) {
+  margin: 0 0 16px;
 }
 
-.sys-label {
-  flex: 1;
-  color: var(--text-dim);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sys-toggle {
-  margin-left: auto;
-  color: var(--text-dim);
-  font-size: 10px;
-  flex-shrink: 0;
-}
-
-.sys-body {
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-  line-height: 1.5;
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.sys-body pre {
-  margin: 0 !important;
-  background: var(--bg) !important;
-}
-
-.sys-empty {
-  color: var(--text-dim);
-  font-style: italic;
-}
-
-/* Markdown 样式 — 终端风格 */
-.msg-body :deep(p) {
-  margin: 0 0 6px 0;
-}
-
-.msg-body :deep(p:last-child) {
+.assistant-content :deep(p:last-child) {
   margin-bottom: 0;
 }
 
-.msg-body :deep(pre) {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  padding: 10px 14px;
-  border-radius: 4px;
-  overflow-x: auto;
-  margin: 6px 0;
-  font-size: 12px;
-  line-height: 1.5;
+.assistant-content :deep(ul),
+.assistant-content :deep(ol) {
+  margin: 14px 0;
+  padding-left: 24px;
 }
 
-.msg-body :deep(code) {
-  font-family: inherit;
-  font-size: 12px;
+.assistant-content :deep(li) {
+  margin-bottom: 8px;
 }
 
-.msg-body :deep(p > code) {
-  background: var(--bg-panel);
-  color: var(--orange);
-  padding: 1px 5px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
+.assistant-content :deep(h1),
+.assistant-content :deep(h2),
+.assistant-content :deep(h3) {
+  margin: 24px 0 12px;
+  color: var(--text-strong);
+  line-height: 1.35;
 }
 
-.msg-body :deep(ul),
-.msg-body :deep(ol) {
-  padding-left: 18px;
-  margin: 6px 0;
+.assistant-content :deep(strong) {
+  font-weight: 700;
+  color: var(--text-strong);
 }
 
-.msg-body :deep(li) {
-  margin-bottom: 3px;
-}
-
-.msg-body :deep(strong) {
-  color: var(--text-bright);
-  font-weight: 600;
-}
-
-.msg-body :deep(a) {
-  color: var(--blue);
+.assistant-content :deep(a) {
+  color: var(--accent);
   text-decoration: none;
 }
 
-.msg-body :deep(a:hover) {
+.assistant-content :deep(a:hover) {
   text-decoration: underline;
 }
 
-.msg-body :deep(blockquote) {
-  border-left: 2px solid var(--text-dim);
-  padding-left: 12px;
-  margin: 6px 0;
-  color: var(--text-dim);
+.assistant-content :deep(blockquote) {
+  margin: 18px 0;
+  padding-left: 18px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
 }
 
-.msg-body :deep(h1),
-.msg-body :deep(h2),
-.msg-body :deep(h3) {
-  color: var(--text-bright);
-  margin: 8px 0 4px;
+.assistant-content :deep(pre) {
+  margin: 18px 0;
+  padding: 16px 18px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--card-strong);
+  font-size: 14px;
+  line-height: 1.7;
 }
 
-.msg-body :deep(table) {
+.assistant-content :deep(code) {
+  font-family:
+    'SFMono-Regular',
+    Consolas,
+    'Liberation Mono',
+    Menlo,
+    monospace;
+  font-size: 0.92em;
+}
+
+.assistant-content :deep(p > code) {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-strong);
+}
+
+.assistant-content :deep(table) {
+  width: 100%;
+  margin: 18px 0;
   border-collapse: collapse;
-  margin: 6px 0;
-  font-size: 12px;
-}
-
-.msg-body :deep(th),
-.msg-body :deep(td) {
-  border: 1px solid var(--border);
-  padding: 4px 10px;
-}
-
-.msg-body :deep(th) {
-  background: var(--bg-panel);
-  color: var(--text-bright);
-}
-
-/* ─── Thinking Panel ───── */
-.thinking-panel {
-  margin-bottom: 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
   overflow: hidden;
-  background: var(--bg-light);
+  border-radius: 16px;
+  font-size: 15px;
+}
+
+.assistant-content :deep(th),
+.assistant-content :deep(td) {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+}
+
+.assistant-content :deep(th) {
+  background: var(--bg-soft);
+  color: var(--text-strong);
+}
+
+.thinking-panel {
+  margin-bottom: 18px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+[data-theme='dark'] .thinking-panel {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .thinking-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
   cursor: pointer;
-  user-select: none;
+}
+
+.thinking-badge {
+  color: var(--warning);
   font-size: 12px;
-  transition: background 0.1s;
-}
-
-.thinking-header:hover {
-  background: var(--bg-hover);
-}
-
-.thinking-icon {
-  font-size: 13px;
-}
-
-.thinking-label {
-  color: var(--magenta);
-  font-weight: 600;
-  font-size: 11px;
-  letter-spacing: 0.03em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .thinking-toggle {
-  margin-left: auto;
-  color: var(--text-dim);
-  font-size: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .thinking-body {
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.6;
+  padding: 0 14px 14px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.75;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 300px;
-  overflow-y: auto;
+}
+
+.system-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.system-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.system-badge {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.system-badge.danger {
+  background: rgba(200, 111, 100, 0.12);
+  color: var(--danger);
+}
+
+.system-tool {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.system-time {
+  margin-left: auto;
+}
+
+.sys-panel,
+.system-note {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.36);
+}
+
+[data-theme='dark'] .sys-panel,
+[data-theme='dark'] .system-note {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sys-panel-result {
+  border-color: rgba(113, 147, 111, 0.26);
+}
+
+.sys-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+
+.sys-title {
+  flex: 1;
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.sys-toggle {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.sys-body {
+  padding: 0 16px 16px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.sys-body pre {
+  margin: 0 !important;
+  padding: 14px 16px;
+  overflow-x: auto;
+  border-radius: 14px;
+  background: var(--card-strong) !important;
+}
+
+.sys-empty {
+  color: var(--text-muted);
+}
+
+.system-note {
+  padding: 14px 16px;
+  color: var(--text);
+  line-height: 1.7;
+}
+
+.system-note-error {
+  border-color: rgba(200, 111, 100, 0.28);
+  color: var(--danger);
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(139, 115, 255, 0.2);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

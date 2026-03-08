@@ -17,43 +17,48 @@ const emit = defineEmits<{
 const searchQuery = ref('')
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-watch(searchQuery, (val) => {
+watch(searchQuery, (value) => {
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
-    emit('search', val)
+    emit('search', value)
   }, 300)
 })
 
 function formatTime(iso: string | null): string {
   if (!iso) return ''
-  const d = new Date(iso)
+
+  const date = new Date(iso)
   const now = new Date()
-  const diff = now.getTime() - d.getTime()
+  const diff = now.getTime() - date.getTime()
 
   if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}小时前`
-  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}天前`
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)} 天前`
 
-  return `${d.getMonth() + 1}/${d.getDate()}`
+  return `${date.getMonth() + 1}/${date.getDate()}`
 }
 </script>
 
 <template>
   <div class="conv-list">
     <button class="new-conv" @click="emit('create')">
-      <span class="plus">+</span>
+      <span class="plus">＋</span>
       <span>新对话</span>
     </button>
 
-    <div class="search-box">
-      <input
-        v-model="searchQuery"
-        type="text"
-        class="search-input"
-        placeholder="搜索历史对话..."
-      />
-      <span class="search-icon">🔍</span>
+    <div class="list-section">
+      <div class="section-title">历史对话</div>
+
+      <div class="search-box">
+        <input
+          v-model="searchQuery"
+          type="text"
+          class="search-input"
+          placeholder="搜索历史对话"
+        />
+        <span class="search-icon">⌕</span>
+      </div>
     </div>
 
     <div class="list">
@@ -64,195 +69,230 @@ function formatTime(iso: string | null): string {
         :class="{ active: conv.id === currentId }"
         @click="emit('select', conv.id)"
       >
-        <div class="conv-info">
-          <div class="title-wrapper">
+        <div class="conv-main">
+          <div class="conv-title-row">
             <span v-if="conv.source === 'api'" class="api-badge">API</span>
             <span class="conv-title">{{ conv.title || '新对话' }}</span>
           </div>
           <span class="conv-time">{{ formatTime(conv.updated_at) }}</span>
         </div>
-        <button
-          class="del-btn"
-          @click.stop="emit('delete', conv.id)"
-          title="删除"
-        >✕</button>
-      </div>
-    </div>
 
-    <div v-if="conversations.length === 0" class="empty">
-      <span class="dim">{{ searchQuery ? '未找到匹配的对话' : '暂无会话' }}</span>
+        <button class="del-btn" title="删除会话" @click.stop="emit('delete', conv.id)">
+          ✕
+        </button>
+      </div>
+
+      <div v-if="conversations.length === 0" class="empty">
+        <span class="empty-text">
+          {{ searchQuery ? '没有找到匹配的会话' : '还没有历史对话' }}
+        </span>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
 .conv-list {
-  display: flex;
-  flex-direction: column;
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 12px 16px;
+}
+
+.new-conv {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin: 6px 0 18px;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.45);
+  color: var(--text-strong);
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.new-conv:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: var(--card-strong);
+}
+
+.plus {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.list-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.section-title {
+  padding: 0 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .search-box {
-  padding: 0 10px 6px;
   position: relative;
 }
 
 .search-input {
   width: 100%;
-  padding: 6px 30px 6px 10px;
-  font-size: 12px;
-  font-family: inherit;
-  background: var(--bg-input);
-  color: var(--text-bright);
+  height: 42px;
+  padding: 0 38px 0 14px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.45);
+  color: var(--text-strong);
   outline: none;
-  transition: border-color 0.15s;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.search-input:focus {
+  border-color: var(--border-strong);
+  background: var(--card-strong);
+}
+
+.search-input::placeholder {
+  color: var(--text-soft);
 }
 
 .search-icon {
   position: absolute;
-  right: 18px;
+  right: 14px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 12px;
+  color: var(--text-soft);
   pointer-events: none;
-  opacity: 0.5;
-}
-
-.search-input:focus {
-  border-color: var(--blue);
-}
-
-.search-input::placeholder {
-  color: var(--text-dim);
-}
-
-.new-conv {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 10px 10px 6px;
-  padding: 7px 12px;
-  font-size: 12px;
-  font-family: inherit;
-  background: transparent;
-  color: var(--green);
-  border: 1px dashed var(--border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.new-conv:hover {
-  border-color: var(--green);
-  background: var(--bg-hover);
-}
-
-.plus {
-  font-size: 14px;
-  font-weight: 700;
 }
 
 .list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 0 6px;
+  padding-right: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.list::-webkit-scrollbar { width: 4px; }
-.list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
 
 .conv-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  margin: 1px 0;
-  border-radius: 4px;
+  gap: 8px;
+  padding: 12px 10px 12px 12px;
+  border-radius: 16px;
   cursor: pointer;
-  transition: background 0.1s;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
 }
 
 .conv-item:hover {
-  background: var(--bg-hover);
+  background: var(--selection);
 }
 
 .conv-item.active {
-  background: var(--selection);
-  border-left: 2px solid var(--cyan);
-  padding-left: 8px;
+  background: var(--hover);
 }
 
-.conv-info {
+.conv-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+}
+
+.conv-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .conv-title {
-  font-size: 12px;
-  color: var(--text-bright);
-  white-space: nowrap;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
-}
-
-.title-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
+  white-space: nowrap;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .api-badge {
-  font-size: 9px;
-  background: var(--blue);
-  color: #fff;
-  padding: 2px 4px;
-  border-radius: 3px;
-  line-height: 1;
-  font-weight: 600;
-  flex-shrink: 0;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(139, 115, 255, 0.12);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .conv-time {
-  font-size: 10px;
-  color: var(--text-dim);
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .del-btn {
-  background: none;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
   border: none;
-  color: var(--text-dim);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-soft);
   cursor: pointer;
-  font-size: 10px;
-  padding: 2px 4px;
-  border-radius: 2px;
   opacity: 0;
-  transition: all 0.1s;
+  transition:
+    opacity 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
-.conv-item:hover .del-btn {
+.conv-item:hover .del-btn,
+.conv-item.active .del-btn {
   opacity: 1;
 }
 
 .del-btn:hover {
-  color: var(--red);
-  background: var(--bg-hover);
+  background: rgba(200, 111, 100, 0.12);
+  color: var(--danger);
 }
 
 .empty {
-  padding: 20px;
-  text-align: center;
+  padding: 18px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.22);
 }
 
-.dim {
-  color: var(--text-dim);
-  font-size: 12px;
+.empty-text {
+  color: var(--text-muted);
+  font-size: 13px;
 }
 </style>
