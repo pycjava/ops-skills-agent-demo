@@ -38,11 +38,20 @@ const mentionSearch = ref('')
 const mentionIndex = ref(0)
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
+const agentLabels = computed(() =>
+  Object.fromEntries(chatStore.agents.map((agent) => [agent.id, agent.label])),
+)
+const activeAgentLabel = computed(
+  () => chatStore.activeAgent?.label || agentLabels.value[chatStore.activeAgentId] || chatStore.activeAgentId,
+)
 
 const filteredSkills = computed(() => {
   if (!showMentions.value) return []
   const search = mentionSearch.value.toLowerCase()
-  return chatStore.skills.filter((skill) => skill.name.toLowerCase().includes(search))
+  return chatStore.skills.filter(
+    (skill) =>
+      skill.id.toLowerCase().includes(search) || skill.name.toLowerCase().includes(search),
+  )
 })
 
 const currentConversation = computed(() =>
@@ -131,12 +140,13 @@ function closeInspector() {
   showInspector.value = false
 }
 
-onMounted(() => {
+onMounted(async () => {
   document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
   syncGreetingClock()
   chatStore.connect()
-  chatStore.fetchSkills()
-  chatStore.fetchConversations()
+  await chatStore.fetchAgents()
+  await chatStore.fetchConversations()
+  await chatStore.fetchSkills()
 })
 
 onBeforeUnmount(() => {
@@ -166,7 +176,7 @@ function handleSend() {
   if (matches) {
     const mentionedSkills = matches
       .map((match) => match.slice(1))
-      .filter((name) => chatStore.skills.some((skill) => skill.name === name))
+      .filter((name) => chatStore.skills.some((skill) => skill.id === name))
 
     if (mentionedSkills.length > 0) {
       const uniqueSkills = [...new Set(mentionedSkills)]
@@ -204,7 +214,7 @@ function handleKeyDown(event: KeyboardEvent) {
       event.preventDefault()
       const selected = filteredSkills.value[mentionIndex.value]
       if (selected) {
-        selectMention(selected.name)
+        selectMention(selected.id)
       }
       return
     }
@@ -254,6 +264,7 @@ watch(scrollTrigger, async () => {
       <ConversationList
         :conversations="chatStore.conversations"
         :current-id="chatStore.currentConversationId"
+        :agent-labels="agentLabels"
         @select="chatStore.switchConversation"
         @create="chatStore.createConversation"
         @delete="chatStore.deleteConversation"
@@ -300,17 +311,33 @@ watch(scrollTrigger, async () => {
         <div class="hero-panel">
           <h1 class="hero-title">{{ heroTitle }}</h1>
 
+          <div v-if="chatStore.agents.length > 0" class="agent-selector">
+            <span class="agent-selector-label">新对话 Agent</span>
+            <div class="agent-selector-list">
+              <button
+                v-for="agent in chatStore.agents"
+                :key="agent.id"
+                class="agent-selector-item"
+                :class="{ active: agent.id === chatStore.draftAgentId }"
+                @click="chatStore.setDraftAgent(agent.id)"
+              >
+                <span class="agent-selector-name">{{ agent.label }}</span>
+                <span class="agent-selector-id">{{ agent.id }}</span>
+              </button>
+            </div>
+          </div>
+
           <div class="composer composer-home">
             <div v-if="showMentions && filteredSkills.length > 0" class="mentions-popup">
               <div
                 v-for="(skill, index) in filteredSkills"
-                :key="skill.name"
+                :key="skill.id"
                 class="mention-item"
                 :class="{ active: index === mentionIndex }"
-                @click="selectMention(skill.name)"
+                @click="selectMention(skill.id)"
                 @mouseenter="mentionIndex = index"
               >
-                <span class="mention-name">@{{ skill.name }}</span>
+                <span class="mention-name">@{{ skill.id }}</span>
                 <span class="mention-desc">{{ skill.description }}</span>
               </div>
             </div>
@@ -357,7 +384,10 @@ watch(scrollTrigger, async () => {
 
       <section v-else class="chat-state">
         <div class="chat-header">
-          <span class="chat-kicker">{{ currentConversationSubtitle }}</span>
+          <div class="chat-meta">
+            <span class="chat-kicker">{{ currentConversationSubtitle }}</span>
+            <span class="agent-chip">{{ activeAgentLabel }}</span>
+          </div>
           <h2 class="chat-title">{{ currentConversationTitle }}</h2>
         </div>
 
@@ -381,13 +411,13 @@ watch(scrollTrigger, async () => {
             <div v-if="showMentions && filteredSkills.length > 0" class="mentions-popup">
               <div
                 v-for="(skill, index) in filteredSkills"
-                :key="skill.name"
+                :key="skill.id"
                 class="mention-item"
                 :class="{ active: index === mentionIndex }"
-                @click="selectMention(skill.name)"
+                @click="selectMention(skill.id)"
                 @mouseenter="mentionIndex = index"
               >
-                <span class="mention-name">@{{ skill.name }}</span>
+                <span class="mention-name">@{{ skill.id }}</span>
                 <span class="mention-desc">{{ skill.description }}</span>
               </div>
             </div>
@@ -709,6 +739,64 @@ input {
   text-align: center;
 }
 
+.agent-selector {
+  width: min(100%, 820px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-selector-label {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.agent-selector-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.agent-selector-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.agent-selector-item:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: var(--card-strong);
+}
+
+.agent-selector-item.active {
+  border-color: rgba(139, 115, 255, 0.35);
+  background: rgba(139, 115, 255, 0.12);
+  color: var(--text-strong);
+}
+
+.agent-selector-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agent-selector-id {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .composer {
   position: relative;
   width: 100%;
@@ -858,11 +946,28 @@ input {
   padding: 2px 8px 10px;
 }
 
+.chat-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
 .chat-kicker {
   display: inline-flex;
-  margin-bottom: 8px;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(139, 115, 255, 0.12);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .chat-title {

@@ -9,11 +9,15 @@ from collections import defaultdict, deque
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from config import ANTHROPIC_API_KEY
-from db.session import AsyncSessionLocal
-from models import Conversation
 from agent import run_agent
 from api.ws.chat import save_message
+from config import ANTHROPIC_API_KEY
+from db.session import AsyncSessionLocal
+from services.conversation_state import (
+    create_conversation,
+    get_conversation,
+    get_conversation_agent_id,
+)
 from utils.logger import logger
 
 
@@ -26,16 +30,19 @@ class ChatRequest(BaseModel):
     skill: str | None = Field(
         None, description="指定使用的 Skill 名称，如 mysql-sql-analyzer"
     )
+    agent_id: str | None = Field(None, description="指定目标 Agent，如 dba / ops")
 
 
 class ToolCallRecord(BaseModel):
     tool_name: str
     tool_input: dict | None = None
+    artifact_kind: str | None = None
     result: str = ""
 
 
 class ChatResponse(BaseModel):
     conversation_id: str
+    agent_id: str
     content: str = Field("", description="Agent 最终回复文本")
     thinking: str = Field("", description="Agent 思考过程")
     tool_calls: list[ToolCallRecord] = Field(
@@ -53,26 +60,42 @@ async def agent_chat(req: ChatRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=503, detail="未配置 ANTHROPIC_API_KEY")
 
-    # 获取或创建会话
     conv_id = req.conversation_id
-    if not conv_id:
-        async with AsyncSessionLocal() as session:
-            conv = Conversation(source="api")
-            session.add(conv)
-            await session.commit()
-            await session.refresh(conv)
-            conv_id = conv.id
-            logger.info(f"[HTTP API] 新建对话 {conv_id}")
+    resolved_agent_id = req.agent_id
 
-    # 如果指定了 skill，将 @skill 前缀加入消息
+    async with AsyncSessionLocal() as session:
+        if conv_id:
+            conversation = await get_conversation(session, conv_id)
+            if conversation is None:
+                raise HTTPException(status_code=404, detail="会话不存在")
+            resolved_agent_id = get_conversation_agent_id(conversation)
+        else:
+            try:
+                conversation = await create_conversation(
+                    session,
+                    source="api",
+                    agent_id=req.agent_id,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            conv_id = conversation.id
+            resolved_agent_id = conversation.agent_id
+            logger.info(
+                f"[HTTP API] 新建对话 {conv_id}, agent_id={resolved_agent_id}"
+            )
+
     user_message = req.message
     if req.skill:
         user_message = f"@{req.skill} {user_message}"
 
-    # 保存用户消息
-    await save_message(conv_id, "user", user_message, "text")
+    await save_message(
+        conv_id,
+        "user",
+        user_message,
+        "text",
+        agent_id=resolved_agent_id,
+    )
 
-    # 收集 Agent 执行结果
     result_text = ""
     result_thinking = ""
     tool_calls: list[ToolCallRecord] = []
@@ -83,6 +106,7 @@ async def agent_chat(req: ChatRequest):
 
         etype = event.get("type")
         tool_name = event.get("tool_name", "")
+        event_agent_id = event.get("agent_id") or resolved_agent_id
 
         if etype == "text_delta":
             result_text += event.get("content", "")
@@ -97,25 +121,30 @@ async def agent_chat(req: ChatRequest):
 
         elif etype == "tool_result":
             tool_input = event.get("tool_input")
-            if not isinstance(tool_input, dict) and tool_name:
-                queued_inputs = pending_tool_inputs.get(tool_name)
+            queued_inputs = pending_tool_inputs.get(tool_name) if tool_name else None
+            if isinstance(tool_input, dict):
                 if queued_inputs:
-                    tool_input = queued_inputs.popleft()
+                    queued_inputs.popleft()
                     if not queued_inputs:
                         pending_tool_inputs.pop(tool_name, None)
+            elif queued_inputs:
+                tool_input = queued_inputs.popleft()
+                if not queued_inputs:
+                    pending_tool_inputs.pop(tool_name, None)
             tool_calls.append(
                 ToolCallRecord(
                     tool_name=tool_name,
                     tool_input=tool_input if isinstance(tool_input, dict) else None,
+                    artifact_kind=event.get("artifact_kind"),
                     result=event.get("result", ""),
                 )
             )
-            # 持久化工具消息
             await save_message(
                 conv_id,
                 "system",
                 event.get("result", ""),
                 "tool_result",
+                agent_id=event_agent_id,
                 tool_name=tool_name,
                 tool_input=tool_input if isinstance(tool_input, dict) else None,
             )
@@ -126,21 +155,29 @@ async def agent_chat(req: ChatRequest):
             )
 
         elif etype == "done":
-            # 持久化最终回复
             if result_text:
                 await save_message(
                     conv_id,
                     "assistant",
                     result_text,
                     "text",
+                    agent_id=event_agent_id,
                     thinking=result_thinking or None,
                 )
 
-    logger.info(f"[HTTP API] 对话 {conv_id} 开始执行 Agent")
-    await run_agent(user_message=user_message, conv_id=conv_id, on_event=on_event)
+    logger.info(
+        f"[HTTP API] 对话 {conv_id} 开始执行 Agent, agent_id={resolved_agent_id}"
+    )
+    await run_agent(
+        user_message=user_message,
+        conv_id=conv_id,
+        on_event=on_event,
+        agent_id=resolved_agent_id,
+    )
 
     return ChatResponse(
         conversation_id=conv_id,
+        agent_id=resolved_agent_id or "",
         content=result_text,
         thinking=result_thinking,
         tool_calls=tool_calls,

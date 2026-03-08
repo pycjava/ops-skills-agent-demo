@@ -1,13 +1,14 @@
 # Claude Agent Web Service — DeepAgents 进阶版
 
-基于 **FastAPI + Vue 3 + DeepAgents** 构建的 Web 对话 Agent。已支持完整的长时记忆对话上下文、多组件 UI 及基于 Markdown 零代码的 Skill 加载能力。
+基于 **FastAPI + Vue 3 + DeepAgents** 构建的 Web 对话 Agent。当前已落地 **多 Agent 基础版**：内置 `general` / `dba` / `ops` 三类 Agent，支持会话级 Agent 绑定、长时记忆上下文、多组件 UI，以及基于 Markdown 的 Skills 公共仓库 + 白名单装配能力。
 
 ## ✨ 核心特性
 
 - **DeepAgents & LangGraph**：底层抛弃基础调用，转用 LangGraph 架构，原生支持复杂 Agent 循环并提供安全的 LocalShellBackend。
+- **多 Agent 基础版**：内置 `general`、`dba`、`ops` 三类 Agent；会话创建后固定绑定 `agent_id`，并为后续 Router / Supervisor 升级保留接口与数据位。
+- **Skills 公共仓库 + 白名单装配**：所有 Skills 统一存放在 `backend/skills/`，每个 Agent 只加载自己被授权的 Skill 子集。
 - **打字机流式输出 (Streaming)**：真正的逐 Token 细粒度推流（通过 WebSocket），前端实时回显思考及回答过程。
-- **全自动零代码技能 (Skills)**：后端取消硬编码，仅需丢入 Markdown 技能描述（`backend/skills/`），Agent 热插拔即可拥有系统级能力。
-- **原生上下文记忆**：集成 `MemorySaver`，数据库与图状态协同，真正记住你在历史会话里聊了什么。
+- **原生上下文记忆**：集成 LangGraph Checkpointer / Store，既保留同一会话上下文，也为 Agent 级长期记忆留出命名空间。
 - **持久化存储 (SQLite)**：彻底从内存切到数据库，持久化你的全部对话列表、消息与 Agent 状态，前端随时加载漫游。
 - **高颜值纯享 UI**：分离左右双侧边栏（会话列表与动态技能表），黑暗/明亮模式无缝切换，参数结果代码块高亮。
 
@@ -50,6 +51,11 @@ cp .env.example .env
 #### 方法 A：使用 Docker Compose（推荐）
 
 项目根目录提供了 `docker-compose.yml` 文件，可通过容器方式一键启动后端服务，并将 SQLite 数据文件持久化到宿主机。
+默认同时挂载：
+
+- `./backend/skills -> /app/skills`
+- `./backend/prompts -> /app/prompts`
+- `./backend/data -> /app/data`
 
 ```bash
 # 在项目根目录执行
@@ -58,6 +64,7 @@ docker-compose up -d --build
 
 > **提示**：如果使用 Docker 启动，您不需要配置单独的数据库服务。第一次启动时会自动创建 SQLite 数据文件及表结构。
 > 后端服务运行在 `http://127.0.0.1:8000`。
+> 如需热修改 Agent 提示词，请直接编辑宿主机上的 `backend/prompts/*.md`；容器内对应路径为 `/app/prompts/*.md`。
 > 注意：环境变量文件 `.env` 依然需要配置，特别提供 `ANTHROPIC_API_KEY`。
 
 #### 方法 B：本地环境运行
@@ -95,40 +102,112 @@ npm run dev
 
 打开浏览器访问，开启你的 Agent 会话。
 
+## 🧩 多 Agent 快速上手
+
+当前版本内置 3 个 Agent，推荐按下面方式开始使用：
+
+| Agent | 适合什么问题 | 默认可用 Skills |
+| --- | --- | --- |
+| `general` | 通用问答、文件阅读、代码解释、Markdown 整理 | `file_reader`、`code_explainer`、`obsidian-markdown` |
+| `dba` | MySQL SQL 分析、执行计划解读、Volcengine RDS 健康巡检 | `mysql-sql-analyzer`、`volcengine-rds-health-analyzer` |
+| `ops` | 远程运维、Docker 排障、Kubernetes 诊断 | `remote-ops`、`docker`、`kubernetes` |
+
+- 进入首页后，先选择本次新对话要使用的 Agent。
+- 点击“新对话”后，前端会进入一个**草稿会话**；真正的 `conversation_id` 会在你发送第一条消息时创建。
+- 一旦会话创建成功，该会话就固定绑定当前 `agent_id`；如果要切换 Agent，请新建对话。
+- 右侧技能面板和输入框里的 `@skill` 补全，只会显示当前 Agent 可用的 Skills。
+- 历史旧会话、旧客户端或未显式传入 `agent_id` 的请求，默认都会落到 `general`。
+
+## 🤖 多 Agent 使用说明
+
+### 1) 先分清 Agent 和 Skill
+
+- **Agent** 是职责、权限和上下文边界，例如 `general`、`dba`、`ops`。
+- **Skill** 是公共能力资产，统一存放在 `backend/skills/`。
+- 关系不是“每个 Skill 都属于一个 Agent”，而是“Skill 放在公共仓库里，再按 Agent Profile 白名单授权使用”。
+
+### 2) 当前内置 Agent 一览
+
+| agent_id | 显示名称 | 主要职责 | 可用 Skills | 风险等级 |
+| --- | --- | --- | --- | --- |
+| `general` | 通用助手 | 通用问答、文件阅读、代码解释、Markdown 整理 | `file_reader`、`code_explainer`、`obsidian-markdown` | `low` |
+| `dba` | 数据库助手 | MySQL SQL 分析、RDS 巡检、数据库诊断 | `mysql-sql-analyzer`、`volcengine-rds-health-analyzer` | `medium` |
+| `ops` | 运维助手 | 远程运维、Docker 排障、Kubernetes 诊断 | `remote-ops`、`docker`、`kubernetes` | `high` |
+
+### 3) Web UI 怎么用
+
+- 首页顶部会显示 Agent 选择器；你可以先选 `general` / `dba` / `ops`，再发送第一条消息。
+- 左侧会话列表会显示每个历史会话所属的 Agent badge。
+- 聊天页头部也会显示当前会话的 Agent badge，方便确认自己正在和哪个 Agent 交互。
+- “新对话”不会立即落库，而是进入草稿态；首条消息发出后，后端才会创建 `Conversation(agent_id=...)`。
+
+### 4) 会话、上下文与兼容规则
+
+- `conversation_id` 绑定的是一个会话实例，`agent_id` 绑定的是这个会话的 owner/default agent。
+- 会话一旦创建，后续请求即使再传别的 `agent_id`，后端也会以会话绑定的 `agent_id` 为准。
+- LangGraph 侧仍然使用 `thread_id = conv_id` 维持同一会话的图状态连续性。
+- `Message.agent_id` 会记录每条消息的实际执行 Agent；当前版本通常与会话 `agent_id` 一致，但它也为未来 handoff / supervisor 预留了扩展位。
+- 对旧数据库里的历史数据，系统会自动回填 `agent_id = general`，保证兼容。
+
+### 5) 记忆与权限边界
+
+- `/memories/` 仍是公共持久化存储入口，但新的长期记忆建议写入 `/memories/agents/<agent_id>/...`。
+- 当前前端记忆面板还没有做按 Agent 的强过滤，但命名约定已经为后续隔离做好准备。
+- Skills 和工具权限不是靠前端隐藏实现的，而是在 Agent Runtime 创建时按白名单注入。
+- 这意味着 `general` 运行时根本不会拿到 `remote-ops` / `docker` / `kubernetes` 这些高风险技能。
+
 ## 📂 项目结构
 
 ```text
 demo-agent/
 ├── backend/                  # FastAPI 核心处理层
-│   ├── main.py               # 路由入口与静态挂载
-│   ├── agent.py              # Deepagent Graph 定义与流式解析
+│   ├── main.py               # FastAPI 入口与多 Agent 路由注册
+│   ├── agent.py              # 多 Agent 统一运行入口（按 agent_id 分发）
+│   ├── agent_profiles.py     # Agent 声明式配置（提示词、Skills、能力边界）
+│   ├── agent_manager.py      # Agent Runtime 注册表 / 懒加载缓存
+│   ├── skill_catalog.py      # Skills 元数据扫描与白名单路径解析
+│   ├── prompts/              # base/general/dba/ops prompt 组合（Compose 热挂载到 /app/prompts）
 │   ├── config.py             # 配置模块（含 SQLite, 目录等）
-│   ├── AGENTS.md             # ⭐️ 核心 Agent 系统提示词/人设注入
 │   ├── api/
-│   │   ├── routers/skills.py # Restful 技能查询接口
-│   │   └── ws/chat.py        # WebSocket 连接、增量推流分发、数据库写库
+│   │   ├── routers/
+│   │   │   ├── agents.py         # Agent Catalog 接口
+│   │   │   ├── conversations.py  # 会话管理（含 agent_id）
+│   │   │   ├── skills.py         # Skills 查询与按 Agent 过滤
+│   │   │   ├── agent.py          # 同步 Agent 调用接口
+│   │   │   └── memories.py       # 长期记忆读取接口
+│   │   └── ws/chat.py        # WebSocket 连接、Agent 绑定、增量推流分发、数据库写库
 │   ├── db/
 │   │   ├── session.py        # SQLAlchemy 异步引擎
 │   │   └── base_class.py     # Base
-│   ├── models/               # ORM 表模型 (Conversation, Message)
+│   ├── models/               # ORM 表模型 (Conversation, Message, agent_id)
+│   ├── services/
+│   │   └── conversation_state.py # 会话与 agent_id 绑定逻辑
 │   └── skills/               # ⭐️ Markdown 格式的指令集
-│       ├── shell_command.md
-│       ├── file_reader.md
-│       └── code_explainer.md
+│       ├── remote-ops/
+│       ├── mysql-sql-analyzer/
+│       ├── volcengine-rds-health-analyzer/
+│       └── ...
 └── frontend/                 # Vue 3 前端界面
     ├── index.html
     ├── src/
-    │   ├── App.vue           # 布局框架 (左会话、中聊天、右技能)
-    │   ├── stores/chat.ts    # 基于 Pinia 的状态流转器 & WebSocket 控制中心
+    │   ├── App.vue           # 布局框架（含 Agent 选择器 / 会话 badge）
+    │   ├── stores/chat.ts    # Pinia 状态中心（Agent / 会话 / Skills / WS）
     │   └── components/
-    │       ├── MessageBubble.vue     # Markdown 富文本渲染与指令折腾
-    │       ├── ConversationList.vue  # 历史会话漫游
-    │       └── SkillPanel.vue        # 技能卡片
+    │       ├── MessageBubble.vue     # Markdown 富文本渲染与指令折叠
+    │       ├── ConversationList.vue  # 历史会话 + Agent badge
+    │       └── SkillPanel.vue        # 当前 Agent 的技能卡片
 ```
 
 ## 🧭 架构与实现
 
 这一节不重复“如何启动”，而是站在**架构评审 / 技术接手**的角度，说明本项目到底用了哪些技术、它们分别负责什么，以及一次请求是如何穿过前端、后端、Agent、Skills 和存储层的。
+
+当前版本已经从“单 Agent + 全量 Skills”演进为“**多 Agent 基础版**”：
+
+- Skill 继续作为公共能力仓库存在于 `backend/skills/`
+- Agent 通过 `AgentProfile -> AgentManager -> Runtime` 链路构建
+- Conversation 固定绑定 `agent_id`
+- Message 记录实际执行 Agent，为未来 Router / Supervisor / Handoff 留出升级空间
 
 ### 技术选型总览
 
@@ -167,44 +246,52 @@ demo-agent/
 | `AsyncSqliteStore` | LangGraph Store | 为 `/memories/` 提供跨会话持久化存储 |
 | `LocalShellBackend / CompositeBackend / StoreBackend` | 工具路由层 | 把本地文件、Shell 和记忆文件分别路由到不同后端 |
 
-这里最关键的一点是：本项目不是“直接调 Claude API 返回文本”，而是先构建一个 **Deep Agent Runtime**，再把模型、Skills、记忆、Shell 能力绑定进去，最后通过 WebSocket / HTTP 暴露给前端和程序调用方。
+这里最关键的一点是：本项目不是“直接调 Claude API 返回文本”，而是先构建一个 **多 Agent Runtime 层**，再把模型、profile prompt、Skills 白名单、记忆、Shell 能力绑定进去，最后通过 WebSocket / HTTP 暴露给前端和程序调用方。
 
 ### 核心组件职责
 
 #### `backend/main.py`
 
 - 作为 FastAPI 入口，负责创建应用、挂载路由和注册启动/关闭钩子。
-- 启动时先调用 `init_db()` 创建业务表，再调用 `init_agent_runtime()` 初始化 Deep Agent、LangGraph Checkpointer 和 Store。
-- 对外挂出 5 类能力：会话管理、技能列表、同步 Agent 调用、记忆读取、WebSocket 聊天。
+- 启动时先调用 `init_db()` 创建业务表，再调用 `init_agent_runtime()` 初始化多 Agent 共享的 LangGraph Checkpointer、Store 与模型实例。
+- 对外挂出 6 类能力：Agent Catalog、会话管理、技能列表、同步 Agent 调用、记忆读取、WebSocket 聊天。
+
+#### `backend/agent_profiles.py` + `backend/agent_manager.py`
+
+- `AgentProfile` 定义 `id`、`label`、`prompt_paths`、`skills`、`capabilities`、`risk_level`、`execution_mode`、`allowed_handoffs`。
+- `AgentManager` 负责按 `agent_id` 懒加载并缓存 Runtime，而不是启动时一次性创建全部 Agent。
+- 每个 Runtime 都会组合：
+  - 基础 prompt
+  - profile prompt
+  - runtime hint（当前 Agent 的边界、风险等级、handoff 预留位）
+  - profile 对应的 Skills 白名单
 
 #### `backend/agent.py`
 
-- 这是 Agent Runtime 的核心装配文件。
-- 通过 `ChatAnthropic(...)` 绑定底层大模型，通过 `create_deep_agent(...)` 组装出真正可运行的 Agent。
-- `memory=["./AGENTS.md"]` 会把 `backend/AGENTS.md` 作为运行时系统提示注入给 Agent；这也是 Agent“人设 / 工作原则 / 禁止事项”的主入口。
-- `skills=["./skills/"]` 会自动扫描 `backend/skills/` 下的技能目录并加载 `SKILL.md`。
-- `_make_backend()` 使用 `CompositeBackend` 做路径路由：
-  - 普通项目路径 → `LocalShellBackend`
-  - `/memories/` → `StoreBackend`
-- `thread_id = conv_id` 把 LangGraph 的上下文线程和业务会话绑定在一起，使得“同一个会话继续对话”既能读到历史消息，也能续接 Agent 图状态。
+- 这是多 Agent 统一运行入口。
+- `run_agent(...)` 会根据会话绑定的 `agent_id` 向 `AgentManager` 取回对应 Runtime。
+- Runtime 执行时仍然使用 `thread_id = conv_id`，因此“继续这个会话”依旧能续接 LangGraph 图状态。
+- 所有流式事件都会带上 `agent_id`，前端与 API 调用方可以感知当前是哪一个 Agent 在执行。
 
 #### `backend/api/ws/chat.py`
 
 - 这是浏览器实时聊天的桥梁。
 - 负责处理 4 类客户端消息：
-  - `init`：绑定或创建会话
-  - `message`：提交用户问题并启动 Agent
+  - `init`：绑定或预备创建会话，可在草稿阶段携带 `agent_id`
+  - `message`：提交用户问题并启动 Agent；若当前没有会话，则按传入 `agent_id` 创建新会话
   - `clear`：清空当前会话消息
   - `abort`：中断正在执行的 Agent
 - 负责把 Agent Runtime 的事件转换成前端可消费的 WebSocket 事件，如 `text_delta`、`thinking_delta`、`tool_call`、`tool_result`、`done`、`error`。
-- 负责把用户消息、工具调用结果、最终回答、错误等同步落到 SQLite。
+- `session`、`title_update`、`tool_call`、`tool_result`、`done` 等事件都会透出当前 `agent_id`。
+- 负责把用户消息、工具调用结果、最终回答、错误等同步落到 SQLite，并把 `Message.agent_id` 一起写入。
 - 负责为“新对话”的第一条消息自动生成标题，并通过 `title_update` 推回前端。
 
 #### `backend/api/routers/*.py`
 
-- `conversations.py`：提供会话列表、创建会话、加载历史消息、删除会话。
-- `skills.py`：扫描 `backend/skills/` 并解析每个 `SKILL.md` 的元数据，把技能名和描述返回给前端。
-- `agent.py`：提供同步 `POST /api/agent/chat`，方便 CI/CD、告警系统、脚本程序直接调用 Agent。
+- `agents.py`：提供 `GET /api/agents`，返回当前可用 Agent Catalog。
+- `conversations.py`：提供会话列表、创建会话、加载历史消息、删除会话；会话实体带 `agent_id`。
+- `skills.py`：扫描 `backend/skills/` 并解析每个 `SKILL.md` 的元数据；支持通过 `agent_id` 过滤当前 Agent 可见的 Skills。
+- `agent.py`：提供同步 `POST /api/agent/chat`，方便 CI/CD、告警系统、脚本程序直接调用指定 Agent。
 - `memories.py`：提供 `/api/memories/tree` 和 `/api/memories/content`，把 LangGraph Store 里的长期记忆转换成前端可浏览结构。
 
 #### `frontend/src/stores/chat.ts`
@@ -213,8 +300,9 @@ demo-agent/
 - 负责：
   - 创建并维护 WebSocket 连接
   - 根据 `VITE_WS_URL` / `VITE_API_BASE_URL` 决定实时和 REST 请求目标
-  - 发送用户消息时先本地入栈，再发到后端
-  - 按事件类型把流式响应拼装成最终消息
+  - 拉取 Agent Catalog，并维护 `draftAgentId` / `activeAgentId`
+  - 发送用户消息时先本地入栈，再把新会话的 `agent_id` 一起发到后端
+  - 按事件类型把流式响应拼装成最终消息，并保留 `agentId`
   - 通过 REST 拉取会话、技能、记忆树和记忆文档
 - 这意味着 Vue 组件本身偏展示层，真正的业务流转几乎都收敛在 store 内。
 
@@ -238,26 +326,27 @@ demo-agent/
 2. FastAPI 进入 `startup`：
    - 初始化 SQLAlchemy 业务表；
    - 初始化 `AsyncSqliteSaver` 和 `AsyncSqliteStore`；
-   - 创建 `ChatAnthropic` 模型实例；
-   - 调用 `create_deep_agent(...)`，把 `AGENTS.md`、`skills/`、backend 路由能力、checkpoint/store 全部装进 Agent。
+   - 创建共享的 `ChatAnthropic` 模型实例；
+   - 初始化 `AgentManager`，但不立即把所有 Runtime 全部实例化。
 3. 前端启动后，`frontend/src/stores/chat.ts` 创建 WebSocket 连接。
-4. WebSocket 建立成功后，前端立即发送 `init`，尝试把当前页面绑定到某个会话。
-5. 首页同时通过 REST 预取技能列表、会话列表；当打开记忆面板时，再请求记忆树和记忆内容。
+4. WebSocket 建立成功后，前端立即发送 `init`，尝试把当前页面绑定到某个会话；如果还是草稿态，则同时带上默认/已选择的 `agent_id`。
+5. 首页同时通过 REST 预取 Agent 列表、会话列表和当前 Agent 的技能列表；当打开记忆面板时，再请求记忆树和记忆内容。
+6. 第一次真正使用某个 Agent 时，`AgentManager` 才会按该 Agent 的 Profile 懒加载对应 Runtime。
 
 #### 2) 实时聊天链路（浏览器主流程）
 
 1. 用户在前端输入问题并点击发送。
 2. `chat.ts` 先把用户消息直接写入本地 `messages` 数组，保证界面即时回显。
-3. store 通过 WebSocket 发送 `{"type":"message","content":"..."}` 给后端。
+3. 如果这是一个草稿会话，store 会通过 WebSocket 发送 `{"type":"message","content":"...","agent_id":"..."}` 给后端；已存在会话则只传消息内容。
 4. `backend/api/ws/chat.py` 收到消息后：
-   - 若当前还没有会话，则先创建 `Conversation`；
+   - 若当前还没有会话，则先创建 `Conversation(agent_id=...)`；
    - 保存用户消息到 `messages` 表；
    - 若会话标题还是“新对话”，则自动生成标题并推送 `title_update`。
-5. 后端异步启动 `run_agent(...)`，把 `user_message`、`conv_id` 和 `on_event` 回调交给 Agent Runtime。
+5. 后端异步启动 `run_agent(...)`，把 `user_message`、`conv_id`、`agent_id` 和 `on_event` 回调交给 Agent Runtime。
 6. `backend/agent.py` 中的 Agent 开始执行：
-   - 模型读取 `AGENTS.md` 的规则；
-   - 根据需要选择技能或工具；
-   - 输出思考片段、文本增量、工具调用、工具结果等事件。
+   - 模型读取“基础 prompt + profile prompt + runtime hint”；
+   - 在当前 Agent 白名单技能中选择技能或工具；
+   - 输出思考片段、文本增量、工具调用、工具结果等事件，并附带 `agent_id`。
 7. `ws/chat.py` 的 `on_event` 把这些事件转成 WebSocket 消息推回浏览器，并把关键结果持久化到数据库。
 8. 前端收到事件后按类型更新 UI：
    - `thinking_delta` → 追加到助手思考面板
@@ -362,12 +451,15 @@ create_deep_agent(
 #### 3) 会话上下文如何和 Agent 绑定
 
 - 业务层以 `Conversation.id` 表示一个会话。
-- Agent 层把 `conv_id` 作为 `thread_id` 传给 LangGraph。
+- `Conversation.agent_id` 表示这个会话的 owner/default agent。
+- `Message.agent_id` 表示这条消息的实际执行 Agent；当前版本通常与会话 `agent_id` 一致，但它也为未来 handoff / supervisor 留出了数据位。
+- Agent 层继续把 `conv_id` 作为 `thread_id` 传给 LangGraph。
 - 因此，“继续这个会话”在技术上同时意味着：
   - 读取同一条会话的历史消息；
-  - 复用同一条 Agent 图上下文线程。
+  - 复用同一条 Agent 图上下文线程；
+  - 始终沿用该会话绑定的 `agent_id`。
 
-这也是为什么当前项目天然更接近“单 Agent + 多轮会话”架构，而不是“每次请求都完全无状态”。
+这也是为什么当前项目已经是“多 Agent 会话绑定”架构，但仍然不是“多个 Agent 在单个请求里自动协作”的 Supervisor 系统。
 
 #### 4) 前端消息状态是如何拼装出来的
 
@@ -375,14 +467,14 @@ create_deep_agent(
 
 | WebSocket 事件 | 前端处理方式 |
 | --- | --- |
-| `session` | 记录当前 `conversation_id`，完成会话绑定 |
-| `text_delta` | 追加到最后一条助手消息，形成打字机效果 |
+| `session` | 记录当前 `conversation_id` 与 `agent_id`，完成会话绑定 |
+| `text_delta` | 追加到最后一条助手消息，形成打字机效果，并保留 `agentId` |
 | `thinking_delta` | 追加到助手消息的 `thinking` 字段 |
-| `tool_call` | 生成一条系统消息，展示工具名、描述和参数 |
-| `tool_result` | 生成一条系统消息，展示工具输出 |
+| `tool_call` | 生成一条系统消息，展示工具名、描述、参数和执行 Agent |
+| `tool_result` | 生成一条系统消息，展示工具输出和执行 Agent |
 | `done` | 结束流式状态，并刷新会话列表 |
 | `error` | 生成错误消息，并结束 loading |
-| `title_update` | 更新左侧会话标题 |
+| `title_update` | 更新左侧会话标题与当前 Agent 信息 |
 | `cleared` | 清空当前前端消息数组 |
 
 这套设计让“消息渲染”和“事件流处理”解耦：组件只关心展示，状态拼装全部放在 store。
@@ -394,18 +486,25 @@ create_deep_agent(
 | 接口 | 用途 |
 | --- | --- |
 | `GET /api/health` | 健康检查与 API Key 配置状态 |
+| `GET /api/agents` | 获取当前可用 Agent Catalog |
 | `GET /api/conversations` | 获取会话列表 |
-| `POST /api/conversations` | 创建新会话 |
+| `POST /api/conversations` | 创建新会话（可显式传入 `agent_id`） |
 | `GET /api/conversations/{conv_id}/messages` | 获取历史消息 |
 | `DELETE /api/conversations/{conv_id}` | 删除会话 |
-| `GET /api/skills` | 获取技能元数据列表 |
+| `GET /api/skills` | 获取 Skills 公共目录元数据 |
+| `GET /api/skills?agent_id=...` | 获取某个 Agent 可见的 Skills 列表 |
 | `GET /api/memories/tree` | 获取长期记忆目录树 |
 | `GET /api/memories/content?path=...` | 读取记忆文档 |
-| `POST /api/agent/chat` | 同步调用 Agent |
+| `POST /api/agent/chat` | 同步调用 Agent（支持 `agent_id`） |
 
 **WebSocket 事件**
 
 `/ws/chat` 当前主要使用这些事件类型：`session`、`text`、`text_delta`、`thinking_delta`、`tool_call`、`tool_result`、`done`、`error`、`cleared`、`title_update`。
+
+- `session` 事件会返回 `conversation_id` 和 `agent_id`
+- 首次 `init` / `message` 可以携带 `agent_id`
+- 一旦会话已存在，后续请求中的 `agent_id` 会被忽略，以会话绑定值为准
+- 客户端应忽略未知字段，为未来 `run_id`、`handoff_from`、`route_reason` 等扩展位保留兼容性
 
 **前端环境变量**
 
@@ -416,20 +515,26 @@ create_deep_agent(
 
 ### 扩展点与演进方向
 
-从当前实现来看，这个项目已经具备“可运行的单 Agent 平台”雏形，但也有非常明确的扩展方向。
+从当前实现来看，这个项目已经具备“可运行的多 Agent 基础版平台”雏形，但也有非常明确的扩展方向。
 
-#### 1) 从单 Agent + 多 Skills 演进到多 Agent Registry
+#### 1) 从多 Agent 基础版升级到 Router / Supervisor
 
-当前 `backend/agent.py` 在启动时只创建了一个全局 Agent Runtime，并统一加载 `AGENTS.md` 与整个 `skills/` 目录。  
-如果要做多 Agent，推荐演进为：
+当前系统已经具备以下基础设施：
 
-- `Agent Registry`：定义多个 agent 配置（提示词、模型、技能白名单、权限策略）
-- `Agent Manager`：按 `agent_id` 构建和缓存 Runtime
-- `Conversation` 增加 `agent_id`，让会话天然绑定某个 agent
+- `Agent Registry`：通过 `AgentProfile` 声明多个 Agent 配置
+- `Agent Manager`：按 `agent_id` 懒加载并缓存 Runtime
+- `Conversation.agent_id`：让会话天然绑定某个 Agent
+- `Message.agent_id`：为未来单会话内多 Agent 输出保留扩展位
+
+因此，后续若要演进到更高阶架构，优先增加的应该是：
+
+- `Router`：在用户无感知的情况下自动为问题选择 Agent
+- `Supervisor`：把一个复杂任务拆给多个子 Agent 并汇总结果
+- `Handoff`：允许同一条任务链在多个 Agent 间顺序转办
 
 #### 2) 权限与 Skill 白名单配置化
 
-当前所有技能由一个统一的 Agent 共享。后续可以把这些约束外提为配置：
+当前白名单已经收敛在 `backend/agent_profiles.py`。后续可以继续把这些约束外提为更完整的配置中心：
 
 - 哪个 Agent 可以用哪些 Skill
 - 哪个 Agent 可以执行哪些 Shell / 文件操作
@@ -439,7 +544,7 @@ create_deep_agent(
 
 #### 3) 记忆隔离与作用域提升
 
-当前 `thread_id = conv_id` 适合单 Agent 场景。若引入多 Agent / 多租户，建议扩展为更显式的命名方式，例如：
+当前版本已经采用 `Conversation.agent_id` 和 `/memories/agents/<agent_id>/...` 约定来为后续隔离预留空间。若继续引入多 Agent / 多租户，建议把命名方式扩展为更显式的形式，例如：
 
 - `user_id:agent_id:conv_id`
 - 或者将长期记忆进一步区分为用户级、Agent 级、全局级
@@ -452,8 +557,9 @@ create_deep_agent(
 
 - 单团队内部使用
 - 以 WebSocket 实时对话为主
-- 借助 Markdown Skill 快速扩能力
+- 借助 Markdown Skill + Agent 白名单快速扩能力
 - 使用 SQLite 做一体化存储
+- 由用户显式选择 Agent，而不是完全自动路由
 
 如果后续要继续演进，通常会优先从以下位置下手：
 
@@ -465,7 +571,21 @@ create_deep_agent(
 
 ## 🛠️ 关于自定义技能开发
 
-无需修改任意一行 Python 代码，只需在 `backend/skills/` 目录下创建一个新的 `.md` 文件（参照已有的格式，包含 yaml metadata 描述和正文指导即可）。后端会自动装载该 Skill，同时前端右上角 `⚡` 面板会实时展示出你的扩建能力。
+当前版本中，Skill 和 Agent 是两层概念：
+
+1. **先创建 Skill 本体**  
+   在 `backend/skills/<skill-id>/SKILL.md` 下编写技能说明；如有需要，可在同目录下放置 `scripts/`、`references/`、`assets/`。
+
+2. **再把 Skill 授权给目标 Agent**  
+   Skill 被扫描进公共 catalog 后，还需要把它加入 `backend/agent_profiles.py` 中某个 Agent 的 `skills` 白名单，前端技能面板和 `@skill` 补全才会对该 Agent 可见。
+
+3. **如果要新增一个专门的 Agent**  
+   需要同时补充：
+   - `backend/agent_profiles.py`
+   - `backend/prompts/<agent>.md`
+   - 如有需要，再在前端增加对应展示文案
+
+也就是说：**Skill 可以零代码接入公共仓库，但想让某个 Agent 实际使用它，还需要做一次 Agent 侧授权**。
 
 > 💡 **快速生成 Skill**：`backend/skills/` 下的所有技能均可通过官方的 **skill-creator** 工具自动生成，只需描述你想要的能力，它就能帮你产出完整的 Skill Markdown 文件。
 >
@@ -473,7 +593,38 @@ create_deep_agent(
 
 ## 🔌 HTTP API（程序调用）
 
-除了 WebSocket 前端交互之外，项目提供了 **HTTP POST 接口**，供外部程序（告警系统、CI/CD、运维脚本等）直接调用 Agent 并获取最终结果。
+除了 WebSocket 前端交互之外，项目也提供了一组 **HTTP / WebSocket 接口**，供外部程序（告警系统、CI/CD、运维脚本等）直接获取 Agent Catalog、创建会话并调用指定 Agent。
+
+### 先获取 Agent Catalog
+
+```http
+GET http://localhost:8000/api/agents
+```
+
+返回结果中会包含：
+
+- `id`
+- `label`
+- `description`
+- `capabilities`
+- `is_default`
+
+推荐先读取这份列表，再决定调用 `general`、`dba` 还是 `ops`。
+
+### 创建一个指定 Agent 的会话（可选）
+
+```http
+POST http://localhost:8000/api/conversations
+Content-Type: application/json
+```
+
+```json
+{
+  "agent_id": "dba"
+}
+```
+
+如果你是通过 Web UI 使用，一般不需要主动调用这一步；前端会在首条消息发送时自动建会话。
 
 ### 接口地址
 
@@ -488,13 +639,15 @@ Content-Type: application/json
 | --- | --- | --- | --- |
 | `message` | string | ✅ | 用户问题 |
 | `conversation_id` | string | ❌ | 会话 ID，传入可继续上下文对话 |
-| `skill` | string | ❌ | 指定使用的 Skill 名称 |
+| `skill` | string | ❌ | 指定使用的 Skill 名称（必须是当前 Agent 可见的 Skill） |
+| `agent_id` | string | ❌ | 新会话要绑定的 Agent；若已传 `conversation_id`，则以后者绑定值为准 |
 
 ### 响应格式
 
 ```json
 {
   "conversation_id": "uuid",
+  "agent_id": "dba",
   "content": "Agent 最终回复（Markdown 文本）",
   "thinking": "Agent 思考过程",
   "tool_calls": [
@@ -509,12 +662,12 @@ Content-Type: application/json
 
 ### 调用示例
 
-**单轮调用**：
+**按 Agent 发起新会话**：
 
 ```bash
 curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "帮我分析下 10.0.0.1 的磁盘使用情况", "skill": "remote-ops"}'
+  -d '{"message": "帮我分析一下这条慢 SQL", "agent_id": "dba", "skill": "mysql-sql-analyzer"}'
 ```
 
 **多轮对话**（传入上一轮返回的 `conversation_id`）：
@@ -522,7 +675,7 @@ curl -X POST http://localhost:8000/api/agent/chat \
 ```bash
 curl -X POST http://localhost:8000/api/agent/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "继续看一下内存", "conversation_id": "上一轮返回的 uuid"}'
+  -d '{"message": "继续看一下实例 CPU 和延迟趋势", "conversation_id": "上一轮返回的 uuid"}'
 ```
 
 **Python 调用**：
@@ -532,13 +685,43 @@ import requests
 
 resp = requests.post("http://localhost:8000/api/agent/chat", json={
     "message": "SELECT * FROM orders WHERE status='pending' 这条 SQL 为什么慢",
-    "skill": "sql-analyzer"
+    "agent_id": "dba",
+    "skill": "mysql-sql-analyzer"
 }, timeout=300)
 
 result = resp.json()
+print(result["agent_id"])     # 实际执行的 Agent
 print(result["content"])      # 最终分析结果
 print(result["tool_calls"])   # 工具调用过程
 ```
+
+### WebSocket 多 Agent 约定
+
+浏览器主流程使用 `/ws/chat`，当前与多 Agent 相关的最小契约如下：
+
+**首次绑定 / 草稿态初始化**
+
+```json
+{"type":"init","conversation_id":null,"agent_id":"ops"}
+```
+
+**首条消息创建会话**
+
+```json
+{"type":"message","content":"帮我查看 Docker 容器状态","agent_id":"ops"}
+```
+
+**服务端返回 session**
+
+```json
+{"type":"session","conversation_id":"uuid","session_id":"uuid","agent_id":"ops"}
+```
+
+注意事项：
+
+- `agent_id` 只在“尚未创建会话”的阶段决定新会话归属
+- 一旦 `conversation_id` 已存在，后续消息即使再传别的 `agent_id` 也不会切换 Agent
+- 客户端应忽略未知字段，为未来 `run_id`、`handoff_from`、`route_reason` 等扩展字段保留兼容性
 
 > ⚠️ **超时提示**：Agent 执行可能较耗时（SSH 排查、多轮工具调用），建议客户端设置 **5 分钟超时**。
 

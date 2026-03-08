@@ -12,10 +12,10 @@ const props = defineProps<{
       <span class="dim">no skills loaded</span>
     </div>
     <div v-else class="skill-list">
-      <div v-for="skill in skills" :key="skill.name" class="skill-item">
+      <div v-for="skill in skills" :key="skill.id" class="skill-item">
         <div class="skill-head">
           <span class="skill-dot">●</span>
-          <span class="skill-name">{{ skill.name }}</span>
+          <span class="skill-name">@{{ skill.id }}</span>
         </div>
         <div class="skill-desc">{{ skill.description }}</div>
       </div>

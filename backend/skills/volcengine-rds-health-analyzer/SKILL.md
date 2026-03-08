@@ -123,6 +123,7 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - 生成报告前，先使用 `read_file` 读取模板文件 `./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
    - 报告内容必须按照模板结构填充，不要改变一级、二级标题顺序
    - 没有数据的字段写“未获取”或“无异常”，不要删除模板章节
+   - 只有用户明确要求“保存报告”或“生成文件”时才写报告 Markdown；如果只是让你“记住”某个 instance id 或实例信息，应写入 `/memories/agents/<当前_agent_id>/` 下的长期记忆文件，而不是生成报告
 
 ## 采集结果说明
 

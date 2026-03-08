@@ -18,8 +18,8 @@ services:
     volumes:
       # 将 skills 挂载出来，方便在宿主机随时实时修改 MD 文件并热加载
       - ./backend/skills:/app/skills
-      # 将 AGENTS.md 挂载，方便热修改提示词
-      - ./backend/AGENTS.md:/app/AGENTS.md
+      # 将 prompts 挂载出来，方便在宿主机随时实时修改提示词并热加载
+      - ./backend/prompts:/app/prompts
       # 将 SQLite 数据文件挂载到宿主机，便于持久化保存
       - ./backend/data:/app/data
     networks:

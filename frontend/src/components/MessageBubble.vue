@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { marked } from 'marked'
-import type { ChatMessage } from '../stores/chat'
+import type { ArtifactKind, ChatMessage } from '../stores/chat'
 import { useChatStore } from '../stores/chat'
 
 const chatStore = useChatStore()
@@ -82,6 +82,22 @@ function guessMimeType(path: string) {
   return 'application/octet-stream'
 }
 
+function inferArtifactKind(path: string, artifactKind?: ArtifactKind): ArtifactKind {
+  if (artifactKind) return artifactKind
+
+  const normalized = path.toLowerCase()
+  if (normalized.startsWith('/memories/')) return 'memory'
+  if (
+    normalized.endsWith('.md') ||
+    normalized.endsWith('.html') ||
+    normalized.endsWith('.pdf')
+  ) {
+    return 'report'
+  }
+
+  return 'file'
+}
+
 const fileArtifact = computed(() => {
   if (!isToolResult.value) return null
   if (!['write_file', 'edit_file'].includes(props.message.toolName || '')) return null
@@ -94,19 +110,19 @@ const fileArtifact = computed(() => {
 
   if (!path || !content) return null
 
+  const kind = inferArtifactKind(path, props.message.artifactKind)
+
   return {
+    kind,
     path,
     content,
     name: path.split('/').filter(Boolean).pop() || path,
-    isReport:
-      path.toLowerCase().endsWith('.md') ||
-      path.toLowerCase().endsWith('.html') ||
-      path.toLowerCase().endsWith('.pdf'),
+    isDownloadable: kind !== 'memory',
   }
 })
 
 function downloadArtifact() {
-  if (!fileArtifact.value) return
+  if (!fileArtifact.value || !fileArtifact.value.isDownloadable) return
 
   const blob = new Blob([fileArtifact.value.content], {
     type: guessMimeType(fileArtifact.value.path),
@@ -121,6 +137,41 @@ function downloadArtifact() {
   document.body.removeChild(link)
   URL.revokeObjectURL(url)
 }
+
+async function openMemoryArtifact() {
+  if (!fileArtifact.value || fileArtifact.value.kind !== 'memory') return
+  await chatStore.openMemoryDocument(fileArtifact.value.path)
+}
+
+function handleArtifactAction() {
+  if (!fileArtifact.value) return
+
+  if (fileArtifact.value.kind === 'memory') {
+    void openMemoryArtifact()
+    return
+  }
+
+  downloadArtifact()
+}
+
+const toolResultTitle = computed(() => {
+  if (!fileArtifact.value) return '查看工具返回结果'
+  return fileArtifact.value.kind === 'memory' ? '完成长期记忆写入' : '完成文件创建'
+})
+
+const artifactKicker = computed(() => {
+  if (!fileArtifact.value) return ''
+  if (fileArtifact.value.kind === 'memory') return '长期记忆已保存'
+  if (fileArtifact.value.kind === 'report') return '结果报告'
+  return '生成文件'
+})
+
+const artifactActionLabel = computed(() => {
+  if (!fileArtifact.value) return ''
+  if (fileArtifact.value.kind === 'memory') return '查看记忆'
+  if (fileArtifact.value.kind === 'report') return '下载报告'
+  return '下载文件'
+})
 </script>
 
 <template>
@@ -167,18 +218,18 @@ function downloadArtifact() {
 
       <div v-else-if="isToolResult" class="sys-panel sys-panel-result">
         <div class="sys-header" @click="showSystemContent = !showSystemContent">
-          <span class="sys-title">{{ fileArtifact ? '完成文件创建' : '查看工具返回结果' }}</span>
+          <span class="sys-title">{{ toolResultTitle }}</span>
           <span class="sys-toggle">{{ showSystemContent ? '收起' : '展开' }}</span>
         </div>
 
         <div v-if="fileArtifact" class="artifact-card">
           <div class="artifact-main">
-            <span class="artifact-kicker">{{ fileArtifact.isReport ? '结果报告' : '生成文件' }}</span>
+            <span class="artifact-kicker">{{ artifactKicker }}</span>
             <span class="artifact-name">{{ fileArtifact.name }}</span>
             <span class="artifact-path">{{ fileArtifact.path }}</span>
           </div>
-          <button type="button" class="artifact-action" @click.stop="downloadArtifact">
-            {{ fileArtifact.isReport ? '下载报告' : '下载文件' }}
+          <button type="button" class="artifact-action" @click.stop="handleArtifactAction">
+            {{ artifactActionLabel }}
           </button>
         </div>
 

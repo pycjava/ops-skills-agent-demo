@@ -5,6 +5,7 @@ import type { ConversationItem } from '../stores/chat'
 defineProps<{
   conversations: ConversationItem[]
   currentId: string | null
+  agentLabels: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -72,6 +73,7 @@ function formatTime(iso: string | null): string {
         <div class="conv-main">
           <div class="conv-title-row">
             <span v-if="conv.source === 'api'" class="api-badge">API</span>
+            <span class="agent-badge">{{ agentLabels[conv.agent_id] || conv.agent_id }}</span>
             <span class="conv-title">{{ conv.title || '新对话' }}</span>
           </div>
           <span class="conv-time">{{ formatTime(conv.updated_at) }}</span>
@@ -252,6 +254,16 @@ function formatTime(iso: string | null): string {
   color: var(--accent);
   font-size: 10px;
   font-weight: 700;
+}
+
+.agent-badge {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--card-muted);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .conv-time {

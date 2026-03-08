@@ -1,28 +1,45 @@
 import { defineStore } from "pinia";
 import { ref, reactive, computed } from "vue";
 
+export type ArtifactKind = "memory" | "report" | "file";
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   type: "text" | "tool_call" | "tool_result" | "error";
+  agentId?: string;
   toolName?: string;
   toolDesc?: string;
   toolInput?: Record<string, unknown>;
+  artifactKind?: ArtifactKind;
   timestamp: number;
   streaming?: boolean;
   thinking?: string;
 }
 
 export interface Skill {
+  id: string;
   name: string;
   description: string;
+}
+
+export interface AgentInfo {
+  id: string;
+  label: string;
+  description: string;
+  capabilities: string[];
+  is_default: boolean;
+  execution_mode?: string;
+  risk_level?: string;
+  allowed_handoffs?: string[];
 }
 
 export interface ConversationItem {
   id: string;
   title: string;
   source?: string;
+  agent_id: string;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -57,10 +74,11 @@ export const useChatStore = defineStore("chat", () => {
   const messages = reactive<ChatMessage[]>([]);
   const isConnected = ref(false);
   const isLoading = ref(false);
-  const sessionId = ref<string | null>(null);
+  const agents = ref<AgentInfo[]>([]);
   const skills = ref<Skill[]>([]);
   const conversations = ref<ConversationItem[]>([]);
   const currentConversationId = ref<string | null>(null);
+  const draftAgentId = ref("general");
   const memoryTree = ref<MemoryNode[]>([]);
   const selectedMemoryPath = ref<string | null>(null);
   const memoryContent = ref<MemoryDocument | null>(null);
@@ -75,12 +93,45 @@ export const useChatStore = defineStore("chat", () => {
       isMemoryContentLoading.value ||
       isMemoryDeleting.value
   );
+  const currentConversation = computed(
+    () =>
+      conversations.value.find(
+        (conversation) => conversation.id === currentConversationId.value
+      ) ?? null
+  );
+  const activeAgentId = computed(
+    () => currentConversation.value?.agent_id || draftAgentId.value || "general"
+  );
+  const activeAgent = computed(
+    () => agents.value.find((agent) => agent.id === activeAgentId.value) ?? null
+  );
 
   let ws: WebSocket | null = null;
   let messageIdCounter = 0;
 
   function genId(): string {
     return `msg-${Date.now()}-${messageIdCounter++}`;
+  }
+
+  function getDefaultAgentId(): string {
+    return agents.value.find((agent) => agent.is_default)?.id || "general";
+  }
+
+  function resolveAgentId(agentId?: string | null): string {
+    const candidate = typeof agentId === "string" ? agentId.trim() : "";
+    if (!candidate) return draftAgentId.value || getDefaultAgentId();
+    if (agents.value.length === 0) return candidate;
+    return agents.value.some((agent) => agent.id === candidate)
+      ? candidate
+      : getDefaultAgentId();
+  }
+
+  function resolveConversationAgentId(convId?: string | null): string {
+    if (!convId) return resolveAgentId(draftAgentId.value);
+    return (
+      conversations.value.find((conversation) => conversation.id === convId)?.agent_id ||
+      resolveAgentId(draftAgentId.value)
+    );
   }
 
   function findFirstMemoryFile(nodes: MemoryNode[]): string | null {
@@ -130,6 +181,12 @@ export const useChatStore = defineStore("chat", () => {
     return typeof value === "string" && value.trim() ? value.trim() : null;
   }
 
+  function normalizeArtifactKind(value: unknown): ArtifactKind | undefined {
+    return value === "memory" || value === "report" || value === "file"
+      ? value
+      : undefined;
+  }
+
   function handleMemoryArtifact(toolInput?: Record<string, unknown>) {
     const path = getToolPath(toolInput);
     if (!path || !path.startsWith("/memories/")) return;
@@ -140,6 +197,17 @@ export const useChatStore = defineStore("chat", () => {
     }
 
     isMemoryTreeLoaded.value = false;
+  }
+
+  async function openMemoryDocument(path: string) {
+    if (!path || !path.startsWith("/memories/")) return;
+
+    selectedMemoryPath.value = path;
+    await fetchMemoryTree(true);
+
+    if (memoryContent.value?.path !== path) {
+      await fetchMemoryContent(path);
+    }
   }
 
   // ─── WebSocket ──────────────────────────────
@@ -158,6 +226,7 @@ export const useChatStore = defineStore("chat", () => {
         JSON.stringify({
           type: "init",
           conversation_id: currentConversationId.value,
+          agent_id: currentConversationId.value ? undefined : activeAgentId.value,
         })
       );
     };
@@ -167,9 +236,9 @@ export const useChatStore = defineStore("chat", () => {
 
       switch (data.type) {
         case "session":
-          sessionId.value = data.session_id;
-          if (data.conversation_id) {
-            currentConversationId.value = data.conversation_id;
+          currentConversationId.value = data.conversation_id || null;
+          if (typeof data.agent_id === "string" && data.agent_id.trim()) {
+            draftAgentId.value = data.agent_id;
           }
           break;
 
@@ -179,6 +248,7 @@ export const useChatStore = defineStore("chat", () => {
             role: "assistant",
             content: data.content,
             type: "text",
+            agentId: data.agent_id,
             timestamp: Date.now(),
           });
           break;
@@ -198,6 +268,7 @@ export const useChatStore = defineStore("chat", () => {
             role: "assistant",
             content: data.content,
             type: "text",
+            agentId: data.agent_id,
             timestamp: Date.now(),
             streaming: true,
           });
@@ -217,6 +288,7 @@ export const useChatStore = defineStore("chat", () => {
             role: "assistant",
             content: "",
             type: "text",
+            agentId: data.agent_id,
             timestamp: Date.now(),
             streaming: true,
             thinking: data.content,
@@ -229,6 +301,7 @@ export const useChatStore = defineStore("chat", () => {
             role: "system",
             content: data.tool_desc || `正在执行 Tool: **${data.tool_name}**`,
             type: "tool_call",
+            agentId: data.agent_id,
             toolName: data.tool_name,
             toolDesc: data.tool_desc,
             toolInput: data.tool_input,
@@ -243,8 +316,10 @@ export const useChatStore = defineStore("chat", () => {
             role: "system",
             content: data.result,
             type: "tool_result",
+            agentId: data.agent_id,
             toolName: data.tool_name,
             toolInput: toolResultInput,
+            artifactKind: normalizeArtifactKind(data.artifact_kind),
             timestamp: Date.now(),
           });
           handleMemoryArtifact(toolResultInput);
@@ -269,6 +344,7 @@ export const useChatStore = defineStore("chat", () => {
             role: "system",
             content: data.content,
             type: "error",
+            agentId: data.agent_id,
             timestamp: Date.now(),
           });
           isLoading.value = false;
@@ -302,17 +378,25 @@ export const useChatStore = defineStore("chat", () => {
 
   function sendMessage(displayContent: string, sendContent?: string) {
     if (!ws || !displayContent.trim()) return;
+    const nextAgentId = resolveConversationAgentId(currentConversationId.value);
 
     messages.push({
       id: genId(),
       role: "user",
       content: displayContent,
       type: "text",
+      agentId: nextAgentId,
       timestamp: Date.now(),
     });
 
     isLoading.value = true;
-    ws.send(JSON.stringify({ type: "message", content: sendContent || displayContent }));
+    ws.send(
+      JSON.stringify({
+        type: "message",
+        content: sendContent || displayContent,
+        agent_id: currentConversationId.value ? undefined : nextAgentId,
+      })
+    );
   }
 
   function clearChat() {
@@ -339,22 +423,28 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  async function createConversation() {
-    try {
-      const res = await fetch(`${backendUrl}/api/conversations`, {
-        method: "POST",
-      });
-      const conv: ConversationItem = await res.json();
-      conversations.value.unshift(conv);
-      await switchConversation(conv.id);
-    } catch (e) {
-      console.warn("创建会话失败:", e);
+  function createConversation() {
+    draftAgentId.value = activeAgentId.value;
+    currentConversationId.value = null;
+    messages.length = 0;
+    isLoading.value = false;
+    void fetchSkills(draftAgentId.value);
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: "init",
+          conversation_id: null,
+          agent_id: draftAgentId.value,
+        })
+      );
     }
   }
 
   async function switchConversation(convId: string) {
     currentConversationId.value = convId;
     messages.length = 0;
+    draftAgentId.value = resolveConversationAgentId(convId);
 
     // 加载历史消息
     try {
@@ -366,6 +456,7 @@ export const useChatStore = defineStore("chat", () => {
         role: string;
         content: string;
         type: string;
+        agent_id: string | null;
         tool_name: string | null;
         tool_input: Record<string, unknown> | null;
         thinking: string | null;
@@ -380,6 +471,7 @@ export const useChatStore = defineStore("chat", () => {
             ? m.content.replace(/<system_hint>[\s\S]*?<\/system_hint>/g, '').trim() 
             : m.content,
           type: m.type as "text" | "tool_call" | "tool_result" | "error",
+          agentId: m.agent_id || undefined,
           toolName: m.tool_name || undefined,
           toolInput:
             m.tool_input ||
@@ -394,12 +486,15 @@ export const useChatStore = defineStore("chat", () => {
       console.warn("加载历史消息失败:", e);
     }
 
+    await fetchSkills(resolveConversationAgentId(convId));
+
     // 重新绑定 WebSocket 到新会话
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(
         JSON.stringify({
           type: "init",
           conversation_id: convId,
+          agent_id: resolveConversationAgentId(convId),
         })
       );
     }
@@ -419,6 +514,16 @@ export const useChatStore = defineStore("chat", () => {
         } else {
           currentConversationId.value = null;
           messages.length = 0;
+          await fetchSkills(draftAgentId.value);
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              JSON.stringify({
+                type: "init",
+                conversation_id: null,
+                agent_id: draftAgentId.value,
+              })
+            );
+          }
         }
       }
     } catch (e) {
@@ -426,11 +531,39 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
+  async function fetchAgents() {
+    try {
+      const res = await fetch(`${backendUrl}/api/agents`);
+      agents.value = await res.json();
+      draftAgentId.value = resolveAgentId(draftAgentId.value || getDefaultAgentId());
+    } catch (e) {
+      console.warn("获取 Agents 列表失败:", e);
+    }
+  }
+
+  function setDraftAgent(agentId: string) {
+    draftAgentId.value = resolveAgentId(agentId);
+    void fetchSkills(draftAgentId.value);
+
+    if (!currentConversationId.value && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: "init",
+          conversation_id: null,
+          agent_id: draftAgentId.value,
+        })
+      );
+    }
+  }
+
   // ─── Skills ─────────────────────────────────
 
-  async function fetchSkills() {
+  async function fetchSkills(agentId?: string) {
     try {
-      const res = await fetch(`${backendUrl}/api/skills`);
+      const targetAgentId = resolveAgentId(agentId || activeAgentId.value);
+      const res = await fetch(
+        `${backendUrl}/api/skills?agent_id=${encodeURIComponent(targetAgentId)}`
+      );
       skills.value = await res.json();
     } catch (e) {
       console.warn("获取 Skills 列表失败:", e);
@@ -533,11 +666,6 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
-  function disconnect() {
-    ws?.close();
-    ws = null;
-  }
-
   // 组件卸载时不要清理全局连接，所以通常不再这里定义 onUnmounted
   // 但如果你有特殊需求，可以使用 application 级别的钩子
 
@@ -545,10 +673,13 @@ export const useChatStore = defineStore("chat", () => {
     messages,
     isConnected,
     isLoading,
-    sessionId,
+    agents,
     skills,
     conversations,
     currentConversationId,
+    draftAgentId,
+    activeAgentId,
+    activeAgent,
     memoryTree,
     selectedMemoryPath,
     memoryContent,
@@ -558,7 +689,9 @@ export const useChatStore = defineStore("chat", () => {
     sendMessage,
     clearChat,
     abortAgent,
+    fetchAgents,
     fetchConversations,
+    setDraftAgent,
     createConversation,
     switchConversation,
     deleteConversation,
@@ -566,6 +699,6 @@ export const useChatStore = defineStore("chat", () => {
     fetchMemoryTree,
     fetchMemoryContent,
     deleteMemoryFile,
-    disconnect
+    openMemoryDocument
   };
 });

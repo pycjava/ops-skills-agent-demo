@@ -8,15 +8,12 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from agent import init_agent_runtime, list_agent_profiles
+from api.routers import agent, agents, conversations, memories, skills
+from api.ws import chat
 from config import ANTHROPIC_API_KEY, SKILLS_DIR
 from db.session import close_db, init_db
 from utils.logger import logger
-
-# Import API routers
-from api.routers import conversations, skills, agent, memories
-from api.ws import chat
-
-# ─── 初始化 ─────────────────────────────────────────────
 
 app = FastAPI(title="Claude Agent Demo", version="0.2.0")
 
@@ -31,12 +28,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
-    # 初始化数据库
     await init_db()
-
-    # 初始化 SQLite checkpointer + store + Agent
-    from agent import init_agent_runtime
-
     await init_agent_runtime()
 
     logger.info(f"Skills 目录: {SKILLS_DIR}")
@@ -48,11 +40,13 @@ async def startup():
     skills_path = Path(SKILLS_DIR)
     if skills_path.exists():
         skill_dirs = [
-            d.name
-            for d in skills_path.iterdir()
-            if d.is_dir() and (d / "SKILL.md").exists()
+            directory.name
+            for directory in skills_path.iterdir()
+            if directory.is_dir() and (directory / "SKILL.md").exists()
         ]
         logger.info(f"发现 {len(skill_dirs)} 个 Skills: {skill_dirs}")
+
+    logger.info(f"可用 Agents: {[profile.id for profile in list_agent_profiles()]}")
 
 
 @app.on_event("shutdown")
@@ -63,9 +57,8 @@ async def shutdown():
     await close_db()
 
 
-# ─── 包含路由 ────────────────────────────────────────────
-
 app.include_router(conversations.router)
+app.include_router(agents.router)
 app.include_router(skills.router)
 app.include_router(agent.router)
 app.include_router(memories.router)
@@ -79,20 +72,6 @@ async def health():
         "api_key_configured": bool(ANTHROPIC_API_KEY),
     }
 
-
-# ─── 静态文件服务（生产模式） ─────────────────────────────
-
-# FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-# if FRONTEND_DIST.exists():
-#     logger.info(f"正在从目录挂载静态前端文件: {FRONTEND_DIST}")
-#     app.mount(
-#         "/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend"
-#     )
-# else:
-#     logger.debug(f"未能找到前端构建目录 {FRONTEND_DIST}，将不会提供静态文件服务。")
-
-
-# ─── 入口 ────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
