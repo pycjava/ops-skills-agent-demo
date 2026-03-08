@@ -14,11 +14,14 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select', path: string): void
   (e: 'refresh'): void
+  (e: 'delete', path: string): void
 }>()
 
 const expandedPaths = ref<string[]>([])
+const showDeleteConfirm = ref(false)
 
 const isEmpty = computed(() => props.nodes.length === 0)
+const canDeleteDocument = computed(() => Boolean(props.document?.path))
 const isDocumentLoading = computed(() => {
   if (!props.selectedPath || !props.isLoading) return false
   return props.document?.path !== props.selectedPath
@@ -61,6 +64,22 @@ function formatTime(iso: string | null | undefined) {
   })
 }
 
+function requestDelete() {
+  if (!props.document?.path || props.isLoading) return
+  showDeleteConfirm.value = true
+}
+
+function cancelDelete() {
+  showDeleteConfirm.value = false
+}
+
+function handleDelete() {
+  const path = props.document?.path
+  if (!path || props.isLoading) return
+  showDeleteConfirm.value = false
+  emit('delete', path)
+}
+
 watch(
   () => props.nodes,
   (nodes) => {
@@ -73,9 +92,17 @@ watch(
 watch(
   () => props.selectedPath,
   (path) => {
+    showDeleteConfirm.value = false
     expandAncestors(path)
   },
   { immediate: true },
+)
+
+watch(
+  () => props.document?.path,
+  () => {
+    showDeleteConfirm.value = false
+  },
 )
 </script>
 
@@ -121,7 +148,45 @@ watch(
               {{ formatTime(document.updated_at) }}
             </span>
           </div>
+          <div class="memory-head-actions">
+            <button
+              v-if="canDeleteDocument"
+              class="memory-delete"
+              :disabled="isLoading"
+              @click="requestDelete"
+            >
+              删除
+            </button>
+          </div>
         </div>
+
+        <transition name="memory-confirm-fade">
+          <div v-if="showDeleteConfirm && document" class="memory-confirm">
+            <div class="memory-confirm-copy">
+              <div class="memory-confirm-title">确认删除当前记忆文件？</div>
+              <div class="memory-confirm-text">
+                删除后将无法恢复，当前文件会从记忆列表中移除。
+              </div>
+              <div class="memory-confirm-file">{{ document.name }}</div>
+            </div>
+            <div class="memory-confirm-actions">
+              <button
+                class="memory-confirm-btn memory-confirm-cancel"
+                :disabled="isLoading"
+                @click="cancelDelete"
+              >
+                取消
+              </button>
+              <button
+                class="memory-confirm-btn memory-confirm-submit"
+                :disabled="isLoading"
+                @click="handleDelete"
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </transition>
 
         <div v-if="error && !document" class="memory-empty">
           <span class="dim">{{ error }}</span>
@@ -227,6 +292,138 @@ watch(
 .memory-refresh:hover {
   color: var(--text);
   border-color: var(--text-dim);
+}
+
+.memory-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-delete {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.memory-delete:hover:not(:disabled) {
+  background: rgba(200, 111, 100, 0.12);
+  border-color: var(--danger);
+  transform: translateY(-1px);
+}
+
+.memory-delete:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.memory-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 12px 0;
+  padding: 14px;
+  border: 1px solid rgba(200, 111, 100, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(200, 111, 100, 0.08), rgba(200, 111, 100, 0.03));
+  box-shadow: 0 12px 24px rgba(31, 26, 20, 0.08);
+}
+
+.memory-confirm-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memory-confirm-title {
+  color: var(--text-bright);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.memory-confirm-text {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.memory-confirm-file {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.28);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.memory-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.memory-confirm-btn {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.memory-confirm-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.memory-confirm-cancel {
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.memory-confirm-cancel:hover:not(:disabled) {
+  background: var(--bg-input);
+  color: var(--text);
+}
+
+.memory-confirm-submit {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+
+.memory-confirm-submit:hover:not(:disabled) {
+  filter: brightness(1.03);
+}
+
+.memory-confirm-fade-enter-active,
+.memory-confirm-fade-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.memory-confirm-fade-enter-from,
+.memory-confirm-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 .memory-tree-list {

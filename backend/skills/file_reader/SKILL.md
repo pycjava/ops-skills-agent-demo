@@ -5,7 +5,7 @@ parameters:
   properties:
     path:
       type: string
-      description: "要读取的文件的绝对路径，例如 '/Users/me/notes.txt'"
+      description: "要读取的项目内文件路径，使用相对于 backend/ 的路径或 glob 返回的 '/...' 虚拟路径，例如 'metric_data/instance_data_cpu.json' 或 '/metric_data/instance_data_cpu.json'"
   required:
     - path
 ---
@@ -16,7 +16,9 @@ parameters:
 
 ## 用法
 
-- 接受绝对路径或 `~` 开头的路径
+- 优先使用相对于 `backend/` 的项目路径
+- 如果路径来自 `glob` 返回结果，可以直接复用 `/...` 形式的虚拟路径
+- 不要使用 Windows 绝对路径、`~` 路径、`/backend/...` 或 `/memories/../...`
 - 自动处理中文编码
 - 文件大小限制为 100KB
 

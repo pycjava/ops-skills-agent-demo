@@ -69,6 +69,58 @@ const formattedTime = computed(() => {
     hour12: false,
   })
 })
+
+function guessMimeType(path: string) {
+  const normalized = path.toLowerCase()
+
+  if (normalized.endsWith('.md')) return 'text/markdown;charset=utf-8'
+  if (normalized.endsWith('.txt')) return 'text/plain;charset=utf-8'
+  if (normalized.endsWith('.json')) return 'application/json;charset=utf-8'
+  if (normalized.endsWith('.html')) return 'text/html;charset=utf-8'
+  if (normalized.endsWith('.csv')) return 'text/csv;charset=utf-8'
+
+  return 'application/octet-stream'
+}
+
+const fileArtifact = computed(() => {
+  if (!isToolResult.value) return null
+  if (!['write_file', 'edit_file'].includes(props.message.toolName || '')) return null
+  if (!props.message.toolInput) return null
+
+  const maybePath = props.message.toolInput.file_path ?? props.message.toolInput.path
+  const maybeContent = props.message.toolInput.content
+  const path = typeof maybePath === 'string' ? maybePath.trim() : ''
+  const content = typeof maybeContent === 'string' ? maybeContent : ''
+
+  if (!path || !content) return null
+
+  return {
+    path,
+    content,
+    name: path.split('/').filter(Boolean).pop() || path,
+    isReport:
+      path.toLowerCase().endsWith('.md') ||
+      path.toLowerCase().endsWith('.html') ||
+      path.toLowerCase().endsWith('.pdf'),
+  }
+})
+
+function downloadArtifact() {
+  if (!fileArtifact.value) return
+
+  const blob = new Blob([fileArtifact.value.content], {
+    type: guessMimeType(fileArtifact.value.path),
+  })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = fileArtifact.value.name
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -115,8 +167,19 @@ const formattedTime = computed(() => {
 
       <div v-else-if="isToolResult" class="sys-panel sys-panel-result">
         <div class="sys-header" @click="showSystemContent = !showSystemContent">
-          <span class="sys-title">查看工具返回结果</span>
+          <span class="sys-title">{{ fileArtifact ? '完成文件创建' : '查看工具返回结果' }}</span>
           <span class="sys-toggle">{{ showSystemContent ? '收起' : '展开' }}</span>
+        </div>
+
+        <div v-if="fileArtifact" class="artifact-card">
+          <div class="artifact-main">
+            <span class="artifact-kicker">{{ fileArtifact.isReport ? '结果报告' : '生成文件' }}</span>
+            <span class="artifact-name">{{ fileArtifact.name }}</span>
+            <span class="artifact-path">{{ fileArtifact.path }}</span>
+          </div>
+          <button type="button" class="artifact-action" @click.stop="downloadArtifact">
+            {{ fileArtifact.isReport ? '下载报告' : '下载文件' }}
+          </button>
         </div>
 
         <div v-if="showSystemContent" class="sys-body">
@@ -374,6 +437,70 @@ const formattedTime = computed(() => {
 .sys-toggle {
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.artifact-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 16px 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.52);
+}
+
+[data-theme='dark'] .artifact-card {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.artifact-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.artifact-kicker {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.artifact-name {
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.artifact-path {
+  color: var(--text-muted);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.artifact-action {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-soft);
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    transform 0.2s ease,
+    background 0.2s ease;
+}
+
+.artifact-action:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
 }
 
 .sys-body {

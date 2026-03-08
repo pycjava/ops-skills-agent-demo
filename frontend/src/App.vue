@@ -464,6 +464,7 @@ watch(scrollTrigger, async () => {
                 :is-loading="chatStore.isMemoryLoading"
                 :error="chatStore.memoryError"
                 @select="chatStore.fetchMemoryContent"
+                @delete="chatStore.deleteMemoryFile"
                 @refresh="chatStore.fetchMemoryTree(true)"
               />
             </div>

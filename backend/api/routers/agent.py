@@ -4,6 +4,8 @@ POST /api/agent/chat
 程序发送问题，等待 Agent 完整执行后返回最终结果。
 """
 
+from collections import defaultdict, deque
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -74,12 +76,13 @@ async def agent_chat(req: ChatRequest):
     result_text = ""
     result_thinking = ""
     tool_calls: list[ToolCallRecord] = []
-    current_tool: dict | None = None
+    pending_tool_inputs: dict[str, deque[dict]] = defaultdict(deque)
 
     async def on_event(event: dict):
-        nonlocal result_text, result_thinking, current_tool
+        nonlocal result_text, result_thinking
 
         etype = event.get("type")
+        tool_name = event.get("tool_name", "")
 
         if etype == "text_delta":
             result_text += event.get("content", "")
@@ -88,24 +91,33 @@ async def agent_chat(req: ChatRequest):
             result_thinking += event.get("content", "")
 
         elif etype == "tool_call":
-            current_tool = {
-                "tool_name": event.get("tool_name", ""),
-                "tool_input": event.get("tool_input"),
-                "result": "",
-            }
+            tool_input = event.get("tool_input")
+            if tool_name and isinstance(tool_input, dict):
+                pending_tool_inputs[tool_name].append(tool_input)
 
         elif etype == "tool_result":
-            if current_tool:
-                current_tool["result"] = event.get("result", "")
-                tool_calls.append(ToolCallRecord(**current_tool))
-                current_tool = None
+            tool_input = event.get("tool_input")
+            if not isinstance(tool_input, dict) and tool_name:
+                queued_inputs = pending_tool_inputs.get(tool_name)
+                if queued_inputs:
+                    tool_input = queued_inputs.popleft()
+                    if not queued_inputs:
+                        pending_tool_inputs.pop(tool_name, None)
+            tool_calls.append(
+                ToolCallRecord(
+                    tool_name=tool_name,
+                    tool_input=tool_input if isinstance(tool_input, dict) else None,
+                    result=event.get("result", ""),
+                )
+            )
             # 持久化工具消息
             await save_message(
                 conv_id,
                 "system",
                 event.get("result", ""),
                 "tool_result",
-                tool_name=event.get("tool_name"),
+                tool_name=tool_name,
+                tool_input=tool_input if isinstance(tool_input, dict) else None,
             )
 
         elif etype == "error":

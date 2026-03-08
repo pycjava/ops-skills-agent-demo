@@ -111,18 +111,16 @@ class MySQLInstanceInfoCollector:
         初始化采集器
 
         Args:
-            ak: Access Key ID，如不传则从环境变量VOLC_ACCESSKEY读取
-            sk: Secret Access Key，如不传则从环境变量VOLC_SECRETKEY读取
+            ak: Access Key ID，必填
+            sk: Secret Access Key，必填
             region: 区域，默认cn-shanghai
         """
-        self.ak = ak or os.environ.get("VOLC_ACCESSKEY")
-        self.sk = sk or os.environ.get("VOLC_SECRETKEY")
+        self.ak = ak
+        self.sk = sk
         self.region = region
 
         if not self.ak or not self.sk:
-            raise ValueError(
-                "请设置环境变量 VOLC_ACCESSKEY 和 VOLC_SECRETKEY，或通过参数传入"
-            )
+            raise ValueError("必须通过 --ak 和 --sk 参数传入访问凭证")
 
         # 初始化RDS MySQL客户端
         self._init_rds_client()
@@ -551,29 +549,28 @@ def main():
         epilog="""
 示例:
   # 获取实例详情
-  python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --action detail
+  python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --ak <ak> --sk <sk> --action detail
   
   # 获取最近1小时的监控数据
-  python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --action metrics --hours 1
+  python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --ak <ak> --sk <sk> --action metrics --hours 1
   
   # 获取综合信息
   python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --action all \\
+      --ak <ak> --sk <sk> \\
       --start "2026-02-07 00:00" --end "2026-02-07 12:00"
-
-环境变量:
-  VOLC_ACCESSKEY  火山引擎访问密钥ID
-  VOLC_SECRETKEY  火山引擎访问密钥Secret
         """,
     )
 
     parser.add_argument("--instance-id", required=True, help="MySQL实例ID")
     parser.add_argument(
         "--ak",
-        help="火山引擎访问密钥ID（Access Key），如不提供则从环境变量VOLC_ACCESSKEY读取",
+        required=True,
+        help="火山引擎访问密钥ID（Access Key）",
     )
     parser.add_argument(
         "--sk",
-        help="火山引擎访问密钥Secret（Secret Key），如不提供则从环境变量VOLC_SECRETKEY读取",
+        required=True,
+        help="火山引擎访问密钥Secret（Secret Key）",
     )
     parser.add_argument(
         "--action",

@@ -67,9 +67,13 @@ export const useChatStore = defineStore("chat", () => {
   const memoryError = ref<string | null>(null);
   const isMemoryTreeLoading = ref(false);
   const isMemoryContentLoading = ref(false);
+  const isMemoryDeleting = ref(false);
   const isMemoryTreeLoaded = ref(false);
   const isMemoryLoading = computed(
-    () => isMemoryTreeLoading.value || isMemoryContentLoading.value
+    () =>
+      isMemoryTreeLoading.value ||
+      isMemoryContentLoading.value ||
+      isMemoryDeleting.value
   );
 
   let ws: WebSocket | null = null;
@@ -100,6 +104,42 @@ export const useChatStore = defineStore("chat", () => {
     }
 
     return false;
+  }
+
+  function findRecentToolInput(
+    toolName?: string,
+  ): Record<string, unknown> | undefined {
+    if (!toolName) return undefined;
+
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (
+        message?.type === "tool_call" &&
+        message.toolName === toolName &&
+        message.toolInput
+      ) {
+        return message.toolInput;
+      }
+    }
+
+    return undefined;
+  }
+
+  function getToolPath(toolInput?: Record<string, unknown>): string | null {
+    const value = toolInput?.file_path ?? toolInput?.path;
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+
+  function handleMemoryArtifact(toolInput?: Record<string, unknown>) {
+    const path = getToolPath(toolInput);
+    if (!path || !path.startsWith("/memories/")) return;
+
+    if (isMemoryTreeLoaded.value) {
+      void fetchMemoryTree(true);
+      return;
+    }
+
+    isMemoryTreeLoaded.value = false;
   }
 
   // ─── WebSocket ──────────────────────────────
@@ -197,14 +237,17 @@ export const useChatStore = defineStore("chat", () => {
           break;
 
         case "tool_result":
+          const toolResultInput = data.tool_input || findRecentToolInput(data.tool_name);
           messages.push({
             id: genId(),
             role: "system",
             content: data.result,
             type: "tool_result",
             toolName: data.tool_name,
+            toolInput: toolResultInput,
             timestamp: Date.now(),
           });
+          handleMemoryArtifact(toolResultInput);
           break;
 
         case "done":
@@ -338,7 +381,11 @@ export const useChatStore = defineStore("chat", () => {
             : m.content,
           type: m.type as "text" | "tool_call" | "tool_result" | "error",
           toolName: m.tool_name || undefined,
-          toolInput: m.tool_input || undefined,
+          toolInput:
+            m.tool_input ||
+            ((m.type === "tool_result" && m.tool_name)
+              ? findRecentToolInput(m.tool_name)
+              : undefined),
           thinking: m.thinking || undefined,
           timestamp: m.created_at ? new Date(m.created_at).getTime() : Date.now(),
         });
@@ -458,6 +505,34 @@ export const useChatStore = defineStore("chat", () => {
     }
   }
 
+  async function deleteMemoryFile(path: string) {
+    if (!path || isMemoryDeleting.value) return;
+
+    isMemoryDeleting.value = true;
+    memoryError.value = null;
+
+    try {
+      const res = await fetch(
+        `${backendUrl}/api/memories/content?path=${encodeURIComponent(path)}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      if (selectedMemoryPath.value === path) {
+        memoryContent.value = null;
+      }
+
+      await fetchMemoryTree(true);
+    } catch (e) {
+      memoryError.value = "删除记忆失败";
+      console.warn("删除记忆文件失败:", e);
+    } finally {
+      isMemoryDeleting.value = false;
+    }
+  }
+
   function disconnect() {
     ws?.close();
     ws = null;
@@ -490,6 +565,7 @@ export const useChatStore = defineStore("chat", () => {
     fetchSkills,
     fetchMemoryTree,
     fetchMemoryContent,
+    deleteMemoryFile,
     disconnect
   };
 });

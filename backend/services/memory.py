@@ -123,18 +123,22 @@ def _extract_document_content(item: Item) -> str:
     return "\n".join(str(line) for line in raw_content)
 
 
+def _require_file_path(path: str) -> str:
+    normalized = _normalize_memory_path(path, allow_directory=False)
+    if normalized in {MEMORY_ROUTE_PREFIX, f"{MEMORY_ROUTE_PREFIX}/"}:
+        raise HTTPException(status_code=400, detail="Memory file path is required")
+    if normalized.endswith("/"):
+        raise HTTPException(status_code=400, detail="Directory paths are not supported")
+    return normalized
+
+
 async def list_memory_tree() -> list[dict[str, Any]]:
     backend = _get_backend()
     return await _build_nodes(backend, "/")
 
 
 async def read_memory_document(path: str) -> dict[str, Any]:
-    normalized = _normalize_memory_path(path, allow_directory=False)
-    if normalized in {MEMORY_ROUTE_PREFIX, f"{MEMORY_ROUTE_PREFIX}/"}:
-        raise HTTPException(status_code=400, detail="Memory file path is required")
-    if normalized.endswith("/"):
-        raise HTTPException(status_code=400, detail="Directory paths cannot be opened")
-
+    normalized = _require_file_path(path)
     internal_path = _to_internal_path(normalized)
     store = _get_store()
     item = await store.aget(MEMORY_NAMESPACE, internal_path)
@@ -152,3 +156,15 @@ async def read_memory_document(path: str) -> dict[str, Any]:
         "content": _extract_document_content(item),
         "updated_at": updated_at,
     }
+
+
+async def delete_memory_document(path: str) -> dict[str, Any]:
+    normalized = _require_file_path(path)
+    internal_path = _to_internal_path(normalized)
+    store = _get_store()
+    item = await store.aget(MEMORY_NAMESPACE, internal_path)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Memory document not found")
+
+    await store.adelete(MEMORY_NAMESPACE, internal_path)
+    return {"ok": True, "path": _to_public_path(internal_path)}

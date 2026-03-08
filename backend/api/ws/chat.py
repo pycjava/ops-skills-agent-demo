@@ -1,5 +1,6 @@
 import json
 import asyncio
+from collections import defaultdict, deque
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select, update, func
 
@@ -72,6 +73,7 @@ async def websocket_chat(ws: WebSocket):
     step_thinking = ""
     delta_buffer = ""
     flush_task: asyncio.Task | None = None
+    pending_tool_inputs: dict[str, deque[dict]] = defaultdict(deque)
 
     async def flush_delta():
         """将缓冲的 delta 合并发送"""
@@ -100,6 +102,7 @@ async def websocket_chat(ws: WebSocket):
             raise asyncio.CancelledError("用户中断")
 
         etype = event.get("type")
+        tool_name = event.get("tool_name")
 
         if etype == "text_delta":
             streaming_text += event.get("content", "")
@@ -119,6 +122,19 @@ async def websocket_chat(ws: WebSocket):
             await flush_delta()
             if flush_task and not flush_task.done():
                 flush_task.cancel()
+
+        if etype == "tool_call":
+            tool_input = event.get("tool_input")
+            if tool_name and isinstance(tool_input, dict):
+                pending_tool_inputs[tool_name].append(tool_input)
+        elif etype == "tool_result" and tool_name:
+            tool_input = event.get("tool_input")
+            if not isinstance(tool_input, dict):
+                queued_inputs = pending_tool_inputs.get(tool_name)
+                if queued_inputs:
+                    event["tool_input"] = queued_inputs.popleft()
+                    if not queued_inputs:
+                        pending_tool_inputs.pop(tool_name, None)
 
         await ws.send_text(json.dumps(event, ensure_ascii=False))
 
@@ -142,6 +158,7 @@ async def websocket_chat(ws: WebSocket):
                 event.get("result", ""),
                 "tool_result",
                 tool_name=event.get("tool_name"),
+                tool_input=event.get("tool_input"),
             )
         elif etype == "error":
             logger.error(f"Agent 报错事件: {event.get('content')}")

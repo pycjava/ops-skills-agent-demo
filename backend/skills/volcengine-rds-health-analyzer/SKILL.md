@@ -1,624 +1,241 @@
 ---
-name: "volcengine-rds-health-analyzer"
-description: "Automates comprehensive health and performance analysis for Volcengine RDS MySQL instances using cloud monitoring APIs. Use when the user needs to: (1) Generate database health reports for Volcengine RDS MySQL instances, (2) Monitor CPU, memory, disk usage and resource bottlenecks, (3) Perform routine database health checks or capacity planning for Volcengine RDS. This skill collects instance configuration and resource metrics to produce structured operational reports."
-enabled_tools: "AnalyzeMetricData, Read, RunCommand, Glob"
-script: "scripts/get_instance_info.py"
-allowed_scripts: ["scripts/get_instance_info.py"]
-type: "获取监控指标"
-tools: ""
-icon: "🤖"
-is_online: "true"
+name: volcengine-rds-health-analyzer
+description: 使用火山引擎云监控 API 和本技能自带脚本，对 Volcengine RDS MySQL 实例做健康巡检、容量评估和巡检报告生成。当用户要求分析 CPU/内存/磁盘/QPS/TPS/主从延迟、排查资源瓶颈，或生成火山引擎 RDS MySQL 巡检报告时使用。
 ---
 
-# Volcengine RDS MySQL Health Analyzer
+# 火山引擎 RDS MySQL 巡检技能
 
-Automates comprehensive health and performance analysis for Volcengine RDS MySQL instances.
+使用此技能对火山引擎 RDS MySQL 实例做只读巡检：先采集实例详情和监控指标，再由大模型基于采集结果完成分析、评分和报告输出。
 
-## Prerequisites
+## 本项目可用工具
 
-Ensure dependencies are installed:
+本项目中应只使用以下能力，不要引用不存在的工具名：
+
+- `execute`：运行采集脚本、创建输出目录、按需做轻量过滤
+- `glob`：查找生成的 `metric_data/*.json` 文件
+- `read_file`：按需读取单个结果文件
+- `write_file` / `edit_file`：在用户要求保存报告时写入 Markdown 文件；巡检报告优先写入 `/memories/reports/`
+
+项目内文件工具统一以 `backend/` 为虚拟根目录：
+- `glob` 的 pattern 使用相对路径，例如 `metric_data/instance_data_*.json`
+- `read_file` 优先使用相对路径，例如 `metric_data/instance_data_cpu.json`
+- 如果文件路径来自 `glob` 结果，也可以直接复用 `/metric_data/...` 形式的虚拟路径
+- 不要使用 `B:\...`、`C:\...`、`/backend/...`、`/memories/../backend/...`
+
+## 运行约束
+
+- 只做只读巡检，不直接连接数据库执行 SQL。
+- 只使用本技能自带脚本：`./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py`
+- 不要为了分析数据再创建新的 Python / Shell 分析脚本。
+- 不要在回复中泄露 `AK/SK`、完整凭证或敏感配置。
+- `analysis_depth` 与 `time_range` 是独立参数，不要绑定。
+- 数据值已经是最终单位，禁止自行乘以 `100` 或做额外单位换算。
+- 始终显式传入 `--output`，避免脚本把文件写到默认硬编码目录。
+- 不要通过 `set VOLC_ACCESSKEY=...`、`export VOLC_ACCESSKEY=...` 等环境变量方式传递凭证；执行命令时始终直接使用 `--ak` 和 `--sk` 参数。
+
+## 输入参数
+
+- `instance_id`：实例 ID，必填，例如 `mysql-xxxxx`
+- `region`：区域，默认 `cn-shanghai`
+- `time_range`：巡检时间范围，默认最近 `24h`
+- `analysis_depth`：`basic` / `standard` / `deep`
+- `ak` / `sk`：火山引擎访问密钥（Access Key ID / Secret Key），必填，由用户提供
+
+## 时间粒度策略
+
+根据时间范围自动选择 `--period`：
+
+| time_range | period |
+|------------|--------|
+| `< 24h` | `5m` |
+| `1-7d` | `1h` |
+| `> 7d` | `1d` |
+
+## 标准工作流
+
+1. 先收集参数：
+   - `instance_id`
+   - `region`
+   - `time_range`
+   - `analysis_depth`
+   - `ak` / `sk`（必填，向用户索取）
+
+2. 用 `execute` 运行采集脚本，输出到项目内相对路径，例如：
+
 ```bash
-pip install -r requirements.txt
+python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
+  --instance-id <instance_id> \
+  --region <region> \
+  --ak <ak> \
+  --sk <sk> \
+  --hours <hours> \
+  --period <period> \
+  --action all \
+  --output ./metric_data/instance_data.json
 ```
 
-## Workflow
+如果用户提供的是明确的起止时间，则改用：
 
-When user requests database health analysis:
+```bash
+python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
+  --instance-id <instance_id> \
+  --region <region> \
+  --ak <ak> \
+  --sk <sk> \
+  --start "YYYY-MM-DD HH:MM" \
+  --end "YYYY-MM-DD HH:MM" \
+  --period <period> \
+  --action all \
+  --output ./metric_data/instance_data.json
+```
 
-1. **Gather parameters** from user or calling agent:
-   - `instance_id`: MySQL instance identifier (required)
-   - `ak`, `sk`: Volcengine access key and secret key (required, passed from agent)
-   - `region`: Region (default: `cn-shanghai`)
-   - `time_range`: Analysis period (default: last 24 hours)
-   - `analysis_depth`: basic | standard | deep (independent of time_range)
+3. 用 `glob` 查找生成的结果文件：
+   - `./metric_data/instance_data_*.json`
 
-   **analysis_depth** — 决定分析深度和报告详细程度：
+4. 用 `read_file` 按需逐个读取结果文件，优先看每个指标里的 `summary`：
+   - 推荐直接读取 `metric_data/instance_data_*.json`
+   - 如果 `glob` 返回的是 `/metric_data/...`，可直接原样传给 `read_file`
+   - 不要把路径改写成 `/backend/...`
+   - 不要使用 `B:\...` 或 `/memories/../backend/...`
+   - `summary.min`
+   - `summary.max`
+   - `summary.avg`
+   - `summary.data_point_count`
+   - `nodes`
 
-   | analysis_depth | 分析侧重 | 报告内容 |
-   |----------------|----------|----------|
-   | basic | 快速健康检查 | 关键指标概览、明显异常告警 |
-   | standard | 性能分析与优化 | 趋势分析、模式识别、优化建议（推荐） |
-   | deep | 根因定位与诊断 | 全指标深度分析、异常关联、瓶颈根因、详细优化方案 |
+5. 分析时遵循以下原则：
+   - 先看 `summary`，不要一开始就把所有原始点位全读进上下文
+   - 只有某个指标异常时，才继续读取对应文件里的 `nodes` / `data_points`
+   - 顺序分析异常指标，不要并行读取一批大文件
+   - 正常指标直接基于 `summary` 给出结论
+   - JSON 结果分析优先使用 `read_file`，不要用 `execute python -c` 读取文件后却不输出任何结果
+   - `execute` 仅用于采集脚本或必要的轻量过滤；如果使用它做过滤，命令必须明确产生 stdout
+   - 如果 `execute` 返回“Command succeeded with no stdout/stderr”，说明命令已成功完成，应转去读取生成文件，不要继续猜测 `print flush`
 
-   **time_range** — 决定数据粒度（`--period`），与 analysis_depth 独立：
+6. 输出巡检结果：
+   - 巡检概要
+   - 健康评分
+   - 核心指标分析
+   - 异常发现
+   - 行动建议
 
-   | time_range | recommended --period | data points |
-   |------------|---------------------|-------------|
-   | < 24 hours | 5m (default) | ~288 points |
-   | 1-7 days | 1h | 24-168 points |
-   | > 7 days | 1d | 30+ points |
+7. 如用户要求“保存报告”或“生成文件”，使用 `obsidian-markdown` 风格写成 Markdown，并用 `write_file` 写入 `/memories/reports/` 下的 `.md` 文件。
+   - 生成报告前，先使用 `read_file` 读取模板文件 `./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
+   - 报告内容必须按照模板结构填充，不要改变一级、二级标题顺序
+   - 没有数据的字段写“未获取”或“无异常”，不要删除模板章节
 
-   ```bash
-   python scripts/get_instance_info.py \
-     --instance-id <instance_id> \
-     --ak <ak> \
-     --sk <sk> \
-     --region <region> \
-     --hours <time_range> \
-     --period <period> \
-     --action all \
-     --output metric_data/instance_data.json
-   ```
+## 采集结果说明
 
-   Credentials: Use environment variables `VOLC_ACCESSKEY` and `VOLC_SECRETKEY`, or pass `--ak` and `--sk` arguments.
+`--action all` 会生成多个 JSON 文件，每个文件对应一个指标。核心指标包括：
 
-3. **Analyze collected data (Use AnalyzeMetricData first)**:
+- `cpu`
+- `memory`
+- `disk_util`
+- `qps`
+- `tps`
+- `replication_delay`
+- `IOPSRate`
+- `network_in`
+- `network_out`
 
-   > **CRITICAL RULE**: First call `AnalyzeMetricData` to extract summaries from `metric_data/instance_data_*.json`. Then perform anomaly detection and scoring by the **LLM (You)** based on the summarized data.
-  > **TRUST THE DATA**: The `metric_data/instance_data_*.json` files already contain `summary` fields (min, max, avg). Use these values directly. Do NOT recalculate averages from raw data points unless you are identifying specific anomaly timestamps.
-   > **DO NOT** create or run any separate Python/Shell scripts to perform the analysis or generate the report.
-   > Only when summary data is insufficient, use `Read` or Python one-liners to inspect targeted raw data.
+每个文件中最关键的字段是：
 
-   > **Data Handling Alert**: The generated data files can be large. **DO NOT** read the full content of all files into context immediately. Follow this **Smart Read** process:
+- `instance_detail`：实例规格、版本、节点等基础信息
+- `resource_metrics.metrics.<metric_key>.summary`：该指标的汇总统计
+- `resource_metrics.metrics.<metric_key>.nodes`：按节点拆分的数据
 
-   > **Unit Warning**: 数据值已经是对应单位的最终值，**无需任何换算**。例如 CPU 值 `55.7` 即表示 `55.7%`，内存值 `70.2` 即表示 `70.2%`，IOPS 值 `1.4` 即表示 `1.4 Count/s`。**严禁**对数据进行乘以 100 或其他单位转换操作。
+## 健康阈值
 
-  **Step A: Scan Summaries**
-  - Call `AnalyzeMetricData` with `glob=metric_data/instance_data_*.json` to get all summary blocks.
-  - Check `min`, `max`, `avg` against the [Health Thresholds](#health-thresholds).
-
-   **Step B: Identification & Filtering (Alert: Sequential Processing Only)**
-   - Identify metrics that exceed thresholds or show anomalies (e.g., CPU max > 80%).
-   - For **Normal** metrics: Use the summary statistics for the report. **Do not read the file.**
-   - For **Abnormal** metrics:
-     - **Process sequentially**: Analyze one metric at a time. **DO NOT** use parallel tool calls to read multiple files.
-     - If the file is small (< 50KB), you may read it fully.
-     - If the file is large, use the **Filter Command** (see below) to extract *only* the anomalous data points.
-
-   **Step C: Segmented Analysis**
-   - If analyzing a long period (e.g., 7 days), do not load all data points.
-   - Ask Python to aggregate data by day or hour first, or extract data for the specific "peak" timestamp found in the summary.
-
-4. **Present findings** to the user:
-   - Executive summary with health score
-   - Priority issues with severity levels and root causes
-   - Actionable recommendations for capacity planning
-   - Resource usage trends and predictions
-
-5. **生成巡检报告（Markdown）**:
-
-   > 分析完成后，使用 `obsidian-markdown` 技能语法将报告写入 Markdown 文件。
-
-   **Markdown 报告编写要求**：
-   - 使用 frontmatter 记录报告元数据（title、date、instance_id、analysis_depth）
-   - 使用 callouts 标注异常级别：`> [!danger]` 严重、`> [!warning]` 警告、`> [!success]` 正常
-   - 使用表格展示各指标统计值（均值/最大值/最小值/P95）+ 状态判定
-   - 文件名格式：`inspection_report_<instance_id>_<date>.md`
-
-   报告应包含以下内容：
-   - **巡检概要**：实例基本信息表格（规格、版本、区域等）、巡检参数
-   - **健康评分**：综合评分及各维度评分
-   - **核心指标分析**：各指标统计表格 + 状态判定
-   - **异常发现**：按严重程度排序的异常列表（使用 callouts）
-   - **行动建议**：具体可操作的优化建议
-
-6. **清理临时数据文件**:
-
-  报告生成完成后，删除所有 `metric_data/instance_data_*.json` 临时数据文件：
-   ```bash
-  rm metric_data/instance_data_*.json
-   ```
-
-## Analysis Guidelines
-
-大模型分析时参考以下标准：
-
-### 健康阈值
-
-| 指标 | 正常 (绿) | 警告 (黄) | 危险 (红) |
-|------|-----------|-----------|-----------|
-| CPU使用率 | < 60% | 60%-80% | > 80% |
-| 内存使用率 | < 70% | 70%-85% | > 85% |
-| 磁盘使用率 | < 70% | 70%-85% | > 85% |
-| QPS | 基线内 | 突增>200% | 突增>500% |
-| TPS | 基线内 | 突增>200% | 突增>500% |
-| 主从延迟 | < 1s | 1-5s | > 5s |
-| IOPS | < 70%上限 | 70%-90% | > 90% |
-
-### 健康评分规则（0-100分）
-
-**CRITICAL**: You MUST calculate the score strictly according to these tables. Do not guess.
-
-**1. CPU Usage (Max 20 pts)**
-| Average Usage | Score |
-|---------------|-------|
-| < 60%         | 20    |
-| 60% - 70%     | 15    |
-| 70% - 80%     | 10    |
-| > 80%         | 5     |
-
-**2. Memory Usage (Max 20 pts)**
-| Average Usage | Score |
-|---------------|-------|
-| < 70%         | 20    |
-| 70% - 80%     | 15    |
-| 80% - 90%     | 10    |
-| > 90%         | 5     |
-
-**3. Disk Usage (Max 20 pts)**
-| Average Usage | Score |
-|---------------|-------|
-| < 70%         | 20    |
-| 70% - 80%     | 15    |
-| 80% - 90%     | 10    |
-| > 90%         | 5     |
-
-**4. Stability (QPS/TPS/IOPS) (Max 15 pts)**
-- **Baseline**: 15 points.
-- **Penalty**: Deduct 5 points for *each* metric (QPS, TPS, IOPS) that has `Max > 3 * Avg` (indicating severe spikes).
-- **Min Score**: 0.
-
-**5. Replication Delay (Max 15 pts)**
-| Max Delay | Score |
-|-----------|-------|
-| < 1s      | 15    |
-| 1s - 5s   | 10    |
-| 5s - 10s  | 5     |
-| > 10s     | 0     |
-
-**6. General Health (Max 10 pts)**
-- **10 pts**: If no metric is in "Red" zone (Dangerous).
-- **5 pts**: If 1-2 metrics are in "Red" zone.
-- **0 pts**: If > 2 metrics are in "Red" zone.
-
-**Total Score = Sum of above 6 sections.**
-
-## Example Report (Reference)
-
-```markdown
----
-title: 火山引擎RDS MySQL巡检报告
-instance_id: mysql-03ad84b450b2
-instance_name: 灵工MySQL集群
-date: 2026-02-13T17:08:20
-time_range: 7天 (2026-02-06 ~ 2026-02-13)
-analysis_depth: deep
-health_score: 95
-status: 优秀
-tags:
-  - 数据库巡检
-  - RDS
-  - MySQL
-  - 火山引擎
----
-
-# 📊 火山引擎RDS MySQL巡检报告
-
-## 巡检概要
-
-### 实例基本信息
-
-| 项目 | 详情 |
-|------|------|
-| 实例ID | `mysql-03ad84b450b2` |
-| 实例名称 | ==灵工MySQL集群== |
-| 运行状态 | ✅ Running |
-| 数据库版本 | MySQL 5.7 |
-| 实例类型 | DoubleNode（双节点高可用） |
-| 节点规格 | **8核 16GB** (rds.mysql.8c16g) |
-| 节点数量 | 2个节点 |
-| 存储容量 | 1000 GB (LocalSSD) |
-| 实际使用 | 53.1 GB (5.31%) |
-| 可用区 | cn-shanghai-a |
-| 数据同步模式 | 异步复制 (Async) |
-| 创建时间 | 2024-03-11 |
-| 计费方式 | 预付费 |
-
-### 巡检参数
-
-| 参数 | 值 |
-|------|-----|
-| 巡检时间 | 2026-02-13 17:08:20 |
-| 分析时间范围 | **最近7天** (2026-02-06 ~ 2026-02-13) |
-| 数据采集粒度 | 1小时 |
-| 数据点数量 | 336个时间点 |
-| 分析深度 | **Deep** (深度分析) |
-
----
-
-## 健康评分
-
-> [!success] 综合评分: 95/100 ⭐⭐⭐⭐⭐
-> **评级**: 优秀 - 实例运行健康，资源利用率合理，仅存在可预测的定时峰值
-
-### 评分明细
-
-| 维度 | 得分 | 满分 | 评价 |
+| 指标 | 正常 | 警告 | 危险 |
 |------|------|------|------|
-| CPU使用率 | 20 | 20 | ✅ 均值14.25%，峰值69.66%，整体优秀 |
-| 内存使用率 | 20 | 20 | ✅ 稳定在56%，无波动 |
-| 磁盘使用率 | 20 | 20 | ✅ 仅5.31%，空间充足 |
-| QPS/TPS稳定性 | 12 | 15 | ⚠️ 存在每日定时峰值（-3分） |
-| 主从延迟 | 15 | 15 | ✅ 平均0.02秒，表现优异 |
-| 综合波动 | 8 | 10 | ✅ 波动可控，可预测 |
-
----
-
-## 核心指标分析
-
-### 1️⃣ CPU 使用率
-
-**统计值**（7天，336个数据点）：
-
-| 指标 | 数值 |
-|------|------|
-| **平均值** | 14.25% |
-| **最大值** | 69.66% (2026-02-07 17:00) |
-| **最小值** | 0.036% |
-| **P95** | ~0.50% |
-
-**节点对比**：
-
-- **节点1**（主节点）: 峰值 69.66%，Top 10 值在 50-70% 之间
-  - 2026-02-07 17:00: 69.66%
-  - 2026-02-13 14:00: 65.53%
-  - 2026-02-09 14:00: 52.77%
-- **节点2**（只读节点）: 峰值 21.68%，负载极低
-
-> [!success] 趋势判断
-> ✅ **健康** - CPU 均值处于理想区间（<20%），峰值虽然达到69.66%，但仅为个别时刻，未持续出现。主节点承载主要计算负载，只读节点压力极小。
-
----
-
-### 2️⃣ 内存使用率
-
-**统计值**：
-
-| 指标 | 数值 |
-|------|------|
-| **平均值** | 56.31% |
-| **最大值** | 57.39% |
-| **最小值** | 55.71% |
-| **波动范围** | 仅 1.68% |
-
-> [!success] 趋势判断
-> ✅ **优秀** - 内存使用率稳定在56%左右，波动极小（< 2%），说明缓存池配置合理，无内存泄漏风险。
-
----
-
-### 3️⃣ 磁盘使用率
-
-**统计值**：
-
-| 指标 | 数值 |
-|------|------|
-| **平均值** | 5.31% |
-| **最大值** | 5.31% |
-| **实际使用** | 53.1 GB / 1000 GB |
-
-> [!success] 趋势判断
-> ✅ **优秀** - 磁盘空间充足，使用率恒定在5.31%，无增长趋势。当前配置的1TB存储空间可支撑长期使用。
-
----
-
-### 4️⃣ QPS（每秒查询数）
-
-**统计值**（168个数据点）：
-
-| 指标 | 数值 |
-|------|------|
-| **平均值** | 71.57 QPS |
-| **最大值** | 284.03 QPS |
-| **最小值** | 8.81 QPS |
-| **峰谷比** | 约 **4倍** |
-
-> [!warning] 关键发现 - 定时峰值模式
-> **每天凌晨 02:00 固定出现 QPS 峰值（~283 QPS）**：
->
-> | 日期 | 时间 | QPS 值 |
-> |------|------|--------|
-> | 2026-02-07 | 02:00 | 283.30 |
-> | 2026-02-08 | 02:00 | 283.69 |
-> | 2026-02-09 | 02:00 | 283.05 |
-> | 2026-02-10 | 02:00 | 282.98 |
-> | 2026-02-11 | 02:00 | ==284.03== ← 峰值 |
-> | 2026-02-12 | 02:00 | 283.13 |
-> | 2026-02-13 | 02:00 | 282.94 |
->
-> **次高峰出现在凌晨 03:00**（~83 QPS）
-
-> [!warning] 趋势判断
-> ⚠️ **需关注** - QPS 存在明显的**定时任务特征**，每天凌晨2点固定出现4倍流量突增。这很可能是：
-> - 自动化备份任务
-> - 数据统计或报表生成
-> - 批量数据处理任务
-
----
-
-### 5️⃣ TPS（每秒事务数）
-
-**统计值**：
-
-| 指标 | 数值 |
-|------|------|
-| **平均值** | 1.26 TPS |
-| **最大值** | 3.03 TPS |
-| **峰谷比** | 约 2.4倍 |
-
-> [!success] 趋势判断
-> ✅ **正常** - TPS 整体平稳，峰值波动在可接受范围内（< 3倍），说明写操作压力不大。
-
----
-
-### 6️⃣ 主从复制延迟
-
-**统计值**：
-
-| 指标 | 数值 |
-|------|------|
-| **平均值** | 0.02 秒 |
-| **最大值** | 0.055 秒 |
-| **最小值** | 0 秒 |
-
-> [!success] 趋势判断
-> ✅ **优秀** - 主从延迟极低（< 0.1秒），远低于1秒健康阈值，说明异步复制工作正常，网络链路稳定。
-
----
-
-### 7️⃣ IOPS
-
-**统计值**：
-
-| 指标 | 数值 |
-|------|------|
-| **平均值** | 1.4 IOPS |
-| **最大值** | 4.83 IOPS |
-
-> [!success] 趋势判断
-> ✅ **优秀** - IOPS 极低，磁盘I/O无压力。LocalSSD 的性能远未达到瓶颈。
-
----
-
-### 8️⃣ 网络流量
-
-**入站流量**：
-
-| 指标 | 数值 |
-|------|------|
-| 平均值 | 5.16 KB/s |
-| 峰值 | 66.76 KB/s |
-| 突增倍数 | **13倍** |
-
-**出站流量**：
-
-| 指标 | 数值 |
-|------|------|
-| 平均值 | 23.58 KB/s |
-| 峰值 | 75.87 KB/s |
-| 突增倍数 | 3.2倍 |
-
-> [!warning] 趋势判断
-> ⚠️ **需关注** - 网络入站流量存在13倍突增，与 QPS 定时峰值时间吻合，进一步证实了定时任务的存在。
-
----
-
-## 异常发现
-
-### 🟡 警告级别
-
-> [!warning] 定时任务导致资源突增
-> **发现时间**: 每天凌晨 02:00-03:00
-> **影响指标**: QPS、网络入流量、CPU
-> **严重程度**: 中等
->
-> **详情**:
-> - QPS 从均值 71 突增至 284（**+297%**）
-> - 网络入流量从 5KB/s 突增至 67KB/s（**+1200%**）
-> - CPU 在部分时刻达到 69.66%（接近警戒线）
->
-> **根因分析**:
-> 高度疑似为自动化定时任务（备份、统计或批处理），任务执行时间固定在凌晨2点，持续约1小时。
-
----
-
-### ✅ 正常运行
-
-> [!success] 以下指标运行健康
-> - ✅ **内存使用率**: 稳定在56%，无波动
-> - ✅ **磁盘使用率**: 仅5.31%，空间充足（剩余947GB）
-> - ✅ **主从延迟**: 平均0.02秒，复制链路健康
-> - ✅ **IOPS**: 极低压力，磁盘I/O无瓶颈
-> - ✅ **TPS**: 平稳运行，写操作压力小
-
----
-
-## 行动建议
-
-### 🔴 优先级 P1（高优先级）
-
-> [!danger] 1. 排查凌晨2点定时任务
-> **问题**: 每天02:00出现4倍QPS突增，可能影响业务高峰期性能
->
-> **建议**:
-> - 检查 MySQL 的 Event Scheduler 是否有定时任务
-> - 检查应用层是否有cron任务连接该实例
-> - 如果是备份任务，建议调整至业务低谷期（如凌晨4-5点）
->
-> **执行SQL**:
-> ```sql
-> SHOW EVENTS;  -- 查看数据库定时任务
-> SELECT * FROM mysql.event WHERE status = 'ENABLED';
-> ```
-
-> [!danger] 2. 监控 CPU 峰值
-> **问题**: CPU 峰值达到 69.66%，接近70%警戒线
->
-> **建议**:
-> - 设置 CPU 使用率告警（阈值: 70%）
-> - 在下次峰值时段（参考历史峰值时间），使用慢查询日志分析高负载SQL
->
-> **执行SQL**:
-> ```sql
-> SET GLOBAL slow_query_log = 'ON';
-> SET GLOBAL long_query_time = 1;  -- 记录执行超过1秒的查询
-> ```
-
----
-
-### 🟡 优先级 P2（中优先级）
-
-> [!warning] 3. 优化只读节点利用率
-> **问题**: 只读节点 CPU 峰值仅21.68%，而主节点达到69.66%，负载不均衡
->
-> **建议**:
-> - 将部分读查询（如报表、统计类查询）分流到只读节点
-> - 配置应用层读写分离中间件（如 ProxySQL、MySQL Router）
->
-> **预期收益**: 降低主节点压力，提升整体吞吐能力
-
-> [!warning] 4. 建立性能基线和告警
-> **建议**:
-> - 设置 QPS 突增告警（阈值: 200 QPS，即均值的3倍）
-> - 设置网络流量异常告警（入站 > 50KB/s）
-> - 启用火山引擎云监控的异常检测功能
-
----
-
-### 🟢 优先级 P3（低优先级，长期优化）
-
-> [!tip] 5. 磁盘空间容量规划
-> **当前状态**: 使用 53GB / 1000GB (5.31%)
->
-> **建议**: 当前配置的1TB存储空间充足，建议每季度检查一次增长趋势，预计未来2-3年内无需扩容。
-
-> [!tip] 6. 考虑升级 MySQL 版本
-> **当前版本**: MySQL 5.7
->
-> **建议**: MySQL 5.7 将于2023年10月停止官方支持，建议规划升级至 MySQL 8.0，以获得更好的性能和安全性。
-
----
-
-## 总结
-
-> [!success] 整体评价
-> 实例运行**健康稳定**，综合评分 **95/100**
-
-### 🎯 核心优势
-
-- ✅ CPU、内存、磁盘资源充足，利用率合理
-- ✅ 主从复制健康，延迟极低（< 0.1秒）
-- ✅ IOPS 和网络带宽远未达到瓶颈
-- ✅ 双节点高可用架构，保障业务连续性
-
-### ⚠️ 需要关注
-
-- **定时任务优化**: 凌晨2点的定时任务导致QPS突增4倍，需排查并优化执行时间
-- **读写负载均衡**: 只读节点利用率不足，可进一步分流读查询
-
-### 📈 长期建议
-
-- 建立完善的监控告警体系
-- 规划 MySQL 8.0 升级路线
-- 定期（每季度）进行性能巡检
-
----
-
-**巡检报告生成时间**: 2026-02-13 17:08:20
-**报告版本**: v1.0
-**技术支持**: 火山引擎RDS MySQL巡检专家
-
-%%
-内部备注：
-- 下次巡检建议时间：2026-03-13
-- 重点关注凌晨2点定时任务优化进展
-- 跟踪只读节点利用率变化
-%%
-```
+| CPU 使用率 | `< 60%` | `60%-80%` | `> 80%` |
+| 内存使用率 | `< 70%` | `70%-85%` | `> 85%` |
+| 磁盘使用率 | `< 70%` | `70%-85%` | `> 85%` |
+| QPS / TPS | 基线内 | 峰值明显突增 | 峰值严重突增 |
+| 主从延迟 | `< 1s` | `1-5s` | `> 5s` |
+| IOPS | `< 70%上限` | `70%-90%上限` | `> 90%上限` |
+
+## 评分规则（总分 100）
+
+严格按以下规则计算：
+
+1. CPU（20 分）
+   - `avg < 60` → `20`
+   - `60 <= avg < 70` → `15`
+   - `70 <= avg < 80` → `10`
+   - `avg >= 80` → `5`
+
+2. 内存（20 分）
+   - `avg < 70` → `20`
+   - `70 <= avg < 80` → `15`
+   - `80 <= avg < 90` → `10`
+   - `avg >= 90` → `5`
+
+3. 磁盘（20 分）
+   - `avg < 70` → `20`
+   - `70 <= avg < 80` → `15`
+   - `80 <= avg < 90` → `10`
+   - `avg >= 90` → `5`
+
+4. 稳定性（15 分）
+   - 初始 `15`
+   - `qps`、`tps`、`IOPSRate` 中每出现一个 `max > 3 * avg` 的严重尖峰，扣 `5`
+   - 最低 `0`
+
+5. 主从延迟（15 分）
+   - `max < 1` → `15`
+   - `1 <= max < 5` → `10`
+   - `5 <= max < 10` → `5`
+   - `max >= 10` → `0`
+
+6. 综合健康（10 分）
+   - 没有红色指标 → `10`
+   - `1-2` 个红色指标 → `5`
+   - 超过 `2` 个红色指标 → `0`
+
+## 报告输出要求
+
+报告至少包含以下部分：
+
+- **巡检概要**：实例信息、巡检范围、分析深度
+- **健康评分**：总分与扣分说明
+- **核心指标分析**：CPU、内存、磁盘、QPS、TPS、主从延迟、IOPS、网络
+- **异常发现**：按严重程度排序
+- **行动建议**：给出具体可执行建议
+
+如需生成 Markdown 报告，必须使用模板文件：
+
+- 模板路径：`./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
+- 先用 `read_file` 读取该模板，再按模板结构填充实际分析结果
+- 不要随意调整章节顺序；没有数据的字段写“未获取”或“无异常”
+- 最终输出必须保持模板中的一级、二级标题和主要表格结构
+
+如果保存为 Markdown，建议文件名与路径：
+
+```text
+/memories/reports/inspection_report_<instance_id>_<YYYYMMDD>.md
 ```
 
-## Error Handling
+写入 `/memories/` 时必须使用 `write_file` / `edit_file`，不要使用 `execute` 里的 shell 重定向或 `echo >`。
 
-- **InstanceNotFound**: Instance ID invalid or deleted. Ask user to verify.
-- **ApiException 403**: AK/SK credentials invalid or lack permission. Ask user to check.
-- **metric not found**: Metric name or sub_namespace mismatch. Check Key Metrics table below.
-- **API rate limit**: Script includes 0.1s delay between metric calls. For large time ranges, use coarser `--period`.
+## 错误处理
 
-## Smart Data Analysis Strategy (Helper Commands)
+- `InstanceNotFound`：实例 ID 不存在或已删除，提示用户核对
+- `ApiException 403`：AK/SK 无效或权限不足，提示用户检查凭证和权限
+- 指标缺失：提示对应 metric / sub_namespace 可能不匹配
+- API 限流：增大 `--period`，缩小时间范围，或稍后重试
 
-Use these Python one-liners to analyze data without loading full files into context.
+## 参考路径
 
-**1. Fast Summary Scan (Run this first)**
-```python
-import json, glob, os
-print("Processing summaries...")
-for f in glob.glob('metric_data/instance_data_*.json'):
-    try:
-        with open(f, 'r', encoding='utf-8') as fd:
-            d = json.load(fd)
-            # Support both new split format and old format
-            summary = d.get('summary') or d.get('resource_metrics', {}).get('metrics', {}).values().__iter__().__next__().get('summary')
-            print(f"File: {f}\nMetric: {d.get('resource_metrics', {}).get('metrics', {}).keys()}\nSummary: {summary}\n---")
-    except Exception as e: print(f"{f}: {e}")
-```
+- 脚本：`./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py`
+- 输出目录：`./metric_data/`
+- 报告模板：`./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
 
-**2. Filter Anomalies (Drill-down)**
-*Example: Get data points where value > 60 for CPU*
-```python
-import json
-threshold = 60
-with open('metric_data/instance_data_cpu.json', 'r', encoding='utf-8') as f:
-    data = json.load(f)
-    for node in data.get('nodes', []):
-        anomalies = [p for p in node['data_points'] if p['value'] > threshold]
-        print(f"Node: {node.get('legend')} - Found {len(anomalies)} anomalies (Top 5):")
-        # Print top 5 highest to save context
-        print(sorted(anomalies, key=lambda x: x['value'], reverse=True)[:5])
-```
+## 强制要求
 
-## Data Parsing Notes
-
-The `metric_data/instance_data_*.json` files now contain pre-parsed, clean data structures:
-- `summary`: Contains `min`, `max`, `avg`, `data_point_count`. **Reliable for overview.**
-- `nodes`: List of nodes (Primary/Read-only).
-- `data_points`: List of `{ts, time, value}`.
-- `value`: Float with 4 decimal places.
-
-## Available Scripts
-
-- `get_instance_info.py` - Instance configuration and resource metrics (CPU, Memory, Disk, QPS, TPS, ReplicationDelay, IOPS, Network)
-
-Supports `--action` modes: `detail` (instance info only), `metrics` (monitoring data only), `all` (both).
-
-All scripts support `--ak`/`--sk` or environment variables for authentication.
-
-## Key Metrics Collected
-
-From Volcengine Cloud Monitor API (Namespace: `VCM_RDS_MySQL`):
-
-| Metric Name | sub_namespace | Description | Unit |
-|-------------|---------------|-------------|------|
-| CpuUtil | resource_monitor_new | CPU usage | % |
-| MemUtil | resource_monitor_new | Memory usage | % |
-| DiskUtil | resource_monitor_new | Disk usage | % |
-| QPS | engine_monitor | Queries per second | Count/s |
-| TPS | engine_monitor | Transactions per second | Count/s |
-| ReplicationDelay | deploy_monitor_new | Replication lag | Seconds |
-| IOPSRate | resource_monitor_new | IOPS | Count/s |
-| NetworkReceiveThroughput | resource_monitor_new | Network in | Bytes/s |
-| NetworkTransmitThroughput | resource_monitor_new | Network out | Bytes/s |
-
-## API Documentation
-
-- [Cloud Monitor GetMetricData API](https://www.volcengine.com/docs/6408/105542)
-- [RDS MySQL API](https://www.volcengine.com/docs/6313/170652)
-- [Python SDK Guide](https://www.volcengine.com/docs/6408/170945)
+- 不要把 skill 当作独立 tool 名去调用。
+- 不要输出“调用 `volcengine-rds-health-analyzer` 工具”这类表述。
+- 采集数据时应遵循 skill 中的流程，并通过 `execute` 运行 skill 自带脚本。
+- 任何项目文件的路径匹配都必须使用相对路径；读取项目文件时优先使用相对路径或直接复用 `glob` 返回的 `/...` 虚拟路径。
+- `execute` 成功但无输出时，应把它视为“命令执行成功但没有终端文本”，不要围绕 `flush` 或同一条 `python -c` 命令反复重试。
+- 生成巡检 Markdown 报告时，必须遵循 `./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md` 的格式与章节结构。

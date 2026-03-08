@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Any, Callable, Awaitable
 
 from deepagents import create_deep_agent
-from deepagents.backends import LocalShellBackend, CompositeBackend, StoreBackend
+from deepagents.backends import CompositeBackend, StoreBackend
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 from config import MAX_TURNS, MODEL_NAME, PROJECT_DIR, SQLITE_PATH
+from utils.agent_backend import FriendlyLocalShellBackend
 from utils.logger import logger
 
 
@@ -145,12 +146,12 @@ async def close_agent_runtime():
 def _make_backend(runtime):
     """CompositeBackend 路由:
     - /memories/ 路径 → StoreBackend (持久化存储，跨会话共享)
-    - 其他路径 → LocalShellBackend (本地文件系统)
+    - 其他路径 → FriendlyLocalShellBackend (以 backend/ 为虚拟根的本地文件系统)
     """
     return CompositeBackend(
-        default=LocalShellBackend(
+        default=FriendlyLocalShellBackend(
             root_dir=PROJECT_DIR,
-            virtual_mode=False,
+            virtual_mode=True,
             inherit_env=True,
             env=_build_shell_env_overrides(),
         ),
@@ -178,7 +179,7 @@ async def run_agent(
         # recursion_limit 控制 LangGraph 图的最大递归步数（每轮 Agent 循环约消耗 2-4 步）
         config = {
             "configurable": {"thread_id": conv_id},
-            "recursion_limit": MAX_TURNS * 4,
+            "recursion_limit": MAX_TURNS * 8,
         }
         # 使用 astream_events 获取逐 token 的细粒度流
         async for event in _agent.astream_events(inputs, config=config, version="v2"):
