@@ -8,8 +8,9 @@ from dotenv import load_dotenv
 # 项目 backend 根目录
 BASE_DIR = Path(__file__).resolve().parent
 
-# 显式加载 backend/.env，避免因启动目录不同导致变量未加载
-load_dotenv(BASE_DIR / ".env")
+# 显式加载 backend/.env，并覆盖同名系统环境变量，
+# 避免本机已有的 ANTHROPIC_* 配置串到当前项目
+load_dotenv(BASE_DIR / ".env", override=True)
 
 # API Key（claude-agent-sdk 会自动从环境变量读取，这里保留用于健康检查）
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
