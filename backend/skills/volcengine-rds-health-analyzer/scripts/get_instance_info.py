@@ -16,8 +16,10 @@ MySQL实例健康巡检脚本
 
 import os
 import json
+import re
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional, Any
 import statistics
 
@@ -26,6 +28,72 @@ import volcenginesdkcore
 import volcenginesdkrdsmysqlv2
 import volcenginesdkcloudmonitor
 from volcenginesdkcore.rest import ApiException
+
+
+def load_runtime_env() -> None:
+    """自动加载可能存在的 .env 文件（不覆盖已存在环境变量）。"""
+    try:
+        from dotenv import load_dotenv
+    except Exception:
+        return
+
+    backend_root = Path(__file__).resolve().parents[3]
+    cwd = Path.cwd()
+    candidates = [
+        cwd / ".env",
+        cwd / "backend" / ".env",
+        backend_root / ".env",
+    ]
+
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path.resolve()) if path.exists() else str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.exists():
+            load_dotenv(path, override=False)
+
+
+def normalize_credential_ref(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = re.sub(r"[^a-z0-9_-]+", "_", normalized)
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
+    if not normalized:
+        raise ValueError("credential_ref 不能为空")
+    return normalized
+
+
+def credential_env_keys(credential_ref: str) -> tuple[str, str]:
+    suffix = re.sub(r"[^A-Za-z0-9]+", "_", credential_ref).strip("_").upper()
+    if not suffix:
+        raise ValueError("credential_ref 无法转换为环境变量名")
+    prefix = f"VOLC_CREDENTIAL_{suffix}"
+    return f"{prefix}_AK", f"{prefix}_SK"
+
+
+def resolve_credentials(
+    *,
+    ak: Optional[str],
+    sk: Optional[str],
+    credential_ref: Optional[str],
+) -> tuple[str, str]:
+    explicit_ak = (ak or "").strip()
+    explicit_sk = (sk or "").strip()
+    if explicit_ak and explicit_sk:
+        return explicit_ak, explicit_sk
+    if explicit_ak or explicit_sk:
+        raise ValueError("--ak 和 --sk 必须同时提供")
+
+    normalized_ref = normalize_credential_ref(credential_ref or "")
+    ak_key, sk_key = credential_env_keys(normalized_ref)
+    resolved_ak = os.getenv(ak_key, "").strip()
+    resolved_sk = os.getenv(sk_key, "").strip()
+    if not resolved_ak or not resolved_sk:
+        raise ValueError(
+            f"未找到 credential_ref={normalized_ref} 对应的环境变量，请检查 {ak_key} / {sk_key}"
+        )
+    return resolved_ak, resolved_sk
 
 
 class MySQLInstanceInfoCollector:
@@ -111,8 +179,8 @@ class MySQLInstanceInfoCollector:
         初始化采集器
 
         Args:
-            ak: Access Key ID，必填
-            sk: Secret Access Key，必填
+            ak: Access Key ID
+            sk: Secret Access Key
             region: 区域，默认cn-shanghai
         """
         self.ak = ak
@@ -120,7 +188,7 @@ class MySQLInstanceInfoCollector:
         self.region = region
 
         if not self.ak or not self.sk:
-            raise ValueError("必须通过 --ak 和 --sk 参数传入访问凭证")
+            raise ValueError("必须提供有效的访问凭证")
 
         # 初始化RDS MySQL客户端
         self._init_rds_client()
@@ -338,6 +406,44 @@ class MySQLInstanceInfoCollector:
 
         return nodes
 
+    def _build_node_summaries(
+        self, parsed_nodes: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        为每个节点生成轻量统计摘要，便于多节点场景下优先比较节点差异。
+
+        Args:
+            parsed_nodes: `_parse_metric_response` 返回的节点列表
+
+        Returns:
+            节点摘要列表，每项包含 node、legend、data_point_count、min、max、avg、all_zero
+        """
+        node_summaries = []
+
+        for node in parsed_nodes:
+            values = [
+                dp["value"]
+                for dp in node.get("data_points", [])
+                if dp.get("value") is not None
+            ]
+
+            all_zero = bool(values) and all(abs(value) < 1e-9 for value in values)
+            dimensions = node.get("dimensions", {})
+
+            node_summaries.append(
+                {
+                    "node": dimensions.get("Node", ""),
+                    "legend": node.get("legend", ""),
+                    "data_point_count": len(values),
+                    "min": round(min(values), 4) if values else None,
+                    "max": round(max(values), 4) if values else None,
+                    "avg": round(statistics.mean(values), 4) if values else None,
+                    "all_zero": all_zero,
+                }
+            )
+
+        return node_summaries
+
     def get_metric_data(
         self,
         instance_id: str,
@@ -392,6 +498,7 @@ class MySQLInstanceInfoCollector:
 
         # 解析SDK response对象，提取干净的数据
         parsed_nodes = self._parse_metric_response(response)
+        node_summaries = self._build_node_summaries(parsed_nodes)
 
         result = {
             "metric_key": metric_key,
@@ -399,6 +506,7 @@ class MySQLInstanceInfoCollector:
             "display_name": metric["display_name"],
             "unit": metric["unit"],
             "node_count": len(parsed_nodes),
+            "node_summaries": node_summaries,
             "nodes": parsed_nodes,
         }
 
@@ -541,6 +649,7 @@ def main():
     """主函数 - 演示用法"""
     import argparse
 
+    load_runtime_env()
     default_output_dir = r"D:\Study\python\agent\maintenance-agent\metric_data"
 
     parser = argparse.ArgumentParser(
@@ -549,14 +658,14 @@ def main():
         epilog="""
 示例:
   # 获取实例详情
-  python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --ak <ak> --sk <sk> --action detail
+  python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --credential-ref peets_prod --action detail
   
   # 获取最近1小时的监控数据
-  python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --ak <ak> --sk <sk> --action metrics --hours 1
+  python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --credential-ref peets_prod --action metrics --hours 1
   
   # 获取综合信息
   python get_instance_info.py --instance-id mysql-d4f6a32d4e06 --action all \\
-      --ak <ak> --sk <sk> \\
+      --credential-ref peets_prod \\
       --start "2026-02-07 00:00" --end "2026-02-07 12:00"
         """,
     )
@@ -564,13 +673,15 @@ def main():
     parser.add_argument("--instance-id", required=True, help="MySQL实例ID")
     parser.add_argument(
         "--ak",
-        required=True,
         help="火山引擎访问密钥ID（Access Key）",
     )
     parser.add_argument(
         "--sk",
-        required=True,
         help="火山引擎访问密钥Secret（Secret Key）",
+    )
+    parser.add_argument(
+        "--credential-ref",
+        help="凭证引用，映射到 backend/.env 中的 VOLC_CREDENTIAL_<REF>_AK/SK",
     )
     parser.add_argument(
         "--action",
@@ -591,6 +702,9 @@ def main():
 
     args = parser.parse_args()
 
+    if not ((args.ak and args.sk) or args.credential_ref):
+        parser.error("必须提供 --credential-ref，或同时提供 --ak 和 --sk")
+
     # 解析时间范围
     if args.start and args.end:
         start_time = datetime.strptime(args.start, "%Y-%m-%d %H:%M")
@@ -599,8 +713,18 @@ def main():
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=args.hours)
 
+    resolved_ak, resolved_sk = resolve_credentials(
+        ak=args.ak,
+        sk=args.sk,
+        credential_ref=args.credential_ref,
+    )
+
     # 初始化采集器
-    collector = MySQLInstanceInfoCollector(ak=args.ak, sk=args.sk, region=args.region)
+    collector = MySQLInstanceInfoCollector(
+        ak=resolved_ak,
+        sk=resolved_sk,
+        region=args.region,
+    )
 
     # 执行操作
     if args.action == "detail":

@@ -276,6 +276,15 @@ export const useChatStore = defineStore("chat", () => {
     isMemoryTreeLoaded.value = false;
   }
 
+  function finishStreamingAssistantMessage() {
+    if (messages.length === 0) return;
+
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg && lastMsg.role === "assistant" && lastMsg.streaming) {
+      lastMsg.streaming = false;
+    }
+  }
+
   async function openMemoryDocument(path: string) {
     if (!path || !path.startsWith("/memories/")) return;
 
@@ -405,12 +414,7 @@ export const useChatStore = defineStore("chat", () => {
         case "done":
           isLoading.value = false;
           // 标记最后一条助手消息为非流式，触发完整 Markdown 渲染
-          if (messages.length > 0) {
-            const lastMsg = messages[messages.length - 1];
-            if (lastMsg && lastMsg.role === "assistant" && lastMsg.streaming) {
-              lastMsg.streaming = false;
-            }
-          }
+          finishStreamingAssistantMessage();
           // 刷新会话列表（标题可能更新了）
           fetchConversations();
           break;
@@ -444,7 +448,21 @@ export const useChatStore = defineStore("chat", () => {
     };
 
     ws.onclose = () => {
+      const wasLoading = isLoading.value;
       isConnected.value = false;
+      if (wasLoading) {
+        isLoading.value = false;
+        finishStreamingAssistantMessage();
+        messages.push({
+          id: genId(),
+          role: "system",
+          content:
+            "连接已断开，本次生成已中止。若刚刚生成了临时脚本或文件，通常是后端热重载导致的，请重试一次。",
+          type: "error",
+          agentId: resolveConversationAgentId(currentConversationId.value),
+          timestamp: Date.now(),
+        });
+      }
       setTimeout(connect, 3000);
     };
 

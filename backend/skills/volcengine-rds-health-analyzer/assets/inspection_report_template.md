@@ -35,6 +35,10 @@
 | 数据点数量 | {{data_point_count}} |
 | 分析深度 | {{analysis_depth}} |
 
+### 节点拓扑摘要
+
+{{node_topology_summary}}
+
 ---
 
 ## 健康评分
@@ -71,6 +75,9 @@
 **分析说明**：
 {{cpu_analysis}}
 
+**节点拆分**：
+{{cpu_node_breakdown}}
+
 ### 2️⃣ 内存使用率
 
 **统计值**（{{memory_window}}）：
@@ -84,6 +91,9 @@
 
 **分析说明**：
 {{memory_analysis}}
+
+**节点拆分**：
+{{memory_node_breakdown}}
 
 ### 3️⃣ 磁盘使用率
 
@@ -99,6 +109,9 @@
 **分析说明**：
 {{disk_analysis}}
 
+**节点拆分**：
+{{disk_node_breakdown}}
+
 ### 4️⃣ QPS / TPS
 
 **统计值**：
@@ -107,6 +120,9 @@
 |------|--------|--------|--------|------|
 | QPS | {{qps_min}} | {{qps_max}} | {{qps_avg}} | {{qps_conclusion}} |
 | TPS | {{tps_min}} | {{tps_max}} | {{tps_avg}} | {{tps_conclusion}} |
+
+**范围说明**：
+{{qps_tps_scope_note}}
 
 **分析说明**：
 {{qps_tps_analysis}}
@@ -125,6 +141,9 @@
 **分析说明**：
 {{replication_analysis}}
 
+**节点拆分**：
+{{replication_node_breakdown}}
+
 ### 6️⃣ IOPS / 网络
 
 **统计值**：
@@ -137,6 +156,9 @@
 
 **分析说明**：
 {{iops_network_analysis}}
+
+**节点拆分**：
+{{iops_network_node_breakdown}}
 
 ---
 

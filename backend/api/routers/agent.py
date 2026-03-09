@@ -18,6 +18,10 @@ from services.conversation_state import (
     get_conversation,
     get_conversation_agent_id,
 )
+from utils.credential_safety import (
+    cloud_credentials_rejection_message,
+    contains_plaintext_cloud_credentials,
+)
 from utils.logger import logger
 
 
@@ -87,6 +91,9 @@ async def agent_chat(req: ChatRequest):
     user_message = req.message
     if req.skill:
         user_message = f"@{req.skill} {user_message}"
+
+    if resolved_agent_id == "dba" and contains_plaintext_cloud_credentials(user_message):
+        raise HTTPException(status_code=400, detail=cloud_credentials_rejection_message())
 
     await save_message(
         conv_id,

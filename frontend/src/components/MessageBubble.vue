@@ -89,6 +89,16 @@ function inferArtifactKind(path: string, artifactKind?: ArtifactKind): ArtifactK
   if (artifactKind) return artifactKind
 
   const normalized = path.toLowerCase()
+  if (
+    normalized.startsWith('/memories/reports/') &&
+    (
+      normalized.endsWith('.md') ||
+      normalized.endsWith('.html') ||
+      normalized.endsWith('.pdf')
+    )
+  ) {
+    return 'report'
+  }
   if (normalized.startsWith('/memories/')) return 'memory'
   if (
     normalized.endsWith('.md') ||

@@ -1,17 +1,26 @@
-"""FastAPI 应用入口
+"""FastAPI 应用入口。
 
 提供 WebSocket 端点用于对话，REST API 用于会话管理。
 """
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agent import init_agent_runtime, list_agent_profiles
-from api.routers import agent, agents, conversations, mcp, memories, skills
+from api.routers import (
+    agent,
+    agents,
+    cloud_credentials,
+    conversations,
+    mcp,
+    memories,
+    skills,
+)
 from api.ws import chat
-from config import ANTHROPIC_API_KEY, SKILLS_DIR
+from config import ANTHROPIC_API_KEY, BASE_DIR, SKILLS_DIR
 from db.session import close_db, init_db
 from utils.logger import logger
 
@@ -24,6 +33,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+RELOAD_EXCLUDE_DIRS = ("tmp", "metric_data", "logs", "data", "memories")
+
+
+def build_uvicorn_reload_kwargs() -> dict[str, object]:
+    current_working_directory = Path.cwd()
+    reload_excludes = [
+        Path(
+            os.path.relpath((BASE_DIR / directory).resolve(), current_working_directory)
+        ).as_posix()
+        for directory in RELOAD_EXCLUDE_DIRS
+    ]
+    return {
+        "reload": True,
+        "reload_dirs": [str(BASE_DIR)],
+        "reload_excludes": reload_excludes,
+        "app_dir": str(BASE_DIR),
+    }
 
 
 @app.on_event("startup")
@@ -61,6 +88,7 @@ app.include_router(conversations.router)
 app.include_router(agents.router)
 app.include_router(skills.router)
 app.include_router(mcp.router)
+app.include_router(cloud_credentials.router)
 app.include_router(agent.router)
 app.include_router(memories.router)
 app.include_router(chat.router)
@@ -78,4 +106,9 @@ if __name__ == "__main__":
     import uvicorn
 
     logger.info("正在 http://0.0.0.0:8000 启动 Uvicorn 服务器")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        **build_uvicorn_reload_kwargs(),
+    )

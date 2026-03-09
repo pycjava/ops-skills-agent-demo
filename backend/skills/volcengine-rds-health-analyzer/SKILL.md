@@ -11,8 +11,9 @@ description: 使用火山引擎云监控 API 和本技能自带脚本，对 Volc
 
 本项目中应只使用以下能力，不要引用不存在的工具名：
 
-- `execute`：运行采集脚本、创建输出目录、按需做轻量过滤
+- `execute`：仅用于运行 `./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py` 和必要的非分析型目录操作
 - `glob`：查找生成的 `metric_data/*.json` 文件
+- `grep`：仅用于从已有结果文件中做简单定位，不得替代分析脚本做批量汇总
 - `read_file`：按需读取单个结果文件
 - `write_file` / `edit_file`：在用户要求保存报告时写入 Markdown 文件；巡检报告优先写入 `/memories/reports/`
 
@@ -26,20 +27,22 @@ description: 使用火山引擎云监控 API 和本技能自带脚本，对 Volc
 
 - 只做只读巡检，不直接连接数据库执行 SQL。
 - 只使用本技能自带脚本：`./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py`
-- 不要为了分析数据再创建新的 Python / Shell 分析脚本。
+- 禁止为分析数据生成或运行任何临时脚本，包括落盘的 `.py` / `.sh` / `.ps1` 文件，以及 `execute python -c`、`python <<EOF`、PowerShell inline script 等内联脚本。
 - 不要在回复中泄露 `AK/SK`、完整凭证或敏感配置。
 - `analysis_depth` 与 `time_range` 是独立参数，不要绑定。
+- 对用户提供的参数值必须原样使用，不得擅自改写、猜测修正、补全、截断、拼接、解码、重新编码、改变大小写或脱敏后再传给脚本。
+- 凭证优先使用 `credential_ref`，再由脚本从 `backend/.env` 解析真实 `AK/SK`；不要要求用户在聊天中直接提交真实密钥。
 - 数据值已经是最终单位，禁止自行乘以 `100` 或做额外单位换算。
 - 始终显式传入 `--output`，避免脚本把文件写到默认硬编码目录。
-- 不要通过 `set VOLC_ACCESSKEY=...`、`export VOLC_ACCESSKEY=...` 等环境变量方式传递凭证；执行命令时始终直接使用 `--ak` 和 `--sk` 参数。
+- 不要通过 `set VOLC_ACCESSKEY=...`、`export VOLC_ACCESSKEY=...` 等环境变量方式临时拼装命令；使用 `--credential-ref` 让脚本自行从 `backend/.env` 读取对应凭证。
 
 ## 输入参数
 
-- `instance_id`：实例 ID，必填，例如 `mysql-xxxxx`
+- `instance_id`：实例 ID，优先来自用户输入或长期记忆中的高置信匹配，例如 `mysql-xxxxx`
 - `region`：区域，默认 `cn-shanghai`
 - `time_range`：巡检时间范围，默认最近 `24h`
 - `analysis_depth`：`basic` / `standard` / `deep`
-- `ak` / `sk`：火山引擎访问密钥（Access Key ID / Secret Key），必填，由用户提供
+- `credential_ref`：凭证引用，优先来自长期记忆或 `/memories/agents/dba/cloud_credentials_registry.json`
 
 ## 时间粒度策略
 
@@ -48,26 +51,38 @@ description: 使用火山引擎云监控 API 和本技能自带脚本，对 Volc
 | time_range | period |
 |------------|--------|
 | `< 24h` | `5m` |
-| `1-7d` | `1h` |
-| `> 7d` | `1d` |
+| `1d - <7d` | `1h` |
+| `>= 7d` | `6h` |
 
 ## 标准工作流
 
-1. 先收集参数：
-   - `instance_id`
-   - `region`
+1. 先查长期记忆中的实例候选：
+   - 优先查看 `/memories/instructions.txt`
+   - 再查看 `/memories/agents/<当前_agent_id>/`
+   - 如果存在 `/memories/agents/dba/cloud_credentials_registry.json`，优先结合其中的项目默认绑定和实例覆盖绑定解析 `credential_ref`
+   - 必要时再扩展到其他 `/memories/agents/*/`
+   - 如果命中 1 个高置信实例候选，优先使用记忆中的 `instance_id` / `region`，并向用户做最小确认
+   - 如果命中多个候选，先让用户选择，不要直接开始巡检
+   - 如果没有命中，再向用户追问实例信息
+
+2. 再收集参数：
+   - `instance_id`（可来自用户输入或长期记忆）
+   - `region`（可来自用户输入或长期记忆）
    - `time_range`
    - `analysis_depth`
-   - `ak` / `sk`（必填，向用户索取）
+   - `credential_ref`（可来自用户输入、长期记忆或凭证注册表；缺失时再追问）
+   - 如果长期记忆或注册表已经给出 `instance_id` / `region` / `credential_ref`，不要重复追问，只继续收集缺失项
+   - 缺少参数时，用自然语言逐项追问；一次只追问当前继续巡检所需的一个关键缺项
+   - 未经用户明确确认，不要擅自使用推荐默认值直接开始巡检
+   - 收集后按原值使用，不要对任何参数做自动修正或转换；尤其不要改动 `credential_ref`
 
-2. 用 `execute` 运行采集脚本，输出到项目内相对路径，例如：
+3. 用 `execute` 运行采集脚本，输出到项目内相对路径，例如：
 
 ```bash
-python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
+py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --instance-id <instance_id> \
   --region <region> \
-  --ak <ak> \
-  --sk <sk> \
+  --credential-ref <credential_ref> \
   --hours <hours> \
   --period <period> \
   --action all \
@@ -77,11 +92,10 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 如果用户提供的是明确的起止时间，则改用：
 
 ```bash
-python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
+py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --instance-id <instance_id> \
   --region <region> \
-  --ak <ak> \
-  --sk <sk> \
+  --credential-ref <credential_ref> \
   --start "YYYY-MM-DD HH:MM" \
   --end "YYYY-MM-DD HH:MM" \
   --period <period> \
@@ -89,10 +103,10 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --output ./metric_data/instance_data.json
 ```
 
-3. 用 `glob` 查找生成的结果文件：
+4. 用 `glob` 查找生成的结果文件：
    - `./metric_data/instance_data_*.json`
 
-4. 用 `read_file` 按需逐个读取结果文件，优先看每个指标里的 `summary`：
+5. 用 `read_file` 按需逐个读取结果文件，优先看每个指标里的 `summary` 和 `node_summaries`：
    - 推荐直接读取 `metric_data/instance_data_*.json`
    - 如果 `glob` 返回的是 `/metric_data/...`，可直接原样传给 `read_file`
    - 不要把路径改写成 `/backend/...`
@@ -101,25 +115,36 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - `summary.max`
    - `summary.avg`
    - `summary.data_point_count`
+   - `node_summaries[*].node`
+   - `node_summaries[*].avg`
+   - `node_summaries[*].max`
+   - `node_summaries[*].all_zero`
    - `nodes`
 
-5. 分析时遵循以下原则：
+6. 分析时遵循以下原则：
    - 先看 `summary`，不要一开始就把所有原始点位全读进上下文
-   - 只有某个指标异常时，才继续读取对应文件里的 `nodes` / `data_points`
+   - `node_count == 1` 或指标为 `qps` / `tps` 时，沿用实例级分析
+   - `node_count > 1` 且指标为 `cpu` / `memory` / `disk_util` / `IOPSRate` / `network_in` / `network_out` / `replication_delay` 时，必须先比较 `summary` 与 `node_summaries`
+   - 只有某个指标异常、或 `node_summaries` 已显示明显热点节点 / 偏斜时，才继续读取对应文件里的 `nodes` / `data_points`
    - 顺序分析异常指标，不要并行读取一批大文件
    - 正常指标直接基于 `summary` 给出结论
-   - JSON 结果分析优先使用 `read_file`，不要用 `execute python -c` 读取文件后却不输出任何结果
-   - `execute` 仅用于采集脚本或必要的轻量过滤；如果使用它做过滤，命令必须明确产生 stdout
-   - 如果 `execute` 返回“Command succeeded with no stdout/stderr”，说明命令已成功完成，应转去读取生成文件，不要继续猜测 `print flush`
+   - 多节点结论必须同时写“实例整体结论”和“节点拆分结论”
+   - 不猜测主节点 / 从节点 / 只读节点角色，只使用 `Node ID` 叙述
+   - JSON 结果分析必须优先通过 `read_file` / `glob` / `grep` 完成，不要用 `execute python -c`、heredoc 或 PowerShell inline script 读取、汇总或分析 JSON
+   - `execute` 仅用于运行采集脚本或必要的非分析型目录操作，不得用于编写、拼接、落盘或运行任何分析脚本
+   - 如果 `execute` 返回"Command succeeded with no stdout/stderr"，说明命令已成功完成，应转去使用 `glob` / `read_file` 检查生成文件，不要继续猜测 `print flush`，也不要改用 inline 脚本补救
+   - 不创建新脚本来进行分析；不得在 `backend/`、`backend/tmp/`、`/tmp` 或当前工作目录生成任何分析脚本，所有分析工作应通过读取已有文件完成
+   - Skill 触发后，不要重新退回“先问 `instance_id`”的旧路径；如果长期记忆已经提供了高置信实例候选，应沿用该候选继续流程
+   - 不要要求用户在聊天中提交真实 `AK/SK`；如果用户直接粘贴明文凭证，应提示改用 `credential_ref + backend/.env`
 
-6. 输出巡检结果：
+7. 输出巡检结果：
    - 巡检概要
    - 健康评分
    - 核心指标分析
    - 异常发现
    - 行动建议
 
-7. 如用户要求“保存报告”或“生成文件”，使用 `obsidian-markdown` 风格写成 Markdown，并用 `write_file` 写入 `/memories/reports/` 下的 `.md` 文件。
+8. 如用户要求“保存报告”或“生成文件”，使用 `obsidian-markdown` 风格写成 Markdown，并用 `write_file` 写入 `/memories/reports/` 下的 `.md` 文件。
    - 生成报告前，先使用 `read_file` 读取模板文件 `./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
    - 报告内容必须按照模板结构填充，不要改变一级、二级标题顺序
    - 没有数据的字段写“未获取”或“无异常”，不要删除模板章节
@@ -143,7 +168,24 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 
 - `instance_detail`：实例规格、版本、节点等基础信息
 - `resource_metrics.metrics.<metric_key>.summary`：该指标的汇总统计
+- `resource_metrics.metrics.<metric_key>.node_summaries`：每个节点的轻量统计摘要
 - `resource_metrics.metrics.<metric_key>.nodes`：按节点拆分的数据
+
+按指标拆分方式处理：
+
+- 节点级指标：`cpu`、`memory`、`disk_util`、`replication_delay`、`IOPSRate`、`network_in`、`network_out`
+- 实例级指标：`qps`、`tps`（当前无节点拆分，不做节点排名）
+
+## 多节点分析规则
+
+- `node_count == 1`：沿用实例级分析，直接基于 `summary` 给结论
+- `node_count > 1` 且属于节点级指标：先读 `summary` 与 `node_summaries`，只有节点异常或需要解释偏斜时才继续读 `nodes[].data_points`
+- 节点级结论必须分两层：先给实例整体结论，再给最差节点 / 热点节点结论，避免跨节点均值掩盖单节点热点
+- `2` 节点集群：重点写“节点 A vs 节点 B”的并排对比；如果整体正常但单节点进入告警档，异常发现里必须点名该 `Node ID`
+- `3` 节点及以上：按 `avg` 从高到低排序，明确写出热点节点、次热点节点和低负载节点，并解释负载分布
+- 不猜测主从角色，只使用 `Node ID`；没有可靠角色字段时，不要自行标注“主节点 / 从节点 / 只读节点”
+- `replication_delay` 中 `all_zero = true` 的节点视为“非适用 / 疑似源节点候选”，不参与最差节点比较；若所有节点都为 `all_zero = true`，写“未观测到复制延迟”
+- `qps` / `tps` 明确标注为“实例级指标，无节点拆分，不能用于定位单节点热点”
 
 ## 健康阈值
 
@@ -159,6 +201,11 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 ## 评分规则（总分 100）
 
 严格按以下规则计算：
+
+- 多节点补充规则：
+  - `cpu` / `memory` / `disk_util` 等按平均值判断的节点级指标，先按 `summary.avg` 计算实例级得分，再按每个适用节点的 `node.avg` 计算节点得分，最终取更差者：`final_score = min(score(summary.avg), min(score(node.avg) for node in node_summaries if node.avg is not None))`
+  - `replication_delay` 仍按延迟上界判断，但仅比较 `all_zero != true` 的节点；最终取实例级与最差适用节点中更差者
+  - `qps` / `tps` 继续按实例级 `summary` 评分 / 分析，不做节点排名
 
 1. CPU（20 分）
    - `avg < 60` → `20`
@@ -203,6 +250,7 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - **核心指标分析**：CPU、内存、磁盘、QPS、TPS、主从延迟、IOPS、网络
 - **异常发现**：按严重程度排序
 - **行动建议**：给出具体可执行建议
+- **多节点拆分**：对节点级指标补充拓扑摘要和热点节点说明
 
 如需生成 Markdown 报告，必须使用模板文件：
 
@@ -210,6 +258,9 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - 先用 `read_file` 读取该模板，再按模板结构填充实际分析结果
 - 不要随意调整章节顺序；没有数据的字段写“未获取”或“无异常”
 - 最终输出必须保持模板中的一级、二级标题和主要表格结构
+- `{{node_topology_summary}}`：写实例的节点拓扑摘要；`2` 节点突出对比，`3` 节点及以上突出排序
+- `{{cpu_node_breakdown}}`、`{{memory_node_breakdown}}`、`{{disk_node_breakdown}}`、`{{replication_node_breakdown}}`、`{{iops_network_node_breakdown}}`：必须输出 Markdown 表格，列固定为 `Node | Avg | Max | 风险级别 | 说明`，并按 `avg` 从高到低排序
+- `{{qps_tps_scope_note}}`：明确写“该指标当前无节点拆分，不能用于定位单节点热点”
 
 如果保存为 Markdown，建议文件名与路径：
 
@@ -238,5 +289,6 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - 不要输出“调用 `volcengine-rds-health-analyzer` 工具”这类表述。
 - 采集数据时应遵循 skill 中的流程，并通过 `execute` 运行 skill 自带脚本。
 - 任何项目文件的路径匹配都必须使用相对路径；读取项目文件时优先使用相对路径或直接复用 `glob` 返回的 `/...` 虚拟路径。
-- `execute` 成功但无输出时，应把它视为“命令执行成功但没有终端文本”，不要围绕 `flush` 或同一条 `python -c` 命令反复重试。
+- `execute` 成功但无输出时，应把它视为“命令执行成功但没有终端文本”，不要围绕 `flush`、同一条 `python -c` 命令或其他 inline script 反复重试。
+- 不得通过 `write_file` / `edit_file` 生成分析脚本，也不得通过 `execute python -c`、`python <<EOF`、PowerShell inline script 对 `metric_data/*.json` 做脚本化分析。
 - 生成巡检 Markdown 报告时，必须遵循 `./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md` 的格式与章节结构。

@@ -15,6 +15,10 @@ from services.conversation_state import (
     get_conversation_agent_id,
     resolve_agent_id,
 )
+from utils.credential_safety import (
+    cloud_credentials_rejection_message,
+    contains_plaintext_cloud_credentials,
+)
 from utils.logger import logger
 
 
@@ -401,6 +405,21 @@ async def websocket_chat(ws: WebSocket):
                             ensure_ascii=False,
                         )
                     )
+
+                if current_agent_id == "dba" and contains_plaintext_cloud_credentials(
+                    content
+                ):
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "content": cloud_credentials_rejection_message(),
+                                "agent_id": current_agent_id,
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                    continue
 
                 await save_message(
                     current_conv_id,

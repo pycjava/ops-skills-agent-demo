@@ -1,4 +1,5 @@
 import posixpath
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
 
@@ -155,6 +156,26 @@ async def read_memory_document(path: str) -> dict[str, Any]:
         "name": _path_name(internal_path),
         "content": _extract_document_content(item),
         "updated_at": updated_at,
+    }
+
+
+async def write_memory_document(path: str, content: str) -> dict[str, Any]:
+    normalized = _require_file_path(path)
+    internal_path = _to_internal_path(normalized)
+    store = _get_store()
+
+    text = content if isinstance(content, str) else str(content or "")
+    payload = {
+        "content": text.splitlines(),
+        "modified_at": datetime.now().isoformat(),
+    }
+    await store.aput(MEMORY_NAMESPACE, internal_path, payload)
+
+    return {
+        "path": _to_public_path(internal_path),
+        "name": _path_name(internal_path),
+        "content": text,
+        "updated_at": payload["modified_at"],
     }
 
 
