@@ -40,8 +40,8 @@ description: 使用火山引擎云监控 API 和本技能自带脚本，对 Volc
 
 - `instance_id`：实例 ID，优先来自用户输入或长期记忆中的高置信匹配，例如 `mysql-xxxxx`
 - `region`：区域，默认 `cn-shanghai`
-- `time_range`：巡检时间范围，默认最近 `24h`
-- `analysis_depth`：`basic` / `standard` / `deep`
+- `time_range`：巡检时间范围，默认最近 `30d`
+- `analysis_depth`：`basic` / `standard` / `deep`，默认 `deep`
 - `credential_ref`：凭证引用，优先来自长期记忆或 `/memories/agents/dba/cloud_credentials_registry.json`
 
 ## 时间粒度策略
@@ -148,6 +148,12 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - 生成报告前，先使用 `read_file` 读取模板文件 `./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
    - 报告内容必须按照模板结构填充，不要改变一级、二级标题顺序
    - 没有数据的字段写“未获取”或“无异常”，不要删除模板章节
+   - 报告文件名必须使用 `/memories/reports/<sanitized_instance_name>-inspection-<YYYYMMDD>.md` 格式，不要再使用 `inspection_report_<instance_id>_<YYYYMMDD>.md`
+   - 文件名前缀优先使用采集结果里的 `instance_name`；缺失时回退到 `instance_id`
+   - `sanitized_instance_name` 规则固定为：转小写；将非字母数字字符替换为 `-`；连续 `-` 折叠为单个；去掉首尾 `-`
+   - 例如：`peets-prod-boh-mysql-paas-n-inspection-20260309.md`
+   - 报告文件必须通过 `write_file` / `edit_file` 直接落到 `/memories/reports/`，这样前端页面才能把它识别为可下载的“Skill 报告”
+   - 保存成功后，回复中要明确说明“这是由 `volcengine-rds-health-analyzer` Skill 生成的巡检报告，可在页面中直接下载”
    - 只有用户明确要求“保存报告”或“生成文件”时才写报告 Markdown；如果只是让你“记住”某个 instance id 或实例信息，应写入 `/memories/agents/<当前_agent_id>/` 下的长期记忆文件，而不是生成报告
 
 ## 采集结果说明
@@ -265,8 +271,14 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 如果保存为 Markdown，建议文件名与路径：
 
 ```text
-/memories/reports/inspection_report_<instance_id>_<YYYYMMDD>.md
+/memories/reports/<sanitized_instance_name>-inspection-<YYYYMMDD>.md
 ```
+
+其中：
+
+- `<sanitized_instance_name>`：优先取采集结果中的 `instance_name`，缺失时回退到 `instance_id`
+- 规范化规则：转小写；将非字母数字字符替换为 `-`；连续 `-` 折叠为单个；去掉首尾 `-`
+- 示例：`/memories/reports/peets-prod-boh-mysql-paas-n-inspection-20260309.md`
 
 写入 `/memories/` 时必须使用 `write_file` / `edit_file`，不要使用 `execute` 里的 shell 重定向或 `echo >`。
 
@@ -287,6 +299,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 
 - 不要把 skill 当作独立 tool 名去调用。
 - 不要输出“调用 `volcengine-rds-health-analyzer` 工具”这类表述。
+- 当产出巡检报告文件时，要强调这是 `volcengine-rds-health-analyzer` Skill 的输出结果，而不是“某个工具文件”。
 - 采集数据时应遵循 skill 中的流程，并通过 `execute` 运行 skill 自带脚本。
 - 任何项目文件的路径匹配都必须使用相对路径；读取项目文件时优先使用相对路径或直接复用 `glob` 返回的 `/...` 虚拟路径。
 - `execute` 成功但无输出时，应把它视为“命令执行成功但没有终端文本”，不要围绕 `flush`、同一条 `python -c` 命令或其他 inline script 反复重试。

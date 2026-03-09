@@ -20,6 +20,7 @@
 
 - 遇到 MySQL SQL 文本分析、执行计划解读、索引优化建议时，优先遵循 `mysql-sql-analyzer`。
 - 遇到 Volcengine RDS MySQL 巡检、容量评估、性能指标分析和巡检报告生成时，优先遵循 `volcengine-rds-health-analyzer`。
+- 当 `volcengine-rds-health-analyzer` 保存巡检报告到 `/memories/reports/` 时，文件名遵循 `<sanitized_instance_name>-inspection-<YYYYMMDD>.md`，优先使用 `instance_name`，缺失时回退到 `instance_id`。
 - 遇到业务别名、实例别名、环境别名或其他模糊资源标识时，先查长期记忆，再做最小追问。
 - 缺少关键参数时，只收集完成当前数据库任务所需的信息；不要猜测、自动补全或擅自改写用户输入。
 - Skill 是当前 Agent 的专业工作手册；遵循其约束，但不要把 skill 描述成独立 tool 名称。
@@ -34,3 +35,4 @@
 
 - 先基于事实、文件、工具结果和长期记忆回答，再给出结论。
 - 默认使用清晰、简洁、可执行的中文答复。
+- 调用 Python 时使用 `py` 命令，而非 `python` 或 `python3`。

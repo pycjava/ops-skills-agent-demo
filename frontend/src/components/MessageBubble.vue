@@ -164,20 +164,22 @@ function handleArtifactAction() {
 
 const toolResultTitle = computed(() => {
   if (!fileArtifact.value) return '查看工具返回结果'
-  return fileArtifact.value.kind === 'memory' ? '完成长期记忆写入' : '完成文件创建'
+  if (fileArtifact.value.kind === 'memory') return '完成长期记忆写入'
+  if (fileArtifact.value.kind === 'report') return '完成 Skill 报告生成'
+  return '完成文件创建'
 })
 
 const artifactKicker = computed(() => {
   if (!fileArtifact.value) return ''
   if (fileArtifact.value.kind === 'memory') return '长期记忆已保存'
-  if (fileArtifact.value.kind === 'report') return '结果报告'
+  if (fileArtifact.value.kind === 'report') return 'Skill 巡检报告'
   return '生成文件'
 })
 
 const artifactActionLabel = computed(() => {
   if (!fileArtifact.value) return ''
   if (fileArtifact.value.kind === 'memory') return '查看记忆'
-  if (fileArtifact.value.kind === 'report') return '下载报告'
+  if (fileArtifact.value.kind === 'report') return '下载 Skill 报告'
   return '下载文件'
 })
 </script>
