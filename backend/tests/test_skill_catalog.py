@@ -45,3 +45,11 @@ def test_volcengine_rds_report_summarizer_documents_actual_values():
     assert "内存、磁盘相关描述需同时给出百分比和实际数值" in template_text
     assert "`2.2 实例分析` 需要覆盖所有纳入统计的实例" in skill_text
     assert "### 2.2 实例分析" in template_text
+    assert "/memories/reports/皮氏咖啡线上MySQL巡检报告<YYYYMMDD>.md" in skill_text
+    assert "volcengine-rds-summary-<YYYYMMDD>.md" not in skill_text
+    assert "<topic>-volcengine-rds-summary-<YYYYMMDD>.md" not in skill_text
+    assert "分析汇总类请求" in skill_text
+    assert "默认生成并保存 Markdown" in skill_text
+    assert "不需要用户额外说“保存报告”或“生成文件”" in skill_text
+    assert "如果用户表达分析汇总意图但没给范围，先追问目录或文件列表" in skill_text
+    assert "范围内没有可用报告，明确告知并说明缺什么" in skill_text

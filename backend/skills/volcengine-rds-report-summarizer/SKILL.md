@@ -12,7 +12,7 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
 - `glob`：只用于枚举用户明确指定范围内的 `.md` 文件
 - `read_file`：逐个读取候选报告
 - `grep`：只做轻量定位，不替代通读和总结
-- `write_file` / `edit_file`：仅在用户明确要求“保存报告”或“生成文件”时写入 `/memories/reports/`
+- `write_file` / `edit_file`：对分析汇总类请求，在已经获得可分析的目录或文件范围后，默认写入 `/memories/reports/`
 
 不要：
 
@@ -27,7 +27,7 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
   - 多个明确的 Markdown 文件路径
 - 只处理用户指定范围内的 `.md`
 - 如果范围内没有可用报告，明确告知并说明缺什么
-- 如果用户只说“汇总报告”但没给范围，先追问目录或文件列表
+- 如果用户表达分析汇总意图但没给范围，先追问目录或文件列表
 
 ## 报告有效性校验
 
@@ -124,10 +124,15 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
 - Top 风险实例列表
 - `3` 条以内最重要的共性问题
 - 按“立即处理 / 近期跟进 / 长期治理”分组的建议
+- 已保存文档的路径与文件名
 
 ## 保存 Markdown
 
-只有用户明确要求“保存报告”或“生成文件”时才写文件。
+凡是分析汇总类请求，在拿到可分析的目录或文件范围后，默认生成并保存 Markdown。
+
+- 不需要用户额外说“保存报告”或“生成文件”
+- 如果用户未提供目录或文件范围，先索要范围，不要直接生成文档
+- 如果范围内没有可用报告，明确告知并说明缺什么，暂不生成文档
 
 保存前：
 
@@ -140,7 +145,7 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
 
 保存路径：
 
-- `/memories/reports/volcengine-rds-summary-<YYYYMMDD>.md`
-- 若用户给了主题，可用 `/memories/reports/<topic>-volcengine-rds-summary-<YYYYMMDD>.md`
+- 强制使用 `/memories/reports/皮氏咖啡线上MySQL巡检报告<YYYYMMDD>.md`
+- 无论用户是否提供主题或其他命名偏好，都不要改写这个文件名格式
 
 保存成功后，明确说明这是由 `volcengine-rds-report-summarizer` Skill 生成的汇总报告，可在页面中直接下载。
