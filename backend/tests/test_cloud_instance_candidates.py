@@ -1,5 +1,6 @@
 from services.cloud_instance_candidates import (
     extract_keywords,
+    filter_candidate_keywords,
     infer_environment,
     parse_instance_records,
     resolve_candidate_selection,
@@ -149,6 +150,12 @@ def test_select_top_candidates_keeps_all_tied_matches():
         "mysql-4",
         "mysql-5",
     ]
+
+
+def test_filter_candidate_keywords_drops_generic_mysql_terms():
+    assert filter_candidate_keywords(["peets", "mysql"]) == ["peets"]
+    assert filter_candidate_keywords(["mysql", "health", "check"]) == []
+    assert filter_candidate_keywords(["mysql-123", "mysql"]) == ["mysql-123"]
 
 
 def test_resolve_candidate_selection_preserves_all_matches_for_dialog():

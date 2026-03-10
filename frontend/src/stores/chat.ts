@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import { createAttachmentDomain } from './chat/attachments'
 import { createConversationDomain } from './chat/conversations'
 import { getDefaultAgentId, resolveAgentId } from './chat/helpers'
 import { createMcpDomain } from './chat/mcp'
@@ -9,6 +10,7 @@ import type {
   AgentInfo,
   ChatMessage,
   CloudContextResolution,
+  ConversationAttachment,
   ConversationItem,
   McpServer,
   MemoryDocument,
@@ -31,19 +33,23 @@ export const useChatStore = defineStore('chat', () => {
   const skills = ref<Skill[]>([])
   const mcpServers = ref<McpServer[]>([])
   const conversations = ref<ConversationItem[]>([])
+  const conversationAttachments = ref<ConversationAttachment[]>([])
   const currentConversationId = ref<string | null>(null)
   const draftAgentId = ref('general')
   const memoryTree = ref<MemoryNode[]>([])
   const selectedMemoryPath = ref<string | null>(null)
   const memoryContent = ref<MemoryDocument | null>(null)
   const memoryError = ref<string | null>(null)
+  const attachmentError = ref<string | null>(null)
   const isMemoryTreeLoading = ref(false)
   const isMemoryContentLoading = ref(false)
   const isMemoryDeleting = ref(false)
   const isMemoryTreeLoaded = ref(false)
+  const isAttachmentUploading = ref(false)
   const isMcpLoading = ref(false)
   const mcpError = ref<string | null>(null)
   const testingServerIds = ref<string[]>([])
+  const deletingAttachmentIds = ref<string[]>([])
 
   const isMemoryLoading = computed(
     () =>
@@ -173,6 +179,35 @@ export const useChatStore = defineStore('chat', () => {
     fetchSkills,
   })
 
+  const attachmentDomain = createAttachmentDomain({
+    backendUrl,
+    conversationAttachments,
+    attachmentError,
+    isAttachmentUploading,
+    deletingAttachmentIds,
+    currentConversationId,
+    draftAgentId,
+    activeAgentId,
+    conversations,
+    agents,
+    wsState,
+    fetchConversations: conversationDomain.fetchConversations,
+    fetchSkills,
+  })
+
+  watch(
+    currentConversationId,
+    (conversationId) => {
+      if (!conversationId) {
+        attachmentDomain.clearConversationAttachments()
+        return
+      }
+
+      void attachmentDomain.fetchConversationAttachments(conversationId)
+    },
+    { immediate: true },
+  )
+
   const socketDomain = createSocketDomain({
     wsUrl,
     messages,
@@ -197,6 +232,7 @@ export const useChatStore = defineStore('chat', () => {
     skills,
     mcpServers,
     conversations,
+    conversationAttachments,
     currentConversationId,
     draftAgentId,
     activeAgentId,
@@ -205,10 +241,13 @@ export const useChatStore = defineStore('chat', () => {
     selectedMemoryPath,
     memoryContent,
     memoryError,
+    attachmentError,
     isMemoryLoading,
+    isAttachmentUploading,
     isMcpLoading,
     mcpError,
     testingServerIds,
+    deletingAttachmentIds,
     connect: socketDomain.connect,
     sendMessage: socketDomain.sendMessage,
     clearChat: socketDomain.clearChat,
@@ -220,6 +259,9 @@ export const useChatStore = defineStore('chat', () => {
     switchConversation: conversationDomain.switchConversation,
     deleteConversation: conversationDomain.deleteConversation,
     updateConversationTitle: conversationDomain.updateConversationTitle,
+    fetchConversationAttachments: attachmentDomain.fetchConversationAttachments,
+    uploadConversationAttachment: attachmentDomain.uploadConversationAttachment,
+    deleteConversationAttachment: attachmentDomain.deleteConversationAttachment,
     fetchSkills,
     resolveCloudRequestContext,
     fetchMcpServers: mcpDomain.fetchMcpServers,

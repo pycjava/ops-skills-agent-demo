@@ -14,6 +14,7 @@ from api.routers import (
     agent,
     agents,
     cloud_credentials,
+    conversation_attachments,
     conversations,
     mcp,
     memories,
@@ -85,6 +86,7 @@ async def shutdown():
 
 
 app.include_router(conversations.router)
+app.include_router(conversation_attachments.router)
 app.include_router(agents.router)
 app.include_router(skills.router)
 app.include_router(mcp.router)

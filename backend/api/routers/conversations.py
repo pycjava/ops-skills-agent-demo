@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 
 from db.session import AsyncSessionLocal
 from models import Conversation, Message
+from services.conversation_attachments import delete_all_conversation_attachments
 from services.conversation_messages import update_conversation_title
 from services.conversation_state import create_conversation
 from utils.logger import logger
@@ -18,7 +19,6 @@ class CreateConversationRequest(BaseModel):
 
 @router.get("")
 async def list_conversations(q: str | None = None):
-    """获取所有会话列表，按更新时间倒序。支持 ?q=关键词 按标题模糊搜索"""
     logger.info(f"正在获取对话列表, 搜索关键词: {q}")
     async with AsyncSessionLocal() as session:
         stmt = select(Conversation)
@@ -33,7 +33,6 @@ async def list_conversations(q: str | None = None):
 
 @router.post("")
 async def create_conversation_route(body: CreateConversationRequest | None = None):
-    """新建会话"""
     logger.info("正在创建新对话")
     async with AsyncSessionLocal() as session:
         try:
@@ -49,7 +48,6 @@ async def create_conversation_route(body: CreateConversationRequest | None = Non
 
 @router.get("/{conv_id}/messages")
 async def get_messages(conv_id: str):
-    """获取某个会话的所有消息"""
     logger.info(f"正在获取对话 {conv_id} 的消息记录")
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -63,7 +61,6 @@ async def get_messages(conv_id: str):
 
 @router.delete("/{conv_id}")
 async def delete_conversation(conv_id: str):
-    """删除会话及其所有消息"""
     logger.info(f"正在删除对话 {conv_id}")
     async with AsyncSessionLocal() as session:
         result = await session.execute(
@@ -73,14 +70,18 @@ async def delete_conversation(conv_id: str):
         if not conversation:
             logger.warning(f"要删除的对话 {conv_id} 未找到")
             return JSONResponse({"error": "会话不存在"}, status_code=404)
+
+        await delete_all_conversation_attachments(
+            conv_id,
+            session_factory=AsyncSessionLocal,
+        )
         await session.delete(conversation)
         await session.commit()
         return JSONResponse({"ok": True})
 
 
 @router.patch("/{conv_id}")
-async def update_conversation(conv_id: str, body: dict = None):
-    """更新会话标题"""
+async def update_conversation(conv_id: str, body: dict | None = None):
     logger.info(f"正在更新对话 {conv_id}，数据: {body}")
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="invalid request body")
@@ -101,4 +102,3 @@ async def update_conversation(conv_id: str, body: dict = None):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return JSONResponse(conversation.to_dict())
-

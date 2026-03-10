@@ -1,6 +1,27 @@
 import { mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
 import App from './App.vue'
+import type { CloudContextResolution } from './stores/chat'
+
+const composerHarness = vi.hoisted(() => ({
+  sendMessage:
+    null as null | ((displayContent: string, sendContent?: string) => unknown),
+  clearInput: vi.fn(),
+}))
+
+function createCloudResolution(
+  overrides: Partial<CloudContextResolution> = {},
+): CloudContextResolution {
+  return {
+    matched: false,
+    ambiguous: false,
+    selection_required: false,
+    provider: 'volcengine',
+    message: '',
+    candidates: [],
+    ...overrides,
+  }
+}
 
 const chatStoreMock = {
   messages: [] as Array<{ role: string; content: string }>,
@@ -24,14 +45,25 @@ const chatStoreMock = {
   memoryContent: null,
   memoryError: null as string | null,
   isMemoryLoading: false,
+  conversationAttachments: [] as Array<{
+    id: string
+    conversation_id: string
+    original_name: string
+    stored_name: string
+    relative_path: string
+    mime_type: string
+    size_bytes: number
+    created_at: string
+  }>,
+  attachmentError: null as string | null,
+  isAttachmentUploading: false,
   sendMessage: vi.fn(),
-  resolveCloudRequestContext: vi.fn(async () => ({
-    matched: false,
-    ambiguous: false,
-    provider: 'volcengine',
-    message: '',
-    candidates: [],
-  })),
+  uploadConversationAttachment: vi.fn(async () => {}),
+  deleteConversationAttachment: vi.fn(async () => {}),
+  fetchConversationAttachments: vi.fn(async () => {}),
+  resolveCloudRequestContext: vi.fn(
+    async (): Promise<CloudContextResolution> => createCloudResolution(),
+  ),
   clearChat: vi.fn(),
   abortAgent: vi.fn(),
   setDraftAgent: vi.fn(),
@@ -56,21 +88,27 @@ vi.mock('./stores/chat', () => ({
 }))
 
 vi.mock('./composables/useChatComposer', () => ({
-  useChatComposer: () => ({
-    inputText: ref(''),
-    composerInput: ref<HTMLTextAreaElement | null>(null),
-    showMentions: ref(false),
-    mentionIndex: ref(0),
-    filteredSkills: computed(() => []),
-    inputPlaceholder: computed(() => '给我发消息或布置任务'),
-    clearInput: vi.fn(),
-    handleInput: vi.fn(),
-    handleKeyDown: vi.fn(),
-    handleSend: vi.fn(),
-    selectMention: vi.fn(),
-    sendQuickPrompt: vi.fn(),
-    resizeComposerInput: vi.fn(),
-  }),
+  useChatComposer: (options: {
+    sendMessage: (displayContent: string, sendContent?: string) => unknown
+  }) => {
+    composerHarness.sendMessage = options.sendMessage
+
+    return {
+      inputText: ref(''),
+      composerInput: ref<HTMLTextAreaElement | null>(null),
+      showMentions: ref(false),
+      mentionIndex: ref(0),
+      filteredSkills: computed(() => []),
+      inputPlaceholder: computed(() => '给我发消息或布置任务'),
+      clearInput: composerHarness.clearInput,
+      handleInput: vi.fn(),
+      handleKeyDown: vi.fn(),
+      handleSend: vi.fn(),
+      selectMention: vi.fn(),
+      sendQuickPrompt: vi.fn(),
+      resizeComposerInput: vi.fn(),
+    }
+  },
 }))
 
 vi.mock('./composables/useAppChrome', () => ({
@@ -80,7 +118,7 @@ vi.mock('./composables/useAppChrome', () => ({
     showInspector: ref(false),
     showAgentOverflowMenu: ref(false),
     rightPanelTab: ref<'skills' | 'mcp' | 'memory'>('skills'),
-    heroTitle: computed(() => '工作日愉快，工作的事交给我'),
+    heroTitle: computed(() => '工作愉快，工作的事交给我'),
     agentSelector: ref<HTMLElement | null>(null),
     agentSelectorWrap: ref<HTMLElement | null>(null),
     moreMeasureRef: ref<HTMLElement | null>(null),
@@ -97,6 +135,15 @@ vi.mock('./composables/useAppChrome', () => ({
 }))
 
 describe('App', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    composerHarness.sendMessage = null
+    chatStoreMock.activeAgentId = 'dba'
+    chatStoreMock.messages = []
+    chatStoreMock.conversationAttachments = []
+    chatStoreMock.resolveCloudRequestContext.mockResolvedValue(createCloudResolution())
+  })
+
   test('renders readable Chinese labels and stable toolbar icons', () => {
     const wrapper = mount(App, {
       shallow: true,
@@ -117,5 +164,111 @@ describe('App', () => {
     expect(wrapper.text()).toContain('Shift + Enter 换行')
     expect(wrapper.text()).toContain('更多')
     expect(wrapper.find('.send-btn').text()).toBe('→')
+  })
+
+  test('falls back to agent chat when cloud resolution does not require selection', async () => {
+    mount(App, {
+      shallow: true,
+    })
+    chatStoreMock.resolveCloudRequestContext.mockResolvedValueOnce(
+      createCloudResolution({
+        ambiguous: true,
+        message: '记忆中未命中实例',
+        candidates: [
+          {
+            instance_id: 'mysql-1',
+            instance_name: 'peets-prod-pos-mysql',
+          },
+          {
+            instance_id: 'mysql-2',
+            instance_name: 'peets-prod-member-mysql',
+          },
+        ],
+      }),
+    )
+
+    const sendMessage = composerHarness.sendMessage
+    if (!sendMessage) {
+      throw new Error('composer sendMessage was not captured')
+    }
+
+    const result = await sendMessage('我要进行灵工 mysql 巡检', '我要进行灵工 mysql 巡检')
+
+    expect(result).toBe(true)
+    expect(chatStoreMock.resolveCloudRequestContext).toHaveBeenCalledWith(
+      '我要进行灵工 mysql 巡检',
+    )
+    expect(chatStoreMock.sendMessage).toHaveBeenCalledWith(
+      '我要进行灵工 mysql 巡检',
+      '我要进行灵工 mysql 巡检',
+    )
+  })
+
+  test('opens mysql selection dialog only when cloud resolution requires it', async () => {
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+    chatStoreMock.resolveCloudRequestContext.mockResolvedValueOnce(
+      createCloudResolution({
+        ambiguous: true,
+        selection_required: true,
+        message: '命中多个实例候选，请确认',
+        candidates: [
+          {
+            instance_id: 'mysql-1',
+            instance_name: 'peets-prod-pos-mysql',
+          },
+          {
+            instance_id: 'mysql-2',
+            instance_name: 'peets-prod-member-mysql',
+          },
+        ],
+      }),
+    )
+
+    const sendMessage = composerHarness.sendMessage
+    if (!sendMessage) {
+      throw new Error('composer sendMessage was not captured')
+    }
+
+    const result = await sendMessage('我要进行 peets mysql 巡检', '我要进行 peets mysql 巡检')
+
+    expect(result).toBe(false)
+    expect(chatStoreMock.sendMessage).not.toHaveBeenCalled()
+    expect(
+      wrapper.findComponent({ name: 'MysqlInstanceSelectorDialog' }).props('visible'),
+    ).toBe(true)
+  })
+
+  test('renders attachment bar and forwards upload and delete actions', async () => {
+    const file = new File(['notes'], 'notes.txt', { type: 'text/plain' })
+    chatStoreMock.conversationAttachments = [
+      {
+        id: 'att-1',
+        conversation_id: 'conv-1',
+        original_name: 'notes.txt',
+        stored_name: 'notes-1.txt',
+        relative_path: 'data/conversation_attachments/conv-1/notes-1.txt',
+        mime_type: 'text/plain',
+        size_bytes: 5,
+        created_at: '2026-03-10T10:00:00.000',
+      },
+    ]
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+    const attachmentBar = wrapper.findComponent({ name: 'ConversationAttachmentBar' })
+
+    expect(attachmentBar.exists()).toBe(true)
+    expect(attachmentBar.props('attachments')).toEqual(chatStoreMock.conversationAttachments)
+
+    attachmentBar.vm.$emit('upload', [file])
+    attachmentBar.vm.$emit('delete', 'att-1')
+
+    await wrapper.vm.$nextTick()
+
+    expect(chatStoreMock.uploadConversationAttachment).toHaveBeenCalledWith(file)
+    expect(chatStoreMock.deleteConversationAttachment).toHaveBeenCalledWith('att-1')
   })
 })

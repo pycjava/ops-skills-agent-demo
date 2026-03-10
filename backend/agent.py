@@ -209,20 +209,47 @@ async def _build_memory_context(user_message: str, agent_id: str) -> str | None:
         return None
 
 
-def _compose_user_message_with_memory(
-    user_message: str, memory_context: str | None
+async def _build_attachment_context(conv_id: str) -> str | None:
+    if not conv_id:
+        return None
+
+    try:
+        from services.conversation_attachments import build_attachment_context
+
+        return await build_attachment_context(conv_id)
+    except Exception as exc:
+        logger.warning(f"Failed to build attachment context for conversation {conv_id}: {exc}")
+        return None
+
+
+def _compose_user_message_with_contexts(
+    user_message: str,
+    memory_context: str | None,
+    attachment_context: str | None,
 ) -> str:
-    if not memory_context:
+    if not memory_context and not attachment_context:
         return user_message
 
-    return (
-        "<memory_context>\n"
-        f"{memory_context}\n"
-        "</memory_context>\n\n"
-        "以上是与当前请求相关的长期记忆摘要；如果其中已经包含实例 ID、区域、别名映射或环境信息，"
-        "优先复用，不要重复向用户索取。\n\n"
-        f"{user_message}"
+    sections: list[str] = []
+    if memory_context:
+        sections.append(
+            "<memory_context>\n"
+            f"{memory_context}\n"
+            "</memory_context>"
+        )
+    if attachment_context:
+        sections.append(
+            "<attachment_context>\n"
+            f"{attachment_context}\n"
+            "</attachment_context>"
+        )
+
+    sections.append(
+        "以上是本轮请求可复用的上下文；长期记忆里已有的实例、区域、环境或别名映射优先复用，"
+        "如需基于附件分析，先读取相关附件内容再给出结论。"
     )
+    sections.append(user_message)
+    return "\n\n".join(sections)
 
 
 def classify_artifact_kind(
@@ -260,8 +287,11 @@ async def run_agent(
     resolved_agent_id = agent_id or resolve_default_agent()
     runtime = await get_runtime(resolved_agent_id)
     memory_context = await _build_memory_context(user_message, resolved_agent_id)
-    composed_user_message = _compose_user_message_with_memory(
-        user_message, memory_context
+    attachment_context = await _build_attachment_context(conv_id)
+    composed_user_message = _compose_user_message_with_contexts(
+        user_message,
+        memory_context,
+        attachment_context,
     )
     messages: list[Any] = [HumanMessage(content=composed_user_message)]
     inputs = {"messages": messages}
@@ -270,7 +300,7 @@ async def run_agent(
     try:
         config = {
             "configurable": {"thread_id": conv_id},
-            "recursion_limit": MAX_TURNS * 10,
+            "recursion_limit": MAX_TURNS * 20,
         }
         async for event in runtime.astream_events(inputs, config=config, version="v2"):
             kind = event["event"]

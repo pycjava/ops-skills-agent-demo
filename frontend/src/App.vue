@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useAppChrome } from './composables/useAppChrome'
 import { useChatComposer } from './composables/useChatComposer'
+import ConversationAttachmentBar from './components/ConversationAttachmentBar.vue'
 import ConversationList from './components/ConversationList.vue'
 import ConversationTitleEditor from './components/ConversationTitleEditor.vue'
 import McpPanel from './components/McpPanel.vue'
@@ -164,7 +165,7 @@ async function handleComposerSend(displayContent: string, sendContent?: string) 
   try {
     const resolution = await chatStore.resolveCloudRequestContext(normalizedDisplayContent)
 
-    if (resolution.ambiguous && resolution.candidates.length > 1) {
+    if (resolution.selection_required) {
       pendingMysqlMessage.value = {
         displayContent: normalizedDisplayContent,
         sendContent: normalizedSendContent,
@@ -200,6 +201,19 @@ function confirmMysqlSelection(candidate: CloudContextCandidate) {
   )
   clearInput()
   closeMysqlSelection()
+}
+
+async function handleAttachmentUpload(files: File[]) {
+  for (const file of files) {
+    const uploaded = await chatStore.uploadConversationAttachment(file)
+    if (!uploaded) {
+      break
+    }
+  }
+}
+
+async function handleAttachmentDelete(attachmentId: string) {
+  await chatStore.deleteConversationAttachment(attachmentId)
 }
 
 async function handleConversationTitleSave(title: string) {
@@ -296,6 +310,15 @@ async function handleConversationTitleSave(title: string) {
                 <span class="mention-desc">{{ skill.description }}</span>
               </div>
             </div>
+
+            <ConversationAttachmentBar
+              :attachments="chatStore.conversationAttachments"
+              :is-uploading="chatStore.isAttachmentUploading"
+              :error="chatStore.attachmentError"
+              :disabled="!chatStore.isConnected"
+              @upload="handleAttachmentUpload"
+              @delete="handleAttachmentDelete"
+            />
 
             <textarea
               ref="composerInput"
@@ -446,6 +469,15 @@ async function handleConversationTitleSave(title: string) {
                 <span class="mention-desc">{{ skill.description }}</span>
               </div>
             </div>
+
+            <ConversationAttachmentBar
+              :attachments="chatStore.conversationAttachments"
+              :is-uploading="chatStore.isAttachmentUploading"
+              :error="chatStore.attachmentError"
+              :disabled="!chatStore.isConnected"
+              @upload="handleAttachmentUpload"
+              @delete="handleAttachmentDelete"
+            />
 
             <textarea
               ref="composerInput"

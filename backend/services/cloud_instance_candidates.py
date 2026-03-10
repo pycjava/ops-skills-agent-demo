@@ -1,5 +1,16 @@
 import re
 
+GENERIC_CANDIDATE_KEYWORDS = frozenset(
+    {
+        "mysql",
+        "rds",
+        "inspection",
+        "health",
+        "check",
+        "healthcheck",
+    }
+)
+
 
 FIELD_LABELS = {
     "实例ID": "instance_id",
@@ -34,6 +45,14 @@ def extract_keywords(user_message: str) -> list[str]:
         seen.add(token)
         ordered.append(token)
     return ordered
+
+
+def filter_candidate_keywords(keywords: list[str]) -> list[str]:
+    return [
+        keyword
+        for keyword in keywords
+        if keyword and keyword not in GENERIC_CANDIDATE_KEYWORDS
+    ]
 
 
 def infer_project_key(path: str) -> str | None:

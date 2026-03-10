@@ -41,6 +41,17 @@ export interface ConversationItem {
   updated_at: string | null
 }
 
+export interface ConversationAttachment {
+  id: string
+  conversation_id: string
+  original_name: string
+  stored_name: string
+  relative_path: string
+  mime_type: string
+  size_bytes: number
+  created_at: string | null
+}
+
 export interface ConversationHistoryMessage {
   id: string
   role: string
@@ -83,6 +94,7 @@ export interface CloudContextCandidate {
 export interface CloudContextResolution {
   matched: boolean
   ambiguous: boolean
+  selection_required: boolean
   provider: string
   message: string
   instance_id?: string | null

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from db.base_class import Base
 
 if TYPE_CHECKING:
+    from models.conversation_attachment import ConversationAttachment
     from models.message import Message
 
 
@@ -31,6 +32,11 @@ class Conversation(Base):
         back_populates="conversation",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
+    )
+    attachments: Mapped[list["ConversationAttachment"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationAttachment.created_at",
     )
 
     def to_dict(self):

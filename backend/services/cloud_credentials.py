@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from config import BASE_DIR
 from services.cloud_instance_candidates import (
     extract_keywords,
+    filter_candidate_keywords,
     parse_instance_records,
     resolve_candidate_selection,
     score_instance_candidate,
@@ -251,6 +252,7 @@ async def resolve_cloud_request_context(
     registry, _updated_at = await load_cloud_credentials_registry()
     explicit_ref = normalize_credential_ref(credential_ref) if credential_ref else None
     keywords = extract_keywords(user_message)
+    match_keywords = filter_candidate_keywords(keywords)
 
     tree = await list_memory_tree()
     all_paths = _flatten_memory_nodes(tree)
@@ -272,7 +274,7 @@ async def resolve_cloud_request_context(
         if not isinstance(content, str) or not content.strip():
             continue
         for record in parse_instance_records(content, path, normalize_credential_ref):
-            score = score_instance_candidate(record, keywords)
+            score = score_instance_candidate(record, match_keywords)
             if score <= 0 and not explicit_ref:
                 continue
             resolved_ref, source = resolve_credential_ref(
@@ -311,6 +313,7 @@ async def resolve_cloud_request_context(
         return {
             "matched": False,
             "ambiguous": False,
+            "selection_required": False,
             "provider": SUPPORTED_PROVIDER,
             "credential_ref": explicit_ref,
             "credential_status": status,
@@ -323,6 +326,7 @@ async def resolve_cloud_request_context(
         return {
             "matched": False,
             "ambiguous": False,
+            "selection_required": False,
             "provider": SUPPORTED_PROVIDER,
             "credential_ref": None,
             "credential_status": None,
@@ -354,6 +358,7 @@ async def resolve_cloud_request_context(
         return {
             "matched": False,
             "ambiguous": True,
+            "selection_required": bool(match_keywords),
             "provider": SUPPORTED_PROVIDER,
             "project_key": next(iter(project_keys)) if len(project_keys) == 1 else None,
             "credential_ref": credential_ref_value,
@@ -367,6 +372,7 @@ async def resolve_cloud_request_context(
     return {
         "matched": True,
         "ambiguous": False,
+        "selection_required": False,
         "provider": SUPPORTED_PROVIDER,
         "instance_id": selected.get("instance_id"),
         "instance_name": selected.get("instance_name"),
