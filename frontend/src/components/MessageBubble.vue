@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { marked } from 'marked'
+import DOMPurify from 'dompurify'
+import { marked, Renderer } from 'marked'
 import type { ArtifactKind, ChatMessage } from '../stores/chat'
 import { useChatStore } from '../stores/chat'
 
@@ -13,24 +14,55 @@ const props = defineProps<{
   message: ChatMessage
 }>()
 
-marked.setOptions({ breaks: true, gfm: true })
+const markdownRenderer = new Renderer()
+markdownRenderer.html = ({ text }) => escapeHtml(text)
+
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+  renderer: markdownRenderer,
+})
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function sanitizeHtml(value: string): string {
+  return DOMPurify.sanitize(value, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ['iframe', 'script', 'style'],
+  })
+}
+
+function renderMarkdown(value: string): string {
+  return sanitizeHtml(marked.parse(value, { renderer: markdownRenderer }) as string)
+}
+
+function renderStreamingText(value: string): string {
+  return sanitizeHtml(escapeHtml(value).replace(/\n/g, '<br/>'))
+}
+
+function renderMessageContent(message: ChatMessage): string {
+  if (message.type === 'tool_result') {
+    const content = message.content || ''
+    return renderMarkdown(`\`\`\`text\n${content}\n\`\`\``)
+  }
+
+  const raw = message.content || ''
+  if (message.streaming) {
+    return renderStreamingText(raw)
+  }
+
+  return renderMarkdown(raw)
+}
 
 const renderedContent = computed(() => {
-  if (props.message.type === 'tool_result') {
-    const content = props.message.content || ''
-    return marked.parse(`\`\`\`text\n${content}\n\`\`\``) as string
-  }
-
-  const raw = props.message.content || ''
-  if (props.message.streaming) {
-    return raw
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/\n/g, '<br/>')
-  }
-
-  return marked.parse(raw) as string
+  return renderMessageContent(props.message)
 })
 
 const toolInputJson = computed(() => {

@@ -46,6 +46,8 @@ cp .env.example .env
 # 编辑 .env：填入你的 ANTHROPIC_API_KEY，按需调整 SQLITE_PATH
 ```
 
+> `backend/.env` 仅用于本地运行或容器运行时注入，不会被打进 `backend` Docker 镜像层。
+
 ### 2. 初始化与启动后端
 
 #### 方法 A：使用 Docker Compose（推荐）
@@ -65,7 +67,7 @@ docker-compose up -d --build
 > **提示**：如果使用 Docker 启动，您不需要配置单独的数据库服务。第一次启动时会自动创建 SQLite 数据文件及表结构。
 > 后端服务运行在 `http://127.0.0.1:8000`。
 > 如需热修改 Agent 提示词，请直接编辑宿主机上的 `backend/prompts/*.md`；容器内对应路径为 `/app/prompts/*.md`。
-> 注意：环境变量文件 `.env` 依然需要配置，特别提供 `ANTHROPIC_API_KEY`。
+> 注意：`docker-compose.yml` 会通过 `env_file` 在**运行时**读取 `backend/.env`，特别是 `ANTHROPIC_API_KEY`；该文件不会被复制进镜像层。
 
 #### 方法 B：本地环境运行
 

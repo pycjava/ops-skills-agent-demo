@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 
 from db.session import AsyncSessionLocal
 from models import Conversation, Message
+from services.conversation_messages import update_conversation_title
 from services.conversation_state import create_conversation
 from utils.logger import logger
 
@@ -81,5 +82,23 @@ async def delete_conversation(conv_id: str):
 async def update_conversation(conv_id: str, body: dict = None):
     """更新会话标题"""
     logger.info(f"正在更新对话 {conv_id}，数据: {body}")
-    pass
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="invalid request body")
+
+    title = body.get("title")
+    if not isinstance(title, str):
+        raise HTTPException(status_code=400, detail="title is required")
+
+    try:
+        conversation = await update_conversation_title(
+            conv_id,
+            title,
+            session_factory=AsyncSessionLocal,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return JSONResponse(conversation.to_dict())
 

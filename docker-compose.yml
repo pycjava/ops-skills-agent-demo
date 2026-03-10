@@ -10,6 +10,8 @@ services:
       dockerfile: Dockerfile
     container_name: demo-agent-backend
     restart: always
+    env_file:
+      - ./backend/.env
     environment:
       - TZ=Asia/Shanghai
       - SQLITE_PATH=/app/data/app.db

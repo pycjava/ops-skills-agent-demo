@@ -1,14 +1,15 @@
 import asyncio
 import json
-from collections import defaultdict, deque
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy import func, select, update
+from sqlalchemy import select
 
 from agent import resolve_default_agent, run_agent
 from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
-from models import Conversation, Message
+from models import Message
+from services.agent_event_state import AgentEventState
+from services.conversation_messages import auto_title, save_message
 from services.conversation_state import (
     create_conversation,
     get_conversation,
@@ -25,54 +26,6 @@ from utils.logger import logger
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
 
-async def save_message(
-    conv_id: str,
-    role: str,
-    content: str,
-    msg_type: str = "text",
-    tool_name: str | None = None,
-    tool_input: dict | None = None,
-    thinking: str | None = None,
-    agent_id: str | None = None,
-):
-    """保存消息到数据库"""
-    async with AsyncSessionLocal() as session:
-        msg = Message(
-            conversation_id=conv_id,
-            role=role,
-            content=content,
-            type=msg_type,
-            agent_id=agent_id,
-            tool_name=tool_name,
-            tool_input=tool_input,
-            thinking=thinking,
-        )
-        session.add(msg)
-        await session.execute(
-            update(Conversation)
-            .where(Conversation.id == conv_id)
-            .values(updated_at=func.now())
-        )
-        await session.commit()
-        logger.debug(
-            f"已保存消息到对话 {conv_id} (role={role}, type={msg_type}, agent_id={agent_id})"
-        )
-        return msg
-
-
-async def auto_title(conv_id: str, first_message: str):
-    """用第一条消息的前 30 个字符作为会话标题"""
-    title = first_message[:30].replace("\n", " ")
-    if len(first_message) > 30:
-        title += "..."
-    async with AsyncSessionLocal() as session:
-        await session.execute(
-            update(Conversation).where(Conversation.id == conv_id).values(title=title)
-        )
-        await session.commit()
-    logger.info(f"已为对话 {conv_id} 自动生成标题: {title}")
-
-
 @router.websocket("/chat")
 async def websocket_chat(ws: WebSocket):
     await ws.accept()
@@ -82,12 +35,9 @@ async def websocket_chat(ws: WebSocket):
     agent_task: asyncio.Task | None = None
 
     abort_event = asyncio.Event()
-    streaming_text = ""
-    streaming_thinking = ""
-    step_thinking = ""
+    event_state = AgentEventState()
     delta_buffer = ""
     flush_task: asyncio.Task | None = None
-    pending_tool_inputs: dict[str, deque[dict]] = defaultdict(deque)
 
     async def flush_delta():
         nonlocal delta_buffer
@@ -110,28 +60,24 @@ async def websocket_chat(ws: WebSocket):
         await flush_delta()
 
     async def on_event(event: dict):
-        nonlocal streaming_text, streaming_thinking, delta_buffer, flush_task
-        nonlocal step_thinking, current_agent_id
+        nonlocal delta_buffer, flush_task, current_agent_id
 
         if abort_event.is_set():
             raise asyncio.CancelledError("用户中断")
 
-        etype = event.get("type")
-        tool_name = event.get("tool_name")
+        normalized_event = event_state.apply_event(event)
+        etype = normalized_event.get("type")
         event_agent_id = event.get("agent_id") or current_agent_id
         current_agent_id = event_agent_id
 
         if etype == "text_delta":
-            streaming_text += event.get("content", "")
-            delta_buffer += event.get("content", "")
+            delta_buffer += normalized_event.get("content", "")
             if flush_task is None or flush_task.done():
                 flush_task = asyncio.create_task(self_flush_after(0.08))
             return
 
         if etype == "thinking_delta":
-            streaming_thinking += event.get("content", "")
-            step_thinking += event.get("content", "")
-            await ws.send_text(json.dumps(event, ensure_ascii=False))
+            await ws.send_text(json.dumps(normalized_event, ensure_ascii=False))
             return
 
         if delta_buffer:
@@ -139,66 +85,51 @@ async def websocket_chat(ws: WebSocket):
             if flush_task and not flush_task.done():
                 flush_task.cancel()
 
-        if etype == "tool_call":
-            tool_input = event.get("tool_input")
-            if tool_name and isinstance(tool_input, dict):
-                pending_tool_inputs[tool_name].append(tool_input)
-        elif etype == "tool_result" and tool_name:
-            tool_input = event.get("tool_input")
-            queued_inputs = pending_tool_inputs.get(tool_name)
-            if isinstance(tool_input, dict):
-                if queued_inputs:
-                    queued_inputs.popleft()
-                    if not queued_inputs:
-                        pending_tool_inputs.pop(tool_name, None)
-            elif queued_inputs:
-                event["tool_input"] = queued_inputs.popleft()
-                if not queued_inputs:
-                    pending_tool_inputs.pop(tool_name, None)
-
-        await ws.send_text(json.dumps(event, ensure_ascii=False))
+        await ws.send_text(json.dumps(normalized_event, ensure_ascii=False))
 
         if etype == "tool_call":
-            desc = event.get("tool_desc", f"执行 Tool: {event.get('tool_name', '')}")
+            desc = normalized_event.get(
+                "tool_desc", f"执行 Tool: {normalized_event.get('tool_name', '')}"
+            )
             await save_message(
                 current_conv_id,
                 "system",
                 desc,
                 "tool_call",
                 agent_id=event_agent_id,
-                tool_name=event.get("tool_name"),
-                tool_input=event.get("tool_input"),
-                thinking=step_thinking or None,
+                tool_name=normalized_event.get("tool_name"),
+                tool_input=normalized_event.get("tool_input"),
+                thinking=event_state.pop_step_thinking(),
             )
-            step_thinking = ""
         elif etype == "tool_result":
             await save_message(
                 current_conv_id,
                 "system",
-                event.get("result", ""),
+                normalized_event.get("result", ""),
                 "tool_result",
                 agent_id=event_agent_id,
-                tool_name=event.get("tool_name"),
-                tool_input=event.get("tool_input"),
+                tool_name=normalized_event.get("tool_name"),
+                tool_input=normalized_event.get("tool_input"),
             )
         elif etype == "error":
-            logger.error(f"Agent 报错事件: {event.get('content')}")
+            logger.error(f"Agent 报错事件: {normalized_event.get('content')}")
             await save_message(
                 current_conv_id,
                 "system",
-                event.get("content", ""),
+                normalized_event.get("content", ""),
                 "error",
                 agent_id=event_agent_id,
             )
         elif etype == "done":
-            if streaming_text:
+            snapshot = event_state.snapshot()
+            if snapshot.text:
                 await save_message(
                     current_conv_id,
                     "assistant",
-                    streaming_text,
+                    snapshot.text,
                     "text",
                     agent_id=event_agent_id,
-                    thinking=step_thinking or None,
+                    thinking=snapshot.thinking or None,
                 )
 
     async def do_abort():
@@ -216,15 +147,16 @@ async def websocket_chat(ws: WebSocket):
             except Exception:
                 pass
 
-        if streaming_text and current_conv_id:
-            partial = streaming_text + "\n\n> ⚠️ *（回答被用户中断）*"
+        snapshot = event_state.snapshot()
+        if snapshot.text and current_conv_id:
+            partial = snapshot.text + "\n\n> ⚠️ *（回答被用户中断）*"
             await save_message(
                 current_conv_id,
                 "assistant",
                 partial,
                 "text",
                 agent_id=current_agent_id,
-                thinking=streaming_thinking or None,
+                thinking=snapshot.thinking or None,
             )
 
         try:
@@ -432,23 +364,20 @@ async def websocket_chat(ws: WebSocket):
                 async with AsyncSessionLocal() as session:
                     conversation = await get_conversation(session, current_conv_id)
                     if conversation and conversation.title == "新对话":
-                        await auto_title(current_conv_id, content)
+                        title = await auto_title(current_conv_id, content)
                         await ws.send_text(
                             json.dumps(
                                 {
                                     "type": "title_update",
                                     "conversation_id": current_conv_id,
-                                    "title": content[:30]
-                                    + ("..." if len(content) > 30 else ""),
+                                    "title": title,
                                     "agent_id": current_agent_id,
                                 },
                                 ensure_ascii=False,
                             )
                         )
 
-                streaming_text = ""
-                streaming_thinking = ""
-                step_thinking = ""
+                event_state = AgentEventState()
                 delta_buffer = ""
                 abort_event.clear()
 

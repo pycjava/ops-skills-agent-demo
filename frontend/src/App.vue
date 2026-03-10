@@ -1,63 +1,36 @@
-<script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useChatStore } from './stores/chat'
+﻿<script setup lang="ts">
+import { computed, nextTick, ref, watch } from 'vue'
+import { useAppChrome } from './composables/useAppChrome'
+import { useChatComposer } from './composables/useChatComposer'
+import ConversationList from './components/ConversationList.vue'
+import ConversationTitleEditor from './components/ConversationTitleEditor.vue'
+import McpPanel from './components/McpPanel.vue'
+import MemoryPanel from './components/MemoryPanel.vue'
 import MessageBubble from './components/MessageBubble.vue'
 import SkillPanel from './components/SkillPanel.vue'
-import ConversationList from './components/ConversationList.vue'
-import MemoryPanel from './components/MemoryPanel.vue'
-import McpPanel from './components/McpPanel.vue'
-import { getMillisecondsUntilNextShanghaiMidnight, resolveGreeting } from './utils/greeting'
+import { useChatStore } from './stores/chat'
 
 const chatStore = useChatStore()
-const HOME_COMPOSER_MIN_HEIGHT = 48
-const HOME_COMPOSER_MAX_HEIGHT = 320
-const CHAT_COMPOSER_MIN_HEIGHT = 36
-const CHAT_COMPOSER_MAX_HEIGHT = 220
-
-const storedTheme = localStorage.getItem('theme')
-const inputText = ref('')
-const composerInput = ref<HTMLTextAreaElement | null>(null)
 const chatContainer = ref<HTMLElement | null>(null)
-const agentSelector = ref<HTMLElement | null>(null)
-const agentSelectorWrap = ref<HTMLElement | null>(null)
-const moreMeasureRef = ref<HTMLElement | null>(null)
-const agentMeasureRefs = ref<HTMLElement[]>([])
-const showSidebar = ref(true)
-const isDark = ref(storedTheme === 'dark')
-const showInspector = ref(false)
-const showAgentOverflowMenu = ref(false)
-const rightPanelTab = ref<'skills' | 'mcp' | 'memory'>('skills')
-const currentTime = ref(new Date())
-const pendingMemoryOpenPath = ref<string | null>(null)
-const visibleAgentCount = ref(Number.POSITIVE_INFINITY)
-
+const titleRenameError = ref('')
+const isTitleUpdating = ref(false)
 const quickPrompts: Array<{ label: string; prompt: string }> = []
-
-const showMentions = ref(false)
-const mentionSearch = ref('')
-const mentionIndex = ref(0)
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
 const agentLabels = computed(() =>
   Object.fromEntries(chatStore.agents.map((agent) => [agent.id, agent.label])),
 )
 const activeAgentLabel = computed(
-  () => chatStore.activeAgent?.label || agentLabels.value[chatStore.activeAgentId] || chatStore.activeAgentId,
+  () =>
+    chatStore.activeAgent?.label ||
+    agentLabels.value[chatStore.activeAgentId] ||
+    chatStore.activeAgentId,
 )
-const visibleAgents = computed(() => chatStore.agents.slice(0, visibleAgentCount.value))
-const overflowAgents = computed(() => chatStore.agents.slice(visibleAgentCount.value))
-
-const filteredSkills = computed(() => {
-  if (!showMentions.value) return []
-  const search = mentionSearch.value.toLowerCase()
-  return chatStore.skills.filter(
-    (skill) =>
-      skill.id.toLowerCase().includes(search) || skill.name.toLowerCase().includes(search),
-  )
-})
-
-const currentConversation = computed(() =>
-  chatStore.conversations.find((conversation) => conversation.id === chatStore.currentConversationId) ?? null,
+const currentConversation = computed(
+  () =>
+    chatStore.conversations.find(
+      (conversation) => conversation.id === chatStore.currentConversationId,
+    ) ?? null,
 )
 
 const derivedConversationTitle = computed(() => {
@@ -76,310 +49,67 @@ const derivedConversationTitle = computed(() => {
 const currentConversationTitle = computed(
   () => currentConversation.value?.title || derivedConversationTitle.value,
 )
-
 const currentConversationSubtitle = computed(() =>
   hasMessages.value ? '对话由 AI 生成' : '',
 )
 
-const heroTitle = computed(() => resolveGreeting(currentTime.value).title)
-
-const inputPlaceholder = computed(() =>
-  hasMessages.value ? '发送消息...' : '给我发消息或布置任务',
-)
-
-let greetingRefreshTimer: ReturnType<typeof setTimeout> | null = null
-
-function clearGreetingRefreshTimer() {
-  if (!greetingRefreshTimer) return
-  clearTimeout(greetingRefreshTimer)
-  greetingRefreshTimer = null
-}
-
-function syncGreetingClock() {
-  currentTime.value = new Date()
-  clearGreetingRefreshTimer()
-  greetingRefreshTimer = setTimeout(syncGreetingClock, getMillisecondsUntilNextShanghaiMidnight(currentTime.value) + 50)
-}
-
-function scrollActiveIntoView() {
-  nextTick(() => {
-    const popup = document.querySelector('.mentions-popup')
-    const active = popup?.querySelector('.mention-item.active') as HTMLElement | null
-    if (active && popup) {
-      active.scrollIntoView({ block: 'nearest' })
-    }
-  })
-}
-
-function handleInput() {
-  resizeComposerInput()
-
-  const value = inputText.value
-  const match = value.match(/@([\w-]*)$/)
-  if (match) {
-    showMentions.value = true
-    mentionSearch.value = match[1] || ''
-    mentionIndex.value = 0
-    return
-  }
-
-  showMentions.value = false
-}
-
-function selectMention(skillName: string) {
-  inputText.value = inputText.value.replace(/@([\w-]*)$/, `@${skillName} `)
-  showMentions.value = false
-  nextTick(() => resizeComposerInput())
-}
-
-function sendQuickPrompt(prompt: string) {
-  chatStore.sendMessage(prompt)
-}
-
-function resizeComposerInput() {
-  const textarea = composerInput.value
-  if (!textarea) return
-
-  const minHeight = hasMessages.value ? CHAT_COMPOSER_MIN_HEIGHT : HOME_COMPOSER_MIN_HEIGHT
-  const maxHeight = hasMessages.value ? CHAT_COMPOSER_MAX_HEIGHT : HOME_COMPOSER_MAX_HEIGHT
-
-  textarea.style.height = 'auto'
-
-  const nextHeight = Math.min(Math.max(textarea.scrollHeight, minHeight), maxHeight)
-  textarea.style.height = `${nextHeight}px`
-  textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
-}
-
-function setAgentMeasureRef(element: unknown, index: number) {
-  const target =
-    element instanceof HTMLElement
-      ? element
-      : element &&
-          typeof element === 'object' &&
-          '$el' in element &&
-          element.$el instanceof HTMLElement
-        ? element.$el
-        : null
-
-  if (!target) return
-  agentMeasureRefs.value[index] = target
-}
-
-function closeAgentOverflowMenu() {
-  showAgentOverflowMenu.value = false
-}
-
-function toggleAgentOverflowMenu() {
-  showAgentOverflowMenu.value = !showAgentOverflowMenu.value
-}
-
-function selectAgent(agentId: string) {
-  chatStore.setDraftAgent(agentId)
-  closeAgentOverflowMenu()
-}
-
-function recalculateVisibleAgents() {
-  nextTick(() => {
-    if (!agentSelector.value) {
-      visibleAgentCount.value = chatStore.agents.length
-      return
-    }
-
-    const containerWidth = agentSelector.value.clientWidth
-    const gap = 10
-    const itemWidths = chatStore.agents
-      .map((_, index) => agentMeasureRefs.value[index]?.offsetWidth ?? 0)
-      .filter((width) => width > 0)
-
-    if (itemWidths.length === 0) {
-      visibleAgentCount.value = chatStore.agents.length
-      return
-    }
-
-    const moreWidth = moreMeasureRef.value?.offsetWidth ?? 0
-    let usedWidth = 0
-    let count = 0
-
-    for (let index = 0; index < itemWidths.length; index += 1) {
-      const itemWidth = itemWidths[index] ?? 0
-      const nextWidth = usedWidth + (count > 0 ? gap : 0) + itemWidth
-      const hasHiddenItems = index < itemWidths.length - 1
-      const reservedForMore = hasHiddenItems ? gap + moreWidth : 0
-
-      if (nextWidth + reservedForMore <= containerWidth) {
-        usedWidth = nextWidth
-        count += 1
-        continue
-      }
-
-      break
-    }
-
-    if (count === 0 && chatStore.agents.length > 0) {
-      visibleAgentCount.value = 1
-      return
-    }
-
-    visibleAgentCount.value = count
-  })
-}
-
-function handleDocumentClick(event: MouseEvent) {
-  if (!showAgentOverflowMenu.value) return
-  const target = event.target
-  if (!(target instanceof Node)) return
-  if (agentSelectorWrap.value?.contains(target)) return
-  closeAgentOverflowMenu()
-}
-
-function handleWindowResize() {
-  recalculateVisibleAgents()
-  resizeComposerInput()
-}
-
-function openInspector(tab: 'skills' | 'mcp' | 'memory' = 'skills') {
-  rightPanelTab.value = tab
-  showInspector.value = true
-}
-
-function closeInspector() {
-  showInspector.value = false
-}
-
-async function handleOpenMemory(path: string) {
-  if (!path.startsWith('/memories/')) return
-
-  pendingMemoryOpenPath.value = path
-  rightPanelTab.value = 'memory'
-  showInspector.value = true
-
-  try {
-    await nextTick()
-    await chatStore.openMemoryDocument(path)
-  } finally {
-    pendingMemoryOpenPath.value = null
-  }
-}
-
-onMounted(async () => {
-  document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
-  syncGreetingClock()
-  document.addEventListener('click', handleDocumentClick)
-  window.addEventListener('resize', handleWindowResize)
-  chatStore.connect()
-  await chatStore.fetchAgents()
-  await chatStore.fetchConversations()
-  await chatStore.fetchSkills()
-  await chatStore.fetchMcpServers()
-  await nextTick()
-  resizeComposerInput()
-  recalculateVisibleAgents()
+const {
+  inputText,
+  composerInput,
+  showMentions,
+  mentionIndex,
+  filteredSkills,
+  inputPlaceholder,
+  handleInput,
+  handleKeyDown,
+  handleSend,
+  selectMention,
+  sendQuickPrompt,
+  resizeComposerInput,
+} = useChatComposer({
+  hasMessages,
+  isConnected: computed(() => chatStore.isConnected),
+  isLoading: computed(() => chatStore.isLoading),
+  skills: computed(() => chatStore.skills),
+  sendMessage: chatStore.sendMessage,
 })
 
-onBeforeUnmount(() => {
-  clearGreetingRefreshTimer()
-  document.removeEventListener('click', handleDocumentClick)
-  window.removeEventListener('resize', handleWindowResize)
+const {
+  showSidebar,
+  isDark,
+  showInspector,
+  showAgentOverflowMenu,
+  rightPanelTab,
+  heroTitle,
+  agentSelector,
+  agentSelectorWrap,
+  moreMeasureRef,
+  visibleAgents,
+  overflowAgents,
+  setAgentMeasureRef,
+  toggleAgentOverflowMenu,
+  selectAgent,
+  openInspector,
+  closeInspector,
+  handleOpenMemory,
+  toggleTheme,
+} = useAppChrome({
+  agents: computed(() => chatStore.agents),
+  setDraftAgent: chatStore.setDraftAgent,
+  connect: chatStore.connect,
+  fetchAgents: chatStore.fetchAgents,
+  fetchConversations: chatStore.fetchConversations,
+  fetchSkills: chatStore.fetchSkills,
+  fetchMcpServers: chatStore.fetchMcpServers,
+  fetchMemoryTree: chatStore.fetchMemoryTree,
+  openMemoryDocument: chatStore.openMemoryDocument,
+  resizeComposerInput,
 })
 
-watch([rightPanelTab, showInspector], ([tab, visible]) => {
-  if (visible && tab === 'memory' && !pendingMemoryOpenPath.value) {
-    chatStore.fetchMemoryTree(true)
-  }
-})
-
-watch(
-  () => chatStore.agents.map((agent) => `${agent.id}:${agent.label}`).join('|'),
-  () => {
-    showAgentOverflowMenu.value = false
-    agentMeasureRefs.value = []
-    recalculateVisibleAgents()
-  },
-)
-
-watch(showSidebar, () => {
-  recalculateVisibleAgents()
-})
-
-watch(inputText, () => {
-  nextTick(() => resizeComposerInput())
-})
-
-watch(hasMessages, () => {
-  nextTick(() => resizeComposerInput())
-})
-
-function toggleTheme() {
-  isDark.value = !isDark.value
-  const theme = isDark.value ? 'dark' : 'light'
-  document.documentElement.setAttribute('data-theme', theme)
-  localStorage.setItem('theme', theme)
-}
-
-function handleSend() {
-  const text = inputText.value.trim()
-  if (!text || chatStore.isLoading) return
-
-  let implicitPrompt = ''
-
-  const matches = text.match(/@([\w-]+)/g)
-  if (matches) {
-    const mentionedSkills = matches
-      .map((match) => match.slice(1))
-      .filter((name) => chatStore.skills.some((skill) => skill.id === name))
-
-    if (mentionedSkills.length > 0) {
-      const uniqueSkills = [...new Set(mentionedSkills)]
-      implicitPrompt = `\n\n<system_hint>\n[系统内部指令：用户已明确指定使用工具 ${uniqueSkills
-        .map((skill) => `"${skill}"`)
-        .join(', ')}。请你必须优先、立即调用这些工具来处理请求，在工具返回结果之前不要做任何多余回答。]\n</system_hint>`
-    }
-  }
-
-  chatStore.sendMessage(text, text + implicitPrompt)
-  inputText.value = ''
-  showMentions.value = false
-}
-
-function handleKeyDown(event: KeyboardEvent) {
-  if (showMentions.value && filteredSkills.value.length > 0) {
-    if (event.key === 'ArrowUp') {
-      event.preventDefault()
-      event.stopPropagation()
-      mentionIndex.value =
-        (mentionIndex.value - 1 + filteredSkills.value.length) % filteredSkills.value.length
-      scrollActiveIntoView()
-      return
-    }
-
-    if (event.key === 'ArrowDown') {
-      event.preventDefault()
-      event.stopPropagation()
-      mentionIndex.value = (mentionIndex.value + 1) % filteredSkills.value.length
-      scrollActiveIntoView()
-      return
-    }
-
-    if (event.key === 'Enter' || event.key === 'Tab') {
-      event.preventDefault()
-      const selected = filteredSkills.value[mentionIndex.value]
-      if (selected) {
-        selectMention(selected.id)
-      }
-      return
-    }
-
-    if (event.key === 'Escape') {
-      showMentions.value = false
-      return
-    }
-  }
-
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-    event.preventDefault()
-    handleSend()
-  }
-}
+void composerInput
+void agentSelector
+void agentSelectorWrap
+void moreMeasureRef
 
 const scrollTrigger = computed(() => {
   const length = chatStore.messages.length
@@ -395,6 +125,21 @@ watch(scrollTrigger, async () => {
     chatContainer.value.scrollTop = chatContainer.value.scrollHeight
   }
 })
+
+async function handleConversationTitleSave(title: string) {
+  if (!chatStore.currentConversationId) return
+
+  titleRenameError.value = ''
+  isTitleUpdating.value = true
+
+  try {
+    await chatStore.updateConversationTitle(chatStore.currentConversationId, title)
+  } catch (error) {
+    titleRenameError.value = error instanceof Error ? error.message : '修改标题失败'
+  } finally {
+    isTitleUpdating.value = false
+  }
+}
 </script>
 
 <template>
@@ -406,8 +151,8 @@ watch(scrollTrigger, async () => {
           <span class="brand-name">Claude Agent</span>
           <span class="brand-subtitle">智能对话工作台</span>
         </div>
-        <button class="icon-btn subtle" title="收起侧栏" @click="showSidebar = false">
-          ‹
+        <button class="icon-btn subtle" title="鏀惰捣渚ф爮" @click="showSidebar = false">
+          鈥?
         </button>
       </div>
 
@@ -428,10 +173,10 @@ watch(scrollTrigger, async () => {
           <button
             v-if="!showSidebar"
             class="icon-btn"
-            title="显示侧栏"
+            title="鏄剧ず渚ф爮"
             @click="showSidebar = true"
           >
-            ☰
+            鈽?
           </button>
         </div>
 
@@ -439,20 +184,20 @@ watch(scrollTrigger, async () => {
           <button
             class="icon-btn"
             :disabled="chatStore.messages.length === 0"
-            title="清空当前对话"
+            title="娓呯┖褰撳墠瀵硅瘽"
             @click="chatStore.clearChat"
           >
-            ⌫
+            鈱?
           </button>
           <button
             class="icon-btn"
-            :title="isDark ? '切换浅色模式' : '切换深色模式'"
+            :title="isDark ? '鍒囨崲娴呰壊妯″紡' : '鍒囨崲娣辫壊妯″紡'"
             @click="toggleTheme"
           >
-            {{ isDark ? '☾' : '☀' }}
+            {{ isDark ? '☀️' : '🌙' }}
           </button>
-          <button class="icon-btn" title="打开右侧面板" @click="openInspector('skills')">
-            ☷
+          <button class="icon-btn" title="鎵撳紑鍙充晶闈㈡澘" @click="openInspector('skills')">
+            鈽?
           </button>
         </div>
       </div>
@@ -491,7 +236,7 @@ watch(scrollTrigger, async () => {
               <div class="composer-hints">
                 <span class="hint-pill">@ 指定技能</span>
                 <span class="hint-pill">Enter 发送</span>
-                <span class="hint-pill">Shift + Enter 换行</span>
+                <span class="hint-pill">Shift + Enter 鎹㈣</span>
               </div>
 
               <button
@@ -499,7 +244,7 @@ watch(scrollTrigger, async () => {
                 :disabled="!inputText.trim() || !chatStore.isConnected"
                 @click="handleSend"
               >
-                →
+                鈫?
               </button>
             </div>
           </div>
@@ -523,8 +268,8 @@ watch(scrollTrigger, async () => {
                   :class="{ active: showAgentOverflowMenu }"
                   @click.stop="toggleAgentOverflowMenu"
                 >
-                  <span class="agent-selector-name">更多</span>
-                  <span class="agent-selector-arrow">⌄</span>
+                  <span class="agent-selector-name">鏇村</span>
+                  <span class="agent-selector-arrow">▾</span>
                 </button>
 
                 <div v-if="showAgentOverflowMenu" class="agent-overflow-menu">
@@ -558,8 +303,8 @@ watch(scrollTrigger, async () => {
                 class="agent-selector-item agent-selector-more agent-selector-measure"
                 tabindex="-1"
               >
-                <span class="agent-selector-name">更多</span>
-                <span class="agent-selector-arrow">⌄</span>
+                <span class="agent-selector-name">鏇村</span>
+                <span class="agent-selector-arrow">▾</span>
               </button>
             </div>
           </div>
@@ -583,7 +328,15 @@ watch(scrollTrigger, async () => {
             <span class="chat-kicker">{{ currentConversationSubtitle }}</span>
             <span class="agent-chip">{{ activeAgentLabel }}</span>
           </div>
-          <h2 class="chat-title">{{ currentConversationTitle }}</h2>
+          <ConversationTitleEditor
+            v-if="chatStore.currentConversationId"
+            :title="currentConversationTitle"
+            :error="titleRenameError"
+            :saving="isTitleUpdating"
+            @save="handleConversationTitleSave"
+            @cancel="titleRenameError = ''"
+          />
+          <h2 v-else class="chat-title">{{ currentConversationTitle }}</h2>
         </div>
 
         <div ref="chatContainer" class="chat-scroll">
@@ -640,7 +393,7 @@ watch(scrollTrigger, async () => {
                 class="send-btn stop-btn"
                 @click="chatStore.abortAgent()"
               >
-                ■
+                鈻?
               </button>
               <button
                 v-else
@@ -648,7 +401,7 @@ watch(scrollTrigger, async () => {
                 :disabled="!inputText.trim() || !chatStore.isConnected"
                 @click="handleSend"
               >
-                →
+                鈫?
               </button>
             </div>
           </div>
@@ -683,8 +436,8 @@ watch(scrollTrigger, async () => {
                 </button>
               </div>
 
-              <button class="icon-btn subtle" title="关闭面板" @click="closeInspector">
-                ✕
+              <button class="icon-btn subtle" title="鍏抽棴闈㈡澘" @click="closeInspector">
+                鉁?
               </button>
             </div>
 
@@ -1479,3 +1232,4 @@ input {
   }
 }
 </style>
+

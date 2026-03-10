@@ -4,15 +4,14 @@ POST /api/agent/chat
 程序发送问题，等待 Agent 完整执行后返回最终结果。
 """
 
-from collections import defaultdict, deque
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from agent import run_agent
-from api.ws.chat import save_message
 from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
+from services.agent_event_state import AgentEventState
+from services.conversation_messages import save_message
 from services.conversation_state import (
     create_conversation,
     get_conversation,
@@ -103,73 +102,62 @@ async def agent_chat(req: ChatRequest):
         agent_id=resolved_agent_id,
     )
 
-    result_text = ""
-    result_thinking = ""
+    event_state = AgentEventState()
     tool_calls: list[ToolCallRecord] = []
-    pending_tool_inputs: dict[str, deque[dict]] = defaultdict(deque)
 
     async def on_event(event: dict):
-        nonlocal result_text, result_thinking
-
-        etype = event.get("type")
-        tool_name = event.get("tool_name", "")
+        normalized_event = event_state.apply_event(event)
+        etype = normalized_event.get("type")
+        tool_name = normalized_event.get("tool_name", "")
         event_agent_id = event.get("agent_id") or resolved_agent_id
 
         if etype == "text_delta":
-            result_text += event.get("content", "")
+            return
 
         elif etype == "thinking_delta":
-            result_thinking += event.get("content", "")
+            return
 
         elif etype == "tool_call":
-            tool_input = event.get("tool_input")
-            if tool_name and isinstance(tool_input, dict):
-                pending_tool_inputs[tool_name].append(tool_input)
+            return
 
         elif etype == "tool_result":
-            tool_input = event.get("tool_input")
-            queued_inputs = pending_tool_inputs.get(tool_name) if tool_name else None
-            if isinstance(tool_input, dict):
-                if queued_inputs:
-                    queued_inputs.popleft()
-                    if not queued_inputs:
-                        pending_tool_inputs.pop(tool_name, None)
-            elif queued_inputs:
-                tool_input = queued_inputs.popleft()
-                if not queued_inputs:
-                    pending_tool_inputs.pop(tool_name, None)
             tool_calls.append(
                 ToolCallRecord(
                     tool_name=tool_name,
-                    tool_input=tool_input if isinstance(tool_input, dict) else None,
-                    artifact_kind=event.get("artifact_kind"),
-                    result=event.get("result", ""),
+                    tool_input=normalized_event.get("tool_input")
+                    if isinstance(normalized_event.get("tool_input"), dict)
+                    else None,
+                    artifact_kind=normalized_event.get("artifact_kind"),
+                    result=normalized_event.get("result", ""),
                 )
             )
             await save_message(
                 conv_id,
                 "system",
-                event.get("result", ""),
+                normalized_event.get("result", ""),
                 "tool_result",
                 agent_id=event_agent_id,
                 tool_name=tool_name,
-                tool_input=tool_input if isinstance(tool_input, dict) else None,
+                tool_input=normalized_event.get("tool_input")
+                if isinstance(normalized_event.get("tool_input"), dict)
+                else None,
             )
 
         elif etype == "error":
             raise HTTPException(
-                status_code=500, detail=event.get("content", "Agent 执行出错")
+                status_code=500, detail=normalized_event.get("content", "Agent 执行出错")
             )
 
         elif etype == "done":
-            if result_text:
+            snapshot = event_state.snapshot()
+            if snapshot.text:
                 await save_message(
                     conv_id,
                     "assistant",
-                    result_text,
+                    snapshot.text,
                     "text",
                     agent_id=event_agent_id,
-                    thinking=result_thinking or None,
+                    thinking=snapshot.thinking or None,
                 )
 
     logger.info(
@@ -185,7 +173,7 @@ async def agent_chat(req: ChatRequest):
     return ChatResponse(
         conversation_id=conv_id,
         agent_id=resolved_agent_id or "",
-        content=result_text,
-        thinking=result_thinking,
+        content=event_state.snapshot().text,
+        thinking=event_state.snapshot().thinking,
         tool_calls=tool_calls,
     )

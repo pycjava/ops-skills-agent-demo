@@ -1,0 +1,80 @@
+import type { AgentInfo, ChatMessage, ConversationItem } from './types'
+
+export async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const body = await res.json()
+      if (typeof body?.detail === 'string' && body.detail.trim()) {
+        return body.detail
+      }
+      if (typeof body?.error === 'string' && body.error.trim()) {
+        return body.error
+      }
+    } else {
+      const text = (await res.text()).trim()
+      if (text) {
+        return text
+      }
+    }
+  } catch (_error) {
+    // ignore parse failures and fall back below
+  }
+
+  return fallback
+}
+
+export function getDefaultAgentId(agents: AgentInfo[]): string {
+  return agents.find((agent) => agent.is_default)?.id || 'general'
+}
+
+export function resolveAgentId(agentId: string | null | undefined, agents: AgentInfo[]): string {
+  const candidate = typeof agentId === 'string' ? agentId.trim() : ''
+  if (!candidate) {
+    return getDefaultAgentId(agents)
+  }
+
+  if (agents.length === 0) {
+    return candidate
+  }
+
+  return agents.some((agent) => agent.id === candidate) ? candidate : getDefaultAgentId(agents)
+}
+
+export function resolveConversationAgentId(
+  convId: string | null | undefined,
+  conversations: ConversationItem[],
+  draftAgentId: string,
+  agents: AgentInfo[],
+): string {
+  if (!convId) {
+    return resolveAgentId(draftAgentId, agents)
+  }
+
+  const conversationAgentId = conversations.find((conversation) => conversation.id === convId)?.agent_id
+  return resolveAgentId(conversationAgentId || draftAgentId, agents)
+}
+
+export function findRecentToolInput(
+  messages: ChatMessage[],
+  toolName?: string,
+): Record<string, unknown> | undefined {
+  if (!toolName) return undefined
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (
+      message?.type === 'tool_call' &&
+      message.toolName === toolName &&
+      message.toolInput
+    ) {
+      return message.toolInput
+    }
+  }
+
+  return undefined
+}
+
+export function stripSystemHint(content: string): string {
+  return content.replace(/<system_hint>[\s\S]*?<\/system_hint>/g, '').trim()
+}
