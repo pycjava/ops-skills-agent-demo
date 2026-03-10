@@ -11,7 +11,10 @@ interface UseChatComposerOptions {
   isConnected: ComputedRef<boolean>
   isLoading: ComputedRef<boolean>
   skills: ComputedRef<Skill[]>
-  sendMessage: (displayContent: string, sendContent?: string) => void
+  sendMessage: (
+    displayContent: string,
+    sendContent?: string,
+  ) => void | boolean | Promise<void | boolean>
 }
 
 function buildImplicitSkillPrompt(text: string, skills: Skill[]): string {
@@ -115,16 +118,29 @@ export function useChatComposer({
     nextTick(() => resizeComposerInput())
   }
 
-  function handleSend() {
-    const normalizedText = inputText.value.trim()
-    if (!normalizedText || isLoading.value || !isConnected.value) return
-
-    const implicitPrompt = buildImplicitSkillPrompt(normalizedText, skills.value)
-    sendMessage(normalizedText, normalizedText + implicitPrompt)
+  function clearInput() {
     inputText.value = ''
     showMentions.value = false
     mentionSearch.value = ''
     mentionIndex.value = 0
+  }
+
+  async function handleSend() {
+    const normalizedText = inputText.value.trim()
+    if (!normalizedText || isLoading.value || !isConnected.value) return
+
+    const implicitPrompt = buildImplicitSkillPrompt(normalizedText, skills.value)
+    const result = sendMessage(normalizedText, normalizedText + implicitPrompt)
+
+    if (result && typeof result === 'object' && 'then' in result) {
+      const resolvedResult = await result
+      if (resolvedResult === false) return
+      clearInput()
+      return
+    }
+
+    if (result === false) return
+    clearInput()
   }
 
   function handleKeyDown(event: KeyboardEvent) {
@@ -190,6 +206,7 @@ export function useChatComposer({
     filteredSkills,
     inputPlaceholder,
     canSend,
+    clearInput,
     handleInput,
     handleKeyDown,
     handleSend,

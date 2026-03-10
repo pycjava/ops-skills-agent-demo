@@ -111,6 +111,35 @@ describe('useChatComposer', () => {
     expect(composer.showMentions.value).toBe(false)
   })
 
+  test('keeps draft text when async send is deferred', async () => {
+    const sendMessage = vi.fn(async () => false)
+    let exposed: ReturnType<typeof useChatComposer> | null = null
+
+    mount(
+      defineComponent({
+        setup() {
+          exposed = useChatComposer({
+            hasMessages: computed(() => true),
+            isConnected: computed(() => true),
+            isLoading: computed(() => false),
+            skills: computed(() => [] satisfies Skill[]),
+            sendMessage,
+          })
+
+          return () => h('div')
+        },
+      }),
+    )
+
+    const composer = requireComposer(exposed)
+    composer.inputText.value = '帮我巡检 pos 的 mysql'
+
+    await composer.handleSend()
+
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    expect(composer.inputText.value).toBe('帮我巡检 pos 的 mysql')
+  })
+
   test('handles mention navigation and enter shortcuts', async () => {
     const sent: Array<{ display: string; send?: string }> = []
     let exposed: ReturnType<typeof useChatComposer> | null = null

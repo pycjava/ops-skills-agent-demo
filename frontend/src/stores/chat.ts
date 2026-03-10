@@ -8,6 +8,7 @@ import { createSocketDomain } from './chat/socket'
 import type {
   AgentInfo,
   ChatMessage,
+  CloudContextResolution,
   ConversationItem,
   McpServer,
   MemoryDocument,
@@ -121,6 +122,29 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function resolveCloudRequestContext(
+    message: string,
+    credentialRef?: string,
+  ): Promise<CloudContextResolution> {
+    const res = await fetch(`${backendUrl}/api/cloud-credentials/resolve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message,
+        agent_id: activeAgentId.value,
+        credential_ref: credentialRef ?? null,
+      }),
+    })
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`)
+    }
+
+    return (await res.json()) as CloudContextResolution
+  }
+
   function setDraftAgent(agentId: string) {
     draftAgentId.value = resolveAgentId(agentId, agents.value)
     void fetchSkills(draftAgentId.value)
@@ -197,6 +221,7 @@ export const useChatStore = defineStore('chat', () => {
     deleteConversation: conversationDomain.deleteConversation,
     updateConversationTitle: conversationDomain.updateConversationTitle,
     fetchSkills,
+    resolveCloudRequestContext,
     fetchMcpServers: mcpDomain.fetchMcpServers,
     createMcpServer: mcpDomain.createMcpServer,
     updateMcpServer: mcpDomain.updateMcpServer,

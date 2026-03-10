@@ -7,6 +7,12 @@ from dotenv import dotenv_values
 from fastapi import HTTPException
 
 from config import BASE_DIR
+from services.cloud_instance_candidates import (
+    extract_keywords,
+    parse_instance_records,
+    resolve_candidate_selection,
+    score_instance_candidate,
+)
 from services.memory import (
     list_memory_tree,
     read_memory_document,
@@ -16,7 +22,6 @@ from services.memory import (
 
 REGISTRY_PATH = "/memories/agents/dba/cloud_credentials_registry.json"
 SUPPORTED_PROVIDER = "volcengine"
-MAX_CANDIDATES = 5
 
 DEFAULT_REGISTRY: dict[str, Any] = {
     "provider": SUPPORTED_PROVIDER,
@@ -65,18 +70,6 @@ def _flatten_memory_nodes(nodes: list[dict[str, Any]]) -> list[str]:
         if isinstance(children, list):
             paths.extend(_flatten_memory_nodes(children))
     return paths
-
-
-def _extract_keywords(user_message: str) -> list[str]:
-    tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9._-]{1,}", user_message.lower())
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for token in tokens:
-        if token in seen:
-            continue
-        seen.add(token)
-        ordered.append(token)
-    return ordered
 
 
 def _load_env_values() -> dict[str, str]:
@@ -192,7 +185,9 @@ async def load_cloud_credentials_registry() -> tuple[dict[str, Any], str | None]
     return _normalize_registry(parsed), document.get("updated_at")
 
 
-def _build_registry_response(registry: dict[str, Any], updated_at: str | None) -> dict[str, Any]:
+def _build_registry_response(
+    registry: dict[str, Any], updated_at: str | None
+) -> dict[str, Any]:
     credentials: list[dict[str, Any]] = []
     for item in registry["credentials"]:
         status = _credential_status(item["credential_ref"])
@@ -247,57 +242,6 @@ def resolve_credential_ref(
     return None, "none"
 
 
-def _parse_instance_records(content: str, path: str) -> list[dict[str, str]]:
-    sections = re.split(r"\n(?=## )", content)
-    records: list[dict[str, str]] = []
-
-    for section in sections:
-        if "实例ID" not in section:
-            continue
-
-        fields: dict[str, str] = {"memory_path": path}
-        for line in section.splitlines():
-            match = re.match(r"- \*\*(.+?)\*\*: (.+)", line.strip())
-            if not match:
-                continue
-            key = match.group(1).strip()
-            value = match.group(2).strip()
-            if key == "实例ID":
-                fields["instance_id"] = value
-            elif key == "实例名称":
-                fields["instance_name"] = value
-            elif key == "项目":
-                fields["project_key"] = value
-            elif key == "区域":
-                fields["region"] = value
-            elif key == "环境":
-                fields["environment"] = value
-            elif "credential_ref" in key:
-                fields["credential_ref"] = normalize_credential_ref(value)
-
-        if fields.get("instance_id"):
-            records.append(fields)
-
-    return records
-
-
-def _score_instance_candidate(record: dict[str, str], keywords: list[str]) -> int:
-    haystacks = [
-        record.get("instance_id", "").lower(),
-        record.get("instance_name", "").lower(),
-        record.get("project_key", "").lower(),
-        record.get("environment", "").lower(),
-        record.get("memory_path", "").lower(),
-    ]
-
-    score = 0
-    for keyword in keywords:
-        for haystack in haystacks:
-            if keyword and keyword in haystack:
-                score += 5
-    return score
-
-
 async def resolve_cloud_request_context(
     user_message: str,
     *,
@@ -306,7 +250,7 @@ async def resolve_cloud_request_context(
 ) -> dict[str, Any]:
     registry, _updated_at = await load_cloud_credentials_registry()
     explicit_ref = normalize_credential_ref(credential_ref) if credential_ref else None
-    keywords = _extract_keywords(user_message)
+    keywords = extract_keywords(user_message)
 
     tree = await list_memory_tree()
     all_paths = _flatten_memory_nodes(tree)
@@ -327,8 +271,8 @@ async def resolve_cloud_request_context(
         content = document.get("content", "")
         if not isinstance(content, str) or not content.strip():
             continue
-        for record in _parse_instance_records(content, path):
-            score = _score_instance_candidate(record, keywords)
+        for record in parse_instance_records(content, path, normalize_credential_ref):
+            score = score_instance_candidate(record, keywords)
             if score <= 0 and not explicit_ref:
                 continue
             resolved_ref, source = resolve_credential_ref(
@@ -387,14 +331,21 @@ async def resolve_cloud_request_context(
             "message": "未命中实例或项目绑定",
         }
 
-    top_score = int(candidates[0]["score"])
-    top_candidates = [item for item in candidates if int(item["score"]) == top_score]
-    preview_candidates = top_candidates[:MAX_CANDIDATES]
+    candidate_resolution = resolve_candidate_selection(candidates)
+    top_candidates = candidate_resolution["top_candidates"]
 
-    if len(top_candidates) > 1:
-        project_keys = {item.get("project_key") for item in top_candidates if item.get("project_key")}
-        credential_refs = {item.get("credential_ref") for item in top_candidates if item.get("credential_ref")}
-        credential_ref_value = next(iter(credential_refs)) if len(credential_refs) == 1 else None
+    if candidate_resolution["ambiguous"]:
+        project_keys = {
+            item.get("project_key") for item in top_candidates if item.get("project_key")
+        }
+        credential_refs = {
+            item.get("credential_ref")
+            for item in top_candidates
+            if item.get("credential_ref")
+        }
+        credential_ref_value = (
+            next(iter(credential_refs)) if len(credential_refs) == 1 else None
+        )
         credential_status = (
             _credential_status(credential_ref_value)["status"]
             if credential_ref_value
@@ -408,11 +359,11 @@ async def resolve_cloud_request_context(
             "credential_ref": credential_ref_value,
             "credential_status": credential_status,
             "source": "project_binding" if credential_ref_value else "none",
-            "candidates": preview_candidates,
-            "message": f"命中 {len(top_candidates)} 个实例候选，请先确认具体实例",
+            "candidates": candidate_resolution["display_candidates"],
+            "message": f"命中 {len(candidate_resolution['display_candidates'])} 个实例候选，请先确认具体实例",
         }
 
-    selected = preview_candidates[0]
+    selected = candidate_resolution["selected"]
     return {
         "matched": True,
         "ambiguous": False,
@@ -425,6 +376,10 @@ async def resolve_cloud_request_context(
         "credential_ref": selected.get("credential_ref"),
         "credential_status": selected.get("credential_status"),
         "source": selected.get("source"),
-        "candidates": preview_candidates,
-        "message": "已命中实例与凭证引用" if selected.get("credential_ref") else "已命中实例，但缺少凭证绑定",
+        "candidates": candidate_resolution["display_candidates"],
+        "message": (
+            "已命中实例与凭证引用"
+            if selected.get("credential_ref")
+            else "已命中实例，但缺少凭证绑定"
+        ),
     }

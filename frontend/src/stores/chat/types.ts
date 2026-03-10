@@ -68,6 +68,34 @@ export interface MemoryDocument {
   updated_at: string | null
 }
 
+export interface CloudContextCandidate {
+  instance_id?: string | null
+  instance_name?: string | null
+  project_key?: string | null
+  region?: string | null
+  environment?: string | null
+  credential_ref?: string | null
+  credential_status?: string | null
+  source?: string | null
+  score?: number
+}
+
+export interface CloudContextResolution {
+  matched: boolean
+  ambiguous: boolean
+  provider: string
+  message: string
+  instance_id?: string | null
+  instance_name?: string | null
+  project_key?: string | null
+  region?: string | null
+  environment?: string | null
+  credential_ref?: string | null
+  credential_status?: string | null
+  source?: string | null
+  candidates: CloudContextCandidate[]
+}
+
 export type McpTransport = 'http' | 'sse'
 export type McpTestStatus = 'untested' | 'ok' | 'error'
 

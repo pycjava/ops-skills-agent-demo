@@ -7,13 +7,24 @@ import ConversationTitleEditor from './components/ConversationTitleEditor.vue'
 import McpPanel from './components/McpPanel.vue'
 import MemoryPanel from './components/MemoryPanel.vue'
 import MessageBubble from './components/MessageBubble.vue'
+import MysqlInstanceSelectorDialog from './components/MysqlInstanceSelectorDialog.vue'
 import SkillPanel from './components/SkillPanel.vue'
-import { useChatStore } from './stores/chat'
+import { useChatStore, type CloudContextCandidate } from './stores/chat'
+import {
+  buildMysqlSelectionSystemHint,
+  isMysqlInspectionIntent,
+} from './utils/mysqlInspection'
 
 const chatStore = useChatStore()
 const chatContainer = ref<HTMLElement | null>(null)
 const titleRenameError = ref('')
 const isTitleUpdating = ref(false)
+const mysqlSelectionCandidates = ref<CloudContextCandidate[]>([])
+const isMysqlSelectionOpen = ref(false)
+const pendingMysqlMessage = ref<{
+  displayContent: string
+  sendContent: string
+} | null>(null)
 const quickPrompts: Array<{ label: string; prompt: string }> = []
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
@@ -60,6 +71,7 @@ const {
   mentionIndex,
   filteredSkills,
   inputPlaceholder,
+  clearInput,
   handleInput,
   handleKeyDown,
   handleSend,
@@ -71,7 +83,7 @@ const {
   isConnected: computed(() => chatStore.isConnected),
   isLoading: computed(() => chatStore.isLoading),
   skills: computed(() => chatStore.skills),
-  sendMessage: chatStore.sendMessage,
+  sendMessage: handleComposerSend,
 })
 
 const {
@@ -126,6 +138,70 @@ watch(scrollTrigger, async () => {
   }
 })
 
+function closeMysqlSelection() {
+  isMysqlSelectionOpen.value = false
+  mysqlSelectionCandidates.value = []
+  pendingMysqlMessage.value = null
+}
+
+function buildResolvedSendContent(sendContent: string, candidate?: CloudContextCandidate) {
+  if (!candidate) return sendContent
+  return `${sendContent}${buildMysqlSelectionSystemHint(candidate)}`
+}
+
+async function handleComposerSend(displayContent: string, sendContent?: string) {
+  const normalizedDisplayContent = displayContent.trim()
+  const normalizedSendContent = (sendContent || displayContent).trim()
+
+  if (
+    chatStore.activeAgentId !== 'dba' ||
+    !isMysqlInspectionIntent(normalizedDisplayContent)
+  ) {
+    chatStore.sendMessage(normalizedDisplayContent, normalizedSendContent)
+    return true
+  }
+
+  try {
+    const resolution = await chatStore.resolveCloudRequestContext(normalizedDisplayContent)
+
+    if (resolution.ambiguous && resolution.candidates.length > 1) {
+      pendingMysqlMessage.value = {
+        displayContent: normalizedDisplayContent,
+        sendContent: normalizedSendContent,
+      }
+      mysqlSelectionCandidates.value = resolution.candidates
+      isMysqlSelectionOpen.value = true
+      return false
+    }
+
+    const selectedCandidate =
+      resolution.matched && resolution.candidates.length > 0
+        ? resolution.candidates[0]
+        : undefined
+
+    chatStore.sendMessage(
+      normalizedDisplayContent,
+      buildResolvedSendContent(normalizedSendContent, selectedCandidate),
+    )
+    return true
+  } catch (error) {
+    console.warn('解析 MySQL 巡检候选失败，回退为直接发送:', error)
+    chatStore.sendMessage(normalizedDisplayContent, normalizedSendContent)
+    return true
+  }
+}
+
+function confirmMysqlSelection(candidate: CloudContextCandidate) {
+  if (!pendingMysqlMessage.value) return
+
+  chatStore.sendMessage(
+    pendingMysqlMessage.value.displayContent,
+    buildResolvedSendContent(pendingMysqlMessage.value.sendContent, candidate),
+  )
+  clearInput()
+  closeMysqlSelection()
+}
+
 async function handleConversationTitleSave(title: string) {
   if (!chatStore.currentConversationId) return
 
@@ -151,8 +227,8 @@ async function handleConversationTitleSave(title: string) {
           <span class="brand-name">Claude Agent</span>
           <span class="brand-subtitle">智能对话工作台</span>
         </div>
-        <button class="icon-btn subtle" title="鏀惰捣渚ф爮" @click="showSidebar = false">
-          鈥?
+        <button class="icon-btn subtle" title="收起侧栏" @click="showSidebar = false">
+          ‹
         </button>
       </div>
 
@@ -173,10 +249,10 @@ async function handleConversationTitleSave(title: string) {
           <button
             v-if="!showSidebar"
             class="icon-btn"
-            title="鏄剧ず渚ф爮"
+            title="显示侧栏"
             @click="showSidebar = true"
           >
-            鈽?
+            ☰
           </button>
         </div>
 
@@ -184,20 +260,20 @@ async function handleConversationTitleSave(title: string) {
           <button
             class="icon-btn"
             :disabled="chatStore.messages.length === 0"
-            title="娓呯┖褰撳墠瀵硅瘽"
+            title="清空当前对话"
             @click="chatStore.clearChat"
           >
-            鈱?
+            ⌫
           </button>
           <button
             class="icon-btn"
-            :title="isDark ? '鍒囨崲娴呰壊妯″紡' : '鍒囨崲娣辫壊妯″紡'"
+            :title="isDark ? '切换浅色模式' : '切换深色模式'"
             @click="toggleTheme"
           >
             {{ isDark ? '☀️' : '🌙' }}
           </button>
-          <button class="icon-btn" title="鎵撳紑鍙充晶闈㈡澘" @click="openInspector('skills')">
-            鈽?
+          <button class="icon-btn" title="打开右侧面板" @click="openInspector('skills')">
+            ☷
           </button>
         </div>
       </div>
@@ -236,7 +312,7 @@ async function handleConversationTitleSave(title: string) {
               <div class="composer-hints">
                 <span class="hint-pill">@ 指定技能</span>
                 <span class="hint-pill">Enter 发送</span>
-                <span class="hint-pill">Shift + Enter 鎹㈣</span>
+                <span class="hint-pill">Shift + Enter 换行</span>
               </div>
 
               <button
@@ -244,7 +320,7 @@ async function handleConversationTitleSave(title: string) {
                 :disabled="!inputText.trim() || !chatStore.isConnected"
                 @click="handleSend"
               >
-                鈫?
+                →
               </button>
             </div>
           </div>
@@ -268,7 +344,7 @@ async function handleConversationTitleSave(title: string) {
                   :class="{ active: showAgentOverflowMenu }"
                   @click.stop="toggleAgentOverflowMenu"
                 >
-                  <span class="agent-selector-name">鏇村</span>
+                  <span class="agent-selector-name">更多</span>
                   <span class="agent-selector-arrow">▾</span>
                 </button>
 
@@ -303,7 +379,7 @@ async function handleConversationTitleSave(title: string) {
                 class="agent-selector-item agent-selector-more agent-selector-measure"
                 tabindex="-1"
               >
-                <span class="agent-selector-name">鏇村</span>
+                <span class="agent-selector-name">更多</span>
                 <span class="agent-selector-arrow">▾</span>
               </button>
             </div>
@@ -393,7 +469,7 @@ async function handleConversationTitleSave(title: string) {
                 class="send-btn stop-btn"
                 @click="chatStore.abortAgent()"
               >
-                鈻?
+                ■
               </button>
               <button
                 v-else
@@ -401,12 +477,20 @@ async function handleConversationTitleSave(title: string) {
                 :disabled="!inputText.trim() || !chatStore.isConnected"
                 @click="handleSend"
               >
-                鈫?
+                →
               </button>
             </div>
           </div>
         </div>
       </section>
+
+      <MysqlInstanceSelectorDialog
+        :visible="isMysqlSelectionOpen"
+        :candidates="mysqlSelectionCandidates"
+        :pending-message="pendingMysqlMessage?.displayContent || ''"
+        @select="confirmMysqlSelection"
+        @cancel="closeMysqlSelection"
+      />
 
       <transition name="drawer-fade">
         <div v-if="showInspector" class="inspector-overlay" @click.self="closeInspector">
@@ -436,8 +520,8 @@ async function handleConversationTitleSave(title: string) {
                 </button>
               </div>
 
-              <button class="icon-btn subtle" title="鍏抽棴闈㈡澘" @click="closeInspector">
-                鉁?
+              <button class="icon-btn subtle" title="关闭面板" @click="closeInspector">
+                ✕
               </button>
             </div>
 

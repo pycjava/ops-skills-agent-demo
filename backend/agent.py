@@ -270,7 +270,7 @@ async def run_agent(
     try:
         config = {
             "configurable": {"thread_id": conv_id},
-            "recursion_limit": MAX_TURNS * 8,
+            "recursion_limit": MAX_TURNS * 10,
         }
         async for event in runtime.astream_events(inputs, config=config, version="v2"):
             kind = event["event"]
