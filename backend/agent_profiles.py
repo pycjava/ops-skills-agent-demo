@@ -51,7 +51,11 @@ AGENT_PROFILES: dict[str, AgentProfile] = {
         label="数据库助手",
         description="负责 MySQL SQL 分析、Volcengine RDS 健康巡检与数据库诊断。",
         prompt_paths=("prompts/base.md", "prompts/dba.md"),
-        skills=("mysql-sql-analyzer", "volcengine-rds-health-analyzer"),
+        skills=(
+            "mysql-sql-analyzer",
+            "volcengine-rds-health-analyzer",
+            "volcengine-rds-report-summarizer",
+        ),
         capabilities=("SQL 分析", "RDS 巡检", "数据库诊断"),
         risk_level="medium",
     ),
