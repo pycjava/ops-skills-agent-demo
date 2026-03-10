@@ -9,6 +9,7 @@
 > 使用说明：
 > - 按本模板的章节顺序输出，保留一级、二级标题及编号结构。
 > - 将 `{{...}}` 占位符替换为实际汇总结果；没有数据时写“未获取”或“无”。
+> - 内存、磁盘相关描述需同时给出百分比和实际数值，例如 `78%（约 25 GiB / 32 GiB）`、`85%（约 850 GiB / 1 TiB）`；无法换算时写“未获取”。
 > - 这是基于多个 `volcengine-rds-health-analyzer` 单实例 Markdown 巡检报告的二次汇总，格式参考线下巡检报告样式。
 
 ## 目录
@@ -52,28 +53,9 @@
 
 {{overall_summary}}
 
-### 2.2 重点实例分析
+### 2.2 实例分析
 
-#### {{top1_instance}}
-
-- 健康评分：{{top1_score}}
-- 风险级别：{{top1_risk}}
-- 关键问题：{{top1_issues}}
-- 处理建议：{{top1_action}}
-
-#### {{top2_instance}}
-
-- 健康评分：{{top2_score}}
-- 风险级别：{{top2_risk}}
-- 关键问题：{{top2_issues}}
-- 处理建议：{{top2_action}}
-
-#### {{top3_instance}}
-
-- 健康评分：{{top3_score}}
-- 风险级别：{{top3_risk}}
-- 关键问题：{{top3_issues}}
-- 处理建议：{{top3_action}}
+{{instance_analysis_sections}}
 
 ### 2.3 共性问题分析
 

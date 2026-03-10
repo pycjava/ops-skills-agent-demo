@@ -48,6 +48,9 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
    - `instance_name`
    - `report_time`
    - `time_range_label`
+   - `instance_type` / `node_spec` / 其他可识别实例规格的信息
+   - `storage_capacity`
+   - `storage_used`
    - `health_score`
    - `health_rating`
    - `health_summary`
@@ -105,6 +108,10 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
 写作要求：
 
 - 整体风格面向正式巡检报告，同时保留跨实例汇总的管理视角
+- `2.2 实例分析` 需要覆盖所有纳入统计的实例，按排序后的实例列表逐个展开，不要只保留 Top 3
+- 内存、磁盘相关风险描述需同时给出百分比和实际数值；优先写成 `78%（约 25 GiB / 32 GiB）`、`85%（约 850 GiB / 1 TiB）` 这种格式
+- 磁盘相关实际值优先复用单实例报告中的 `实际使用` / `存储容量`；只有百分比时，可按总容量换算已用值
+- 内存相关实际值优先根据单实例报告中的 `节点规格`、`实例类型` 或其他可识别规格推导总内存，再按百分比换算；无法可靠推导时写“未获取”，不要编造
 - 每个实例只保留最关键的 `1-3` 个风险点，不要逐实例复述全部指标
 - 如果所有实例都较健康，也要明确写出“本批次未发现需要立即升级处理的共性风险”
 
@@ -126,7 +133,9 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
 
 - 先读取 `./skills/volcengine-rds-report-summarizer/assets/summary_report_template.md`
 - 按模板结构填充，不要改一级、二级标题顺序
-- 模板中的 `customer_name`、`inspector_name`、`instance_summary_rows` 也需要补齐；无法判断时写“未获取”或“无”
+- 模板中的 `customer_name`、`inspector_name`、`instance_analysis_sections`、`instance_summary_rows` 也需要补齐；无法判断时写“未获取”或“无”
+- `instance_analysis_sections` 按每个实例一个三级标题的形式展开，包含“健康评分 / 风险级别 / 关键问题 / 处理建议”四项
+- `instance_analysis_sections`、`capacity_patterns` 等正文中，只要出现内存或磁盘百分比，就同时补充按实例配置换算的实际数值；无法换算时明确标记“未获取”
 - 没有数据的字段写“未获取”或“无”
 
 保存路径：

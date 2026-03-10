@@ -1,7 +1,16 @@
 import type { ComputedRef, Ref } from 'vue'
-import { findRecentToolInput, resolveConversationAgentId } from './helpers'
+import {
+  findRecentToolInput,
+  resolveConversationAgentId,
+  toAttachmentSnapshot,
+} from './helpers'
 import { normalizeArtifactKind } from './memory'
-import type { AgentInfo, ChatMessage, ConversationItem } from './types'
+import type {
+  AgentInfo,
+  ChatMessage,
+  ConversationItem,
+  SendMessageOptions,
+} from './types'
 
 interface SocketDomainDeps {
   wsUrl: string
@@ -221,11 +230,19 @@ export function createSocketDomain({
     }
   }
 
-  function sendMessage(displayContent: string, sendContent?: string) {
+  function sendMessage(
+    displayContent: string,
+    sendContent?: string,
+    options?: SendMessageOptions,
+  ) {
     const normalizedContent = displayContent.trim()
     if (!normalizedContent || !wsState.current || wsState.current.readyState !== WebSocket.OPEN) {
       return
     }
+    const attachments = options?.attachments?.map((attachment) =>
+      toAttachmentSnapshot(attachment),
+    )
+    const attachmentIds = attachments?.map((attachment) => attachment.id) ?? []
 
     const nextAgentId = resolveConversationAgentId(
       currentConversationId.value,
@@ -240,6 +257,7 @@ export function createSocketDomain({
       content: normalizedContent,
       type: 'text',
       agentId: nextAgentId,
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
       timestamp: Date.now(),
     })
 
@@ -249,6 +267,7 @@ export function createSocketDomain({
         type: 'message',
         content: sendContent || normalizedContent,
         agent_id: currentConversationId.value ? undefined : nextAgentId,
+        attachment_ids: attachmentIds,
       }),
     )
   }

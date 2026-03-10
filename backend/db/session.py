@@ -59,6 +59,9 @@ def _bootstrap_sqlite_compat_columns(sync_conn):
     if not _has_column(sync_conn, "messages", "agent_id"):
         sync_conn.execute(text("ALTER TABLE messages ADD COLUMN agent_id VARCHAR(50)"))
 
+    if not _has_column(sync_conn, "messages", "attachments_snapshot"):
+        sync_conn.execute(text("ALTER TABLE messages ADD COLUMN attachments_snapshot JSON"))
+
     sync_conn.execute(
         text(
             "UPDATE messages "

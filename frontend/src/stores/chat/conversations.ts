@@ -2,6 +2,7 @@ import type { ComputedRef, Ref } from 'vue'
 import { getConversationTitleError, normalizeConversationTitle } from '../../utils/conversationTitle'
 import {
   findRecentToolInput,
+  normalizeAttachmentSnapshots,
   readErrorMessage,
   resolveConversationAgentId,
   stripSystemHint,
@@ -105,6 +106,7 @@ export function createConversationDomain({
             (message.type === 'tool_result' && message.tool_name
               ? findRecentToolInput(messages, message.tool_name)
               : undefined),
+          attachments: normalizeAttachmentSnapshots(message.attachments_snapshot),
           thinking: message.thinking || undefined,
           timestamp: message.created_at ? new Date(message.created_at).getTime() : Date.now(),
         })

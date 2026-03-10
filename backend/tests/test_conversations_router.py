@@ -1,7 +1,9 @@
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.routers import conversations as conversations_router
+from models import Message
 
 
 def create_test_client(session_factory):
@@ -65,3 +67,48 @@ def test_patch_conversation_title_rejects_invalid_body(
     )
 
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_get_messages_returns_attachment_snapshot(
+    session_factory, seeded_conversation
+):
+    async with session_factory() as session:
+        session.add(
+            Message(
+                conversation_id=seeded_conversation.id,
+                role="user",
+                content="attachment summary request",
+                type="text",
+                agent_id="general",
+                attachments_snapshot=[
+                    {
+                        "id": "att-1",
+                        "original_name": "report-a.md",
+                        "stored_name": "report-a.md",
+                        "relative_path": f"data/conversation_attachments/{seeded_conversation.id}/report-a.md",
+                        "mime_type": "text/markdown",
+                        "size_bytes": 120,
+                        "created_at": "2026-03-10T10:00:00.000",
+                    }
+                ],
+            )
+        )
+        await session.commit()
+
+    client = create_test_client(session_factory)
+    response = client.get(f"/api/conversations/{seeded_conversation.id}/messages")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["attachments_snapshot"] == [
+        {
+            "id": "att-1",
+            "original_name": "report-a.md",
+            "stored_name": "report-a.md",
+            "relative_path": f"data/conversation_attachments/{seeded_conversation.id}/report-a.md",
+            "mime_type": "text/markdown",
+            "size_bytes": 120,
+            "created_at": "2026-03-10T10:00:00.000",
+        }
+    ]

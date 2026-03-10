@@ -1,4 +1,10 @@
-import type { AgentInfo, ChatMessage, ConversationItem } from './types'
+import type {
+  AgentInfo,
+  ChatMessage,
+  ConversationAttachment,
+  ConversationAttachmentSnapshot,
+  ConversationItem,
+} from './types'
 
 export async function readErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -77,4 +83,32 @@ export function findRecentToolInput(
 
 export function stripSystemHint(content: string): string {
   return content.replace(/<system_hint>[\s\S]*?<\/system_hint>/g, '').trim()
+}
+
+export function toAttachmentSnapshot(
+  attachment: ConversationAttachment | ConversationAttachmentSnapshot,
+): ConversationAttachmentSnapshot {
+  return {
+    id: attachment.id,
+    conversation_id:
+      'conversation_id' in attachment && typeof attachment.conversation_id === 'string'
+        ? attachment.conversation_id
+        : undefined,
+    original_name: attachment.original_name,
+    stored_name: attachment.stored_name,
+    relative_path: attachment.relative_path,
+    mime_type: attachment.mime_type,
+    size_bytes: attachment.size_bytes,
+    created_at: attachment.created_at,
+  }
+}
+
+export function normalizeAttachmentSnapshots(
+  attachments: ConversationAttachmentSnapshot[] | null | undefined,
+): ConversationAttachmentSnapshot[] | undefined {
+  if (!attachments || attachments.length === 0) {
+    return undefined
+  }
+
+  return attachments.map((attachment) => toAttachmentSnapshot(attachment))
 }

@@ -185,6 +185,36 @@ async def list_conversation_attachments(
         return list(result.scalars().all())
 
 
+async def build_attachment_snapshot(
+    conversation_id: str,
+    attachment_ids: list[str] | tuple[str, ...] | None,
+    *,
+    session_factory: SessionFactory = AsyncSessionLocal,
+) -> list[dict]:
+    normalized_ids = [str(attachment_id).strip() for attachment_id in attachment_ids or []]
+    ordered_ids = [attachment_id for attachment_id in normalized_ids if attachment_id]
+    if not ordered_ids:
+        return []
+
+    async with session_factory() as session:
+        result = await session.execute(
+            select(ConversationAttachment).where(
+                ConversationAttachment.conversation_id == conversation_id,
+                ConversationAttachment.id.in_(ordered_ids),
+            )
+        )
+        attachments = {
+            attachment.id: attachment.to_dict()
+            for attachment in result.scalars().all()
+        }
+
+    return [
+        attachments[attachment_id]
+        for attachment_id in ordered_ids
+        if attachment_id in attachments
+    ]
+
+
 async def delete_conversation_attachment(
     conversation_id: str,
     attachment_id: str,

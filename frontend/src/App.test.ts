@@ -24,7 +24,14 @@ function createCloudResolution(
 }
 
 const chatStoreMock = {
-  messages: [] as Array<{ role: string; content: string }>,
+  messages: [] as Array<{
+    id?: string
+    role: string
+    content: string
+    type?: string
+    timestamp?: number
+    attachments?: Array<Record<string, unknown>>
+  }>,
   agents: [
     { id: 'general', label: '通用助手' },
     { id: 'dba', label: '数据库助手' },
@@ -287,6 +294,99 @@ describe('App', () => {
 
     expect(chatStoreMock.uploadConversationAttachment).toHaveBeenCalledWith(file)
     expect(chatStoreMock.deleteConversationAttachment).toHaveBeenCalledWith('att-1')
+  })
+
+  test('sends pending attachments together with the next user message', async () => {
+    chatStoreMock.conversationAttachments = [
+      {
+        id: 'att-1',
+        conversation_id: 'conv-1',
+        original_name: 'report-a.md',
+        stored_name: 'report-a.md',
+        relative_path: 'data/conversation_attachments/conv-1/report-a.md',
+        mime_type: 'text/markdown',
+        size_bytes: 100,
+        created_at: '2026-03-10T10:00:00.000',
+      },
+      {
+        id: 'att-2',
+        conversation_id: 'conv-1',
+        original_name: 'report-b.md',
+        stored_name: 'report-b.md',
+        relative_path: 'data/conversation_attachments/conv-1/report-b.md',
+        mime_type: 'text/markdown',
+        size_bytes: 120,
+        created_at: '2026-03-10T10:01:00.000',
+      },
+    ]
+
+    mount(App, {
+      shallow: true,
+    })
+
+    const sendMessage = composerHarness.sendMessage
+    if (!sendMessage) {
+      throw new Error('composer sendMessage was not captured')
+    }
+
+    const result = await sendMessage('帮我合并汇总信息', '帮我合并汇总信息')
+
+    expect(result).toBe(true)
+    expect(chatStoreMock.sendMessage).toHaveBeenCalledWith('帮我合并汇总信息', '帮我合并汇总信息', {
+      attachments: chatStoreMock.conversationAttachments,
+    })
+  })
+
+  test('keeps only unsubmitted attachments in the composer attachment bar', () => {
+    chatStoreMock.messages = [
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: '帮我合并汇总信息',
+        type: 'text',
+        timestamp: 1,
+        attachments: [
+          {
+            id: 'att-1',
+            original_name: 'report-a.md',
+            stored_name: 'report-a.md',
+            relative_path: 'data/conversation_attachments/conv-1/report-a.md',
+            mime_type: 'text/markdown',
+            size_bytes: 100,
+            created_at: '2026-03-10T10:00:00.000',
+          },
+        ],
+      },
+    ]
+    chatStoreMock.conversationAttachments = [
+      {
+        id: 'att-1',
+        conversation_id: 'conv-1',
+        original_name: 'report-a.md',
+        stored_name: 'report-a.md',
+        relative_path: 'data/conversation_attachments/conv-1/report-a.md',
+        mime_type: 'text/markdown',
+        size_bytes: 100,
+        created_at: '2026-03-10T10:00:00.000',
+      },
+      {
+        id: 'att-2',
+        conversation_id: 'conv-1',
+        original_name: 'report-b.md',
+        stored_name: 'report-b.md',
+        relative_path: 'data/conversation_attachments/conv-1/report-b.md',
+        mime_type: 'text/markdown',
+        size_bytes: 120,
+        created_at: '2026-03-10T10:01:00.000',
+      },
+    ]
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+    const attachmentBar = wrapper.findComponent({ name: 'ConversationAttachmentBar' })
+
+    expect(attachmentBar.props('attachments')).toEqual([chatStoreMock.conversationAttachments[1]])
   })
 
   test('continues uploading remaining files when one file in a batch fails', async () => {

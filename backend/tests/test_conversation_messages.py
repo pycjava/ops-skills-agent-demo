@@ -78,3 +78,36 @@ async def test_update_conversation_title_rejects_invalid_values(
         else:
             raise AssertionError("expected ValueError for invalid title")
 
+
+async def test_save_message_persists_attachment_snapshots(
+    session_factory, seeded_conversation
+):
+    attachments_snapshot = [
+        {
+            "id": "att-1",
+            "original_name": "report-a.md",
+            "stored_name": "report-a.md",
+            "relative_path": "data/conversation_attachments/conv-1/report-a.md",
+            "mime_type": "text/markdown",
+            "size_bytes": 120,
+            "created_at": "2026-03-10T10:00:00.000",
+        }
+    ]
+
+    await save_message(
+        seeded_conversation.id,
+        "user",
+        "帮我合并汇总信息",
+        "text",
+        agent_id="general",
+        attachments_snapshot=attachments_snapshot,
+        session_factory=session_factory,
+    )
+
+    async with session_factory() as session:
+        message_result = await session.execute(
+            select(Message).where(Message.conversation_id == seeded_conversation.id)
+        )
+
+    message = message_result.scalar_one()
+    assert message.attachments_snapshot == attachments_snapshot

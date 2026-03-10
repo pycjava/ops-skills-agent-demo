@@ -43,6 +43,7 @@ async def save_message(
     *,
     tool_name: str | None = None,
     tool_input: dict | None = None,
+    attachments_snapshot: list[dict] | None = None,
     thinking: str | None = None,
     agent_id: str | None = None,
     session_factory: SessionFactory = AsyncSessionLocal,
@@ -56,6 +57,7 @@ async def save_message(
             agent_id=agent_id,
             tool_name=tool_name,
             tool_input=tool_input,
+            attachments_snapshot=attachments_snapshot,
             thinking=thinking,
         )
         session.add(message)
@@ -107,4 +109,3 @@ async def update_conversation_title(
 
     logger.info(f"已更新对话标题 {conv_id}: {normalized_title}")
     return conversation
-

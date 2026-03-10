@@ -1,5 +1,16 @@
 export type ArtifactKind = 'memory' | 'report' | 'file'
 
+export interface ConversationAttachmentSnapshot {
+  id: string
+  conversation_id?: string
+  original_name: string
+  stored_name: string
+  relative_path: string
+  mime_type: string
+  size_bytes: number
+  created_at: string | null
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -13,6 +24,7 @@ export interface ChatMessage {
   timestamp: number
   streaming?: boolean
   thinking?: string
+  attachments?: ConversationAttachmentSnapshot[]
 }
 
 export interface Skill {
@@ -60,6 +72,7 @@ export interface ConversationHistoryMessage {
   agent_id: string | null
   tool_name: string | null
   tool_input: Record<string, unknown> | null
+  attachments_snapshot: ConversationAttachmentSnapshot[] | null
   thinking: string | null
   created_at: string | null
 }
@@ -144,4 +157,8 @@ export interface McpServerPayload {
 
 export interface McpServerUpdatePayload extends McpServerPayload {
   replace_headers?: boolean
+}
+
+export interface SendMessageOptions {
+  attachments?: ConversationAttachmentSnapshot[]
 }

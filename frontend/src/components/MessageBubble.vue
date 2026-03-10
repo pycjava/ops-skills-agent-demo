@@ -2,12 +2,18 @@
 import { computed, ref } from 'vue'
 import DOMPurify from 'dompurify'
 import { marked, Renderer } from 'marked'
-import type { ArtifactKind, ChatMessage } from '../stores/chat'
+import type {
+  ArtifactKind,
+  ChatMessage,
+  ConversationAttachmentSnapshot,
+} from '../stores/chat'
 import { useChatStore } from '../stores/chat'
 
 const chatStore = useChatStore()
+
 const emit = defineEmits<{
   (e: 'open-memory', path: string): void
+  (e: 'delete-attachment', attachmentId: string): void
 }>()
 
 const props = defineProps<{
@@ -61,9 +67,67 @@ function renderMessageContent(message: ChatMessage): string {
   return renderMarkdown(raw)
 }
 
-const renderedContent = computed(() => {
-  return renderMessageContent(props.message)
-})
+function guessMimeType(path: string) {
+  const normalized = path.toLowerCase()
+
+  if (normalized.endsWith('.md')) return 'text/markdown;charset=utf-8'
+  if (normalized.endsWith('.txt')) return 'text/plain;charset=utf-8'
+  if (normalized.endsWith('.json')) return 'application/json;charset=utf-8'
+  if (normalized.endsWith('.html')) return 'text/html;charset=utf-8'
+  if (normalized.endsWith('.csv')) return 'text/csv;charset=utf-8'
+
+  return 'application/octet-stream'
+}
+
+function inferArtifactKind(path: string, artifactKind?: ArtifactKind): ArtifactKind {
+  if (artifactKind) return artifactKind
+
+  const normalized = path.toLowerCase()
+  if (
+    normalized.startsWith('/memories/reports/') &&
+    (normalized.endsWith('.md') || normalized.endsWith('.html') || normalized.endsWith('.pdf'))
+  ) {
+    return 'report'
+  }
+  if (normalized.startsWith('/memories/')) return 'memory'
+  if (normalized.endsWith('.md') || normalized.endsWith('.html') || normalized.endsWith('.pdf')) {
+    return 'report'
+  }
+
+  return 'file'
+}
+
+function formatCompactNumber(value: number): string {
+  return value.toFixed(2).replace(/\.?0+$/, '')
+}
+
+function formatFileSize(sizeBytes: number): string {
+  if (sizeBytes < 1024) {
+    return `${sizeBytes}B`
+  }
+
+  if (sizeBytes < 1024 * 1024) {
+    return `${formatCompactNumber(sizeBytes / 1024)}KB`
+  }
+
+  return `${formatCompactNumber(sizeBytes / (1024 * 1024))}MB`
+}
+
+function formatAttachmentType(filename: string): string {
+  const segments = filename.split('.')
+  const extension = segments.length > 1 ? segments[segments.length - 1]?.trim() : ''
+  return extension ? extension.toUpperCase() : 'FILE'
+}
+
+function isActiveAttachment(attachment: ConversationAttachmentSnapshot): boolean {
+  return activeConversationAttachmentIds.value.has(attachment.id)
+}
+
+function handleAttachmentDelete(attachmentId: string) {
+  emit('delete-attachment', attachmentId)
+}
+
+const renderedContent = computed(() => renderMessageContent(props.message))
 
 const toolInputJson = computed(() => {
   if (props.message.type === 'tool_call' && props.message.toolInput) {
@@ -79,6 +143,10 @@ const isAssistant = computed(
 const isToolCall = computed(() => props.message.type === 'tool_call')
 const isToolResult = computed(() => props.message.type === 'tool_result')
 const isError = computed(() => props.message.type === 'error')
+const userAttachments = computed(() => props.message.attachments || [])
+const activeConversationAttachmentIds = computed(
+  () => new Set(chatStore.conversationAttachments.map((attachment) => attachment.id)),
+)
 
 const showThinking = ref(false)
 const showSystemContent = ref(false)
@@ -104,44 +172,6 @@ const formattedTime = computed(() => {
     hour12: false,
   })
 })
-
-function guessMimeType(path: string) {
-  const normalized = path.toLowerCase()
-
-  if (normalized.endsWith('.md')) return 'text/markdown;charset=utf-8'
-  if (normalized.endsWith('.txt')) return 'text/plain;charset=utf-8'
-  if (normalized.endsWith('.json')) return 'application/json;charset=utf-8'
-  if (normalized.endsWith('.html')) return 'text/html;charset=utf-8'
-  if (normalized.endsWith('.csv')) return 'text/csv;charset=utf-8'
-
-  return 'application/octet-stream'
-}
-
-function inferArtifactKind(path: string, artifactKind?: ArtifactKind): ArtifactKind {
-  if (artifactKind) return artifactKind
-
-  const normalized = path.toLowerCase()
-  if (
-    normalized.startsWith('/memories/reports/') &&
-    (
-      normalized.endsWith('.md') ||
-      normalized.endsWith('.html') ||
-      normalized.endsWith('.pdf')
-    )
-  ) {
-    return 'report'
-  }
-  if (normalized.startsWith('/memories/')) return 'memory'
-  if (
-    normalized.endsWith('.md') ||
-    normalized.endsWith('.html') ||
-    normalized.endsWith('.pdf')
-  ) {
-    return 'report'
-  }
-
-  return 'file'
-}
 
 const fileArtifact = computed(() => {
   if (!isToolResult.value) return null
@@ -219,8 +249,75 @@ const artifactActionLabel = computed(() => {
 <template>
   <div class="msg" :class="[`msg-${message.role}`, `msg-${message.type}`]">
     <div v-if="isUser" class="user-row">
-      <div class="user-bubble">
-        <div v-html="renderedContent"></div>
+      <div class="user-stack">
+        <div v-if="userAttachments.length > 0" class="user-attachment-grid">
+          <div
+            v-for="attachment in userAttachments"
+            :key="attachment.id"
+            :data-testid="`message-attachment-${attachment.id}`"
+            class="message-attachment-card"
+            :class="{ 'message-attachment-card-removed': !isActiveAttachment(attachment) }"
+          >
+            <div class="message-attachment-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path
+                  d="M8 3.75A2.25 2.25 0 0 0 5.75 6v12A2.25 2.25 0 0 0 8 20.25h8A2.25 2.25 0 0 0 18.25 18V8.81a2.25 2.25 0 0 0-.66-1.59l-2.81-2.81a2.25 2.25 0 0 0-1.59-.66H8Z"
+                  fill="currentColor"
+                  opacity="0.92"
+                />
+                <path
+                  d="M13.25 3.93V7A1.25 1.25 0 0 0 14.5 8.25h3.07"
+                  fill="none"
+                  stroke="rgba(255, 255, 255, 0.78)"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="1.4"
+                />
+                <path
+                  d="M9.25 11.25h5.5M9.25 14.25h5.5"
+                  fill="none"
+                  stroke="rgba(255, 255, 255, 0.92)"
+                  stroke-linecap="round"
+                  stroke-width="1.4"
+                />
+              </svg>
+            </div>
+
+            <div class="message-attachment-copy">
+              <span class="message-attachment-name">{{ attachment.original_name }}</span>
+              <span class="message-attachment-meta">
+                {{ formatAttachmentType(attachment.original_name) }}
+                {{ formatFileSize(attachment.size_bytes) }}
+              </span>
+            </div>
+
+            <button
+              v-if="isActiveAttachment(attachment)"
+              :data-testid="`message-attachment-delete-${attachment.id}`"
+              type="button"
+              class="message-attachment-delete"
+              :aria-label="`移除附件 ${attachment.original_name}`"
+              :title="`移除附件 ${attachment.original_name}`"
+              @click="handleAttachmentDelete(attachment.id)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="m8 8 8 8M16 8l-8 8"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-linecap="round"
+                  stroke-width="1.8"
+                />
+              </svg>
+            </button>
+
+            <span v-else class="message-attachment-status">已移除</span>
+          </div>
+        </div>
+
+        <div class="user-bubble">
+          <div v-html="renderedContent"></div>
+        </div>
       </div>
     </div>
 
@@ -295,6 +392,124 @@ const artifactActionLabel = computed(() => {
 .user-row {
   display: flex;
   justify-content: flex-end;
+}
+
+.user-stack {
+  width: min(100%, 860px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.user-attachment-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(228px, 1fr));
+  gap: 12px;
+}
+
+.message-attachment-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--card) 92%, white 8%);
+}
+
+.message-attachment-card-removed {
+  opacity: 0.78;
+}
+
+.message-attachment-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 14px;
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(109, 136, 255, 0.98), rgba(77, 113, 255, 0.94));
+  box-shadow: 0 10px 22px rgba(72, 104, 255, 0.18);
+}
+
+.message-attachment-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.message-attachment-copy {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.message-attachment-name {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-attachment-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.message-attachment-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--card-strong);
+  color: var(--text-muted);
+  border-radius: 999px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.message-attachment-card:hover .message-attachment-delete,
+.message-attachment-card:focus-within .message-attachment-delete {
+  opacity: 1;
+}
+
+.message-attachment-delete:hover {
+  border-color: var(--border-strong);
+  background: var(--hover);
+  color: var(--text-strong);
+}
+
+.message-attachment-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
+.message-attachment-status {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .user-bubble {
@@ -638,6 +853,16 @@ const artifactActionLabel = computed(() => {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 820px) {
+  .user-attachment-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .message-attachment-delete {
+    opacity: 1;
   }
 }
 </style>

@@ -28,6 +28,7 @@ class Message(Base):
     agent_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     tool_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     tool_input: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    attachments_snapshot: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     thinking: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -43,6 +44,7 @@ class Message(Base):
             "agent_id": self.agent_id,
             "tool_name": self.tool_name,
             "tool_input": self.tool_input,
+            "attachments_snapshot": self.attachments_snapshot,
             "thinking": self.thinking,
             "created_at": (
                 self.created_at.isoformat(timespec="milliseconds")

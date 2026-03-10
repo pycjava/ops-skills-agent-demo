@@ -12,6 +12,7 @@ import MysqlInstanceSelectorDialog from './components/MysqlInstanceSelectorDialo
 import SkillPanel from './components/SkillPanel.vue'
 import { MAX_CONVERSATION_ATTACHMENTS } from './constants/attachments'
 import { useChatStore, type CloudContextCandidate } from './stores/chat'
+import { toAttachmentSnapshot } from './stores/chat/helpers'
 import {
   buildMysqlSelectionSystemHint,
   isMysqlInspectionIntent,
@@ -65,6 +66,30 @@ const currentConversationTitle = computed(
 )
 const currentConversationSubtitle = computed(() =>
   hasMessages.value ? '对话由 AI 生成' : '',
+)
+const submittedAttachmentIds = computed(() => {
+  const attachmentIds = new Set<string>()
+
+  for (const message of chatStore.messages) {
+    for (const attachment of message.attachments || []) {
+      attachmentIds.add(attachment.id)
+    }
+  }
+
+  return attachmentIds
+})
+const pendingConversationAttachments = computed(() =>
+  chatStore.conversationAttachments.filter(
+    (attachment) => !submittedAttachmentIds.value.has(attachment.id),
+  ),
+)
+const pendingAttachmentSnapshots = computed(() =>
+  pendingConversationAttachments.value.map((attachment) => toAttachmentSnapshot(attachment)),
+)
+const pendingSendOptions = computed(() =>
+  pendingAttachmentSnapshots.value.length > 0
+    ? { attachments: pendingAttachmentSnapshots.value }
+    : undefined,
 )
 
 const {
@@ -152,6 +177,15 @@ function buildResolvedSendContent(sendContent: string, candidate?: CloudContextC
   return `${sendContent}${buildMysqlSelectionSystemHint(candidate)}`
 }
 
+function sendWithPendingAttachments(displayContent: string, sendContent?: string) {
+  if (pendingSendOptions.value) {
+    chatStore.sendMessage(displayContent, sendContent, pendingSendOptions.value)
+    return
+  }
+
+  chatStore.sendMessage(displayContent, sendContent)
+}
+
 async function handleComposerSend(displayContent: string, sendContent?: string) {
   const normalizedDisplayContent = displayContent.trim()
   const normalizedSendContent = (sendContent || displayContent).trim()
@@ -160,7 +194,7 @@ async function handleComposerSend(displayContent: string, sendContent?: string) 
     chatStore.activeAgentId !== 'dba' ||
     !isMysqlInspectionIntent(normalizedDisplayContent)
   ) {
-    chatStore.sendMessage(normalizedDisplayContent, normalizedSendContent)
+    sendWithPendingAttachments(normalizedDisplayContent, normalizedSendContent)
     return true
   }
 
@@ -182,14 +216,14 @@ async function handleComposerSend(displayContent: string, sendContent?: string) 
         ? resolution.candidates[0]
         : undefined
 
-    chatStore.sendMessage(
+    sendWithPendingAttachments(
       normalizedDisplayContent,
       buildResolvedSendContent(normalizedSendContent, selectedCandidate),
     )
     return true
   } catch (error) {
     console.warn('解析 MySQL 巡检候选失败，回退为直接发送:', error)
-    chatStore.sendMessage(normalizedDisplayContent, normalizedSendContent)
+    sendWithPendingAttachments(normalizedDisplayContent, normalizedSendContent)
     return true
   }
 }
@@ -197,7 +231,7 @@ async function handleComposerSend(displayContent: string, sendContent?: string) 
 function confirmMysqlSelection(candidate: CloudContextCandidate) {
   if (!pendingMysqlMessage.value) return
 
-  chatStore.sendMessage(
+  sendWithPendingAttachments(
     pendingMysqlMessage.value.displayContent,
     buildResolvedSendContent(pendingMysqlMessage.value.sendContent, candidate),
   )
@@ -346,7 +380,7 @@ async function handleConversationTitleSave(title: string) {
 
             <ConversationAttachmentBar
               ref="attachmentBarRef"
-              :attachments="chatStore.conversationAttachments"
+              :attachments="pendingConversationAttachments"
               :is-uploading="chatStore.isAttachmentUploading"
               :error="chatStore.attachmentError"
               :disabled="!chatStore.isConnected"
@@ -502,6 +536,7 @@ async function handleConversationTitleSave(title: string) {
               :key="message.id"
               :message="message"
               @open-memory="handleOpenMemory"
+              @delete-attachment="handleAttachmentDelete"
             />
 
             <div v-if="chatStore.isLoading" class="typing-indicator">
@@ -529,7 +564,7 @@ async function handleConversationTitleSave(title: string) {
 
             <ConversationAttachmentBar
               ref="attachmentBarRef"
-              :attachments="chatStore.conversationAttachments"
+              :attachments="pendingConversationAttachments"
               :is-uploading="chatStore.isAttachmentUploading"
               :error="chatStore.attachmentError"
               :disabled="!chatStore.isConnected"

@@ -9,6 +9,7 @@ from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
 from models import Message
 from services.agent_event_state import AgentEventState
+from services.conversation_attachments import build_attachment_snapshot
 from services.conversation_messages import auto_title, save_message
 from services.conversation_state import (
     create_conversation,
@@ -286,6 +287,7 @@ async def websocket_chat(ws: WebSocket):
             if msg_type == "message":
                 content = data.get("content", "")
                 requested_agent_id = data.get("agent_id")
+                attachment_ids = data.get("attachment_ids")
 
                 if not ANTHROPIC_API_KEY:
                     logger.warning("收到消息，但未配置 ANTHROPIC_API_KEY")
@@ -353,12 +355,19 @@ async def websocket_chat(ws: WebSocket):
                     )
                     continue
 
+                attachments_snapshot = await build_attachment_snapshot(
+                    current_conv_id,
+                    attachment_ids if isinstance(attachment_ids, list) else [],
+                    session_factory=AsyncSessionLocal,
+                )
+
                 await save_message(
                     current_conv_id,
                     "user",
                     content,
                     "text",
                     agent_id=current_agent_id,
+                    attachments_snapshot=attachments_snapshot or None,
                 )
 
                 async with AsyncSessionLocal() as session:
