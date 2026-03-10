@@ -92,3 +92,91 @@ def test_upload_attachment_rejects_unsupported_extension(
             return int(result.scalar() or 0)
 
     assert asyncio.run(count_conversations()) == 0
+
+
+def test_upload_attachment_accepts_generic_mime_for_supported_text_file(
+    session_factory, tmp_path, monkeypatch
+):
+    client = create_test_client(session_factory)
+    monkeypatch.setattr(attachment_service, "ATTACHMENTS_ROOT", tmp_path)
+
+    response = client.post(
+        "/api/conversations/attachments",
+        data={"agent_id": "ops"},
+        files={"file": ("server.log", b"line-1\nline-2\n", "application/octet-stream")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["attachment"]["original_name"] == "server.log"
+    assert payload["attachment"]["mime_type"] == "application/octet-stream"
+
+
+def test_upload_attachment_accepts_noncanonical_csv_mime(
+    session_factory, tmp_path, monkeypatch
+):
+    client = create_test_client(session_factory)
+    monkeypatch.setattr(attachment_service, "ATTACHMENTS_ROOT", tmp_path)
+
+    response = client.post(
+        "/api/conversations/attachments",
+        data={"agent_id": "ops"},
+        files={"file": ("report.csv", b"id,name\n1,alice\n", "application/vnd.ms-excel")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["attachment"]["original_name"] == "report.csv"
+    assert payload["attachment"]["mime_type"] == "application/vnd.ms-excel"
+
+
+def test_upload_attachment_rejects_supported_extension_with_binary_content(
+    session_factory, tmp_path, monkeypatch
+):
+    client = create_test_client(session_factory)
+    monkeypatch.setattr(attachment_service, "ATTACHMENTS_ROOT", tmp_path)
+
+    response = client.post(
+        "/api/conversations/attachments",
+        data={"agent_id": "ops"},
+        files={"file": ("server.log", b"\x80\xff\x80", "application/octet-stream")},
+    )
+
+    assert response.status_code == 400
+    assert "encoding" in response.json()["detail"].lower()
+
+
+def test_upload_attachment_allows_fifty_attachments_and_rejects_fifty_first(
+    session_factory, tmp_path, monkeypatch
+):
+    client = create_test_client(session_factory)
+    monkeypatch.setattr(attachment_service, "ATTACHMENTS_ROOT", tmp_path)
+
+    conversation_id = None
+
+    for index in range(50):
+        data = {"agent_id": "ops"} if conversation_id is None else {"conversation_id": conversation_id}
+        response = client.post(
+            "/api/conversations/attachments",
+            data=data,
+            files={
+                "file": (
+                    f"notes-{index}.txt",
+                    f"line-{index}\n".encode("utf-8"),
+                    "text/plain",
+                )
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        conversation_id = payload["conversation"]["id"]
+
+    overflow_response = client.post(
+        "/api/conversations/attachments",
+        data={"conversation_id": conversation_id},
+        files={"file": ("notes-overflow.txt", b"overflow\n", "text/plain")},
+    )
+
+    assert overflow_response.status_code == 400
+    assert overflow_response.json()["detail"] == "Too many attachments in conversation"

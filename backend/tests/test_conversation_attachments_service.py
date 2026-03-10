@@ -44,3 +44,28 @@ async def test_build_attachment_context_lists_all_session_attachments(
     assert "sample.log" in context
     assert "query.sql" in context
     assert f"data/conversation_attachments/{conversation.id}/" in context
+
+
+async def test_create_attachment_record_infers_mime_type_when_missing(
+    session_factory, tmp_path, monkeypatch
+):
+    async with session_factory() as session:
+        conversation = Conversation(source="web", agent_id="general")
+        session.add(conversation)
+        await session.commit()
+        await session.refresh(conversation)
+
+    monkeypatch.setattr(
+        "services.conversation_attachments.ATTACHMENTS_ROOT",
+        tmp_path,
+    )
+
+    attachment = await create_attachment_record(
+        conversation.id,
+        original_name="payload.json",
+        content_bytes=b'{"ok": true}\n',
+        mime_type=None,
+        session_factory=session_factory,
+    )
+
+    assert attachment.mime_type == "application/json"

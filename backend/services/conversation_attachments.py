@@ -17,24 +17,23 @@ ATTACHMENTS_ROOT = (BASE_DIR / "data" / "conversation_attachments").resolve()
 ALLOWED_ATTACHMENT_EXTENSIONS = frozenset(
     {".txt", ".md", ".markdown", ".csv", ".json", ".sql", ".log"}
 )
-ALLOWED_ATTACHMENT_MIME_TYPES = frozenset(
-    {
-        "text/plain",
-        "text/markdown",
-        "text/csv",
-        "application/json",
-        "application/sql",
-        "application/x-sql",
-    }
-)
+ATTACHMENT_MIME_TYPE_BY_EXTENSION = {
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".csv": "text/csv",
+    ".json": "application/json",
+    ".sql": "application/sql",
+    ".log": "text/plain",
+}
 TEXT_DECODING_CANDIDATES = ("utf-8", "utf-8-sig", "gb18030")
 MAX_ATTACHMENT_SIZE_BYTES = 1024 * 1024
-MAX_CONVERSATION_ATTACHMENTS = 10
+MAX_CONVERSATION_ATTACHMENTS = 50
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
 
-def _normalize_attachment_name(filename: str) -> tuple[str, str]:
+def _attachment_name_parts(filename: str) -> tuple[str, str]:
     candidate = Path(str(filename or "").strip()).name
     if not candidate:
         raise HTTPException(status_code=400, detail="Attachment filename is required")
@@ -43,21 +42,36 @@ def _normalize_attachment_name(filename: str) -> tuple[str, str]:
     if suffix not in ALLOWED_ATTACHMENT_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Unsupported attachment type")
 
+    return candidate, suffix
+
+
+def _normalize_attachment_name(filename: str) -> tuple[str, str]:
+    candidate, _ = _attachment_name_parts(filename)
+
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(candidate).stem).strip("-.")
     if not stem:
         stem = "attachment"
 
-    stored_name = f"{stem}-{uuid.uuid4().hex[:8]}{suffix}"
+    stored_name = f"{stem}-{uuid.uuid4().hex[:8]}{Path(candidate).suffix.lower()}"
     return candidate, stored_name
 
 
-def _normalize_mime_type(mime_type: str | None) -> str:
+def _infer_mime_type(filename: str) -> str:
+    _, suffix = _attachment_name_parts(filename)
+    return ATTACHMENT_MIME_TYPE_BY_EXTENSION.get(suffix, "text/plain")
+
+
+def _normalize_mime_type(original_name: str, mime_type: str | None) -> str:
     normalized = (mime_type or "").strip().lower()
-    if not normalized:
-        return "text/plain"
-    if normalized.startswith("text/") or normalized in ALLOWED_ATTACHMENT_MIME_TYPES:
-        return normalized
-    raise HTTPException(status_code=400, detail="Unsupported attachment MIME type")
+    if normalized:
+        normalized = normalized.split(";", 1)[0].strip()
+
+    if normalized.count("/") == 1:
+        major, minor = normalized.split("/", 1)
+        if major and minor and not any(ch.isspace() for ch in normalized):
+            return normalized
+
+    return _infer_mime_type(original_name)
 
 
 def _decode_attachment_content(content_bytes: bytes) -> str:
@@ -89,8 +103,8 @@ def validate_attachment_upload(
     if len(content_bytes) > MAX_ATTACHMENT_SIZE_BYTES:
         raise HTTPException(status_code=400, detail="Attachment is too large")
 
-    _normalize_attachment_name(original_name)
-    _normalize_mime_type(mime_type)
+    _attachment_name_parts(original_name)
+    _normalize_mime_type(original_name, mime_type)
     _decode_attachment_content(content_bytes)
 
 
@@ -108,7 +122,7 @@ async def create_attachment_record(
         mime_type=mime_type,
     )
     normalized_name, stored_name = _normalize_attachment_name(original_name)
-    normalized_mime_type = _normalize_mime_type(mime_type)
+    normalized_mime_type = _normalize_mime_type(normalized_name, mime_type)
     decoded_content = _decode_attachment_content(content_bytes)
 
     attachment_dir = _attachment_directory(conversation_id)

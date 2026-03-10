@@ -22,6 +22,7 @@ mysql-cli-sql-analyzer/
 kubeconfig
 nginx-es-analyzer-design.md
 agents/
+backend/data/conversation_attachments/*
 
 # Celery
 celerybeat-schedule

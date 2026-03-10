@@ -10,6 +10,7 @@ import MemoryPanel from './components/MemoryPanel.vue'
 import MessageBubble from './components/MessageBubble.vue'
 import MysqlInstanceSelectorDialog from './components/MysqlInstanceSelectorDialog.vue'
 import SkillPanel from './components/SkillPanel.vue'
+import { MAX_CONVERSATION_ATTACHMENTS } from './constants/attachments'
 import { useChatStore, type CloudContextCandidate } from './stores/chat'
 import {
   buildMysqlSelectionSystemHint,
@@ -27,6 +28,7 @@ const pendingMysqlMessage = ref<{
   sendContent: string
 } | null>(null)
 const quickPrompts: Array<{ label: string; prompt: string }> = []
+const attachmentBarRef = ref<{ triggerFileSelect: () => void } | null>(null)
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
 const agentLabels = computed(() =>
@@ -203,12 +205,43 @@ function confirmMysqlSelection(candidate: CloudContextCandidate) {
   closeMysqlSelection()
 }
 
+function triggerAttachmentSelect() {
+  if (!chatStore.isConnected || chatStore.isAttachmentUploading || chatStore.isLoading) {
+    return
+  }
+
+  attachmentBarRef.value?.triggerFileSelect()
+}
+
+function buildAttachmentLimitError(remainingSlots: number) {
+  if (remainingSlots <= 0) {
+    return `当前会话最多 ${MAX_CONVERSATION_ATTACHMENTS} 个附件`
+  }
+
+  return `当前会话最多 ${MAX_CONVERSATION_ATTACHMENTS} 个附件，还可上传 ${remainingSlots} 个`
+}
+
 async function handleAttachmentUpload(files: File[]) {
+  chatStore.attachmentError = null
+  const remainingSlots =
+    MAX_CONVERSATION_ATTACHMENTS - chatStore.conversationAttachments.length
+
+  if (remainingSlots <= 0 || files.length > remainingSlots) {
+    chatStore.attachmentError = buildAttachmentLimitError(remainingSlots)
+    return
+  }
+
+  let failedCount = 0
+
   for (const file of files) {
     const uploaded = await chatStore.uploadConversationAttachment(file)
     if (!uploaded) {
-      break
+      failedCount += 1
     }
+  }
+
+  if (failedCount > 0) {
+    chatStore.attachmentError = `${files.length} 个文件中 ${failedCount} 个上传失败`
   }
 }
 
@@ -312,6 +345,7 @@ async function handleConversationTitleSave(title: string) {
             </div>
 
             <ConversationAttachmentBar
+              ref="attachmentBarRef"
               :attachments="chatStore.conversationAttachments"
               :is-uploading="chatStore.isAttachmentUploading"
               :error="chatStore.attachmentError"
@@ -338,13 +372,36 @@ async function handleConversationTitleSave(title: string) {
                 <span class="hint-pill">Shift + Enter 换行</span>
               </div>
 
-              <button
-                class="send-btn"
-                :disabled="!inputText.trim() || !chatStore.isConnected"
-                @click="handleSend"
-              >
-                →
-              </button>
+              <div class="composer-actions">
+                <button
+                  type="button"
+                  class="composer-upload-btn"
+                  data-testid="composer-upload-trigger"
+                  title="上传附件"
+                  aria-label="上传附件"
+                  :disabled="!chatStore.isConnected || chatStore.isAttachmentUploading || chatStore.isLoading"
+                  @click="triggerAttachmentSelect"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M8.5 12.5 15 6a3.5 3.5 0 1 1 5 5l-9 9a5.5 5.5 0 0 1-7.8-7.8l8.7-8.7"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.8"
+                    />
+                  </svg>
+                </button>
+
+                <button
+                  class="send-btn"
+                  :disabled="!inputText.trim() || !chatStore.isConnected"
+                  @click="handleSend"
+                >
+                  →
+                </button>
+              </div>
             </div>
           </div>
 
@@ -471,6 +528,7 @@ async function handleConversationTitleSave(title: string) {
             </div>
 
             <ConversationAttachmentBar
+              ref="attachmentBarRef"
               :attachments="chatStore.conversationAttachments"
               :is-uploading="chatStore.isAttachmentUploading"
               :error="chatStore.attachmentError"
@@ -496,21 +554,44 @@ async function handleConversationTitleSave(title: string) {
                 <span class="hint-pill">Enter 发送</span>
               </div>
 
-              <button
-                v-if="chatStore.isLoading"
-                class="send-btn stop-btn"
-                @click="chatStore.abortAgent()"
-              >
-                ■
-              </button>
-              <button
-                v-else
-                class="send-btn"
-                :disabled="!inputText.trim() || !chatStore.isConnected"
-                @click="handleSend"
-              >
-                →
-              </button>
+              <div class="composer-actions">
+                <button
+                  type="button"
+                  class="composer-upload-btn"
+                  data-testid="composer-upload-trigger"
+                  title="上传附件"
+                  aria-label="上传附件"
+                  :disabled="!chatStore.isConnected || chatStore.isAttachmentUploading || chatStore.isLoading"
+                  @click="triggerAttachmentSelect"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M8.5 12.5 15 6a3.5 3.5 0 1 1 5 5l-9 9a5.5 5.5 0 0 1-7.8-7.8l8.7-8.7"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="1.8"
+                    />
+                  </svg>
+                </button>
+
+                <button
+                  v-if="chatStore.isLoading"
+                  class="send-btn stop-btn"
+                  @click="chatStore.abortAgent()"
+                >
+                  ■
+                </button>
+                <button
+                  v-else
+                  class="send-btn"
+                  :disabled="!inputText.trim() || !chatStore.isConnected"
+                  @click="handleSend"
+                >
+                  →
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1016,6 +1097,13 @@ input {
   flex-wrap: wrap;
 }
 
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 .hint-pill {
   padding: 8px 12px;
   border-radius: 999px;
@@ -1024,26 +1112,53 @@ input {
   font-size: 12px;
 }
 
+.composer-upload-btn,
 .send-btn {
   width: 44px;
   height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  border: none;
   border-radius: 999px;
-  background: var(--text-strong);
-  color: var(--card-strong);
-  font-size: 18px;
   cursor: pointer;
   transition:
     transform 0.15s ease,
     opacity 0.15s ease,
-    background 0.15s ease;
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
 }
 
+.composer-upload-btn {
+  border: 1px solid var(--border);
+  background: var(--card-strong);
+  color: var(--text-strong);
+}
+
+.composer-upload-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.send-btn {
+  border: none;
+  background: var(--text-strong);
+  color: var(--card-strong);
+  font-size: 18px;
+}
+
+.composer-upload-btn:hover:not(:disabled),
 .send-btn:hover:not(:disabled) {
   transform: translateY(-1px);
 }
 
+.composer-upload-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--hover);
+}
+
+.composer-upload-btn:disabled,
 .send-btn:disabled {
   opacity: 0.3;
   cursor: not-allowed;
@@ -1343,7 +1458,7 @@ input {
     flex-direction: column;
   }
 
-  .send-btn {
+  .composer-actions {
     align-self: flex-end;
   }
 }
