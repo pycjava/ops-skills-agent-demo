@@ -1,6 +1,6 @@
 # {{customer_name}}
 
-## 线上 MySQL 资源巡检报告
+## 皮氏咖啡线上 MySQL 资源巡检报告
 
 - 巡检区间：{{time_range_summary}}
 - 巡检日期：{{report_time}}
@@ -25,7 +25,7 @@
 
 ### 1.1 巡检范围
 
-本次汇总覆盖 {{time_range_summary}} 内生成的 RDS MySQL 巡检报告，共收到 {{report_count}} 份报告，纳入统计 {{included_count}} 份，未纳入统计 {{excluded_count}} 份。
+皮氏咖啡火山引擎上生产环境MySQL PaaS数据库，本次汇总覆盖 {{time_range_summary}} 内生成的 RDS MySQL 巡检报告，共收到 {{report_count}} 份报告，纳入统计 {{included_count}} 份.
 
 ### 1.2 巡检周期
 

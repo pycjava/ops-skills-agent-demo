@@ -19,9 +19,41 @@ const emit = defineEmits<{
 
 const expandedPaths = ref<string[]>([])
 const showDeleteConfirm = ref(false)
+const pendingDeletePath = ref<string | null>(null)
+const lastDeletablePath = ref<string | null>(null)
 
 const isEmpty = computed(() => props.nodes.length === 0)
-const canDeleteDocument = computed(() => Boolean(props.document?.path))
+const activeDocumentPath = computed(() => {
+  if (props.selectedPath && !props.selectedPath.endsWith('/')) {
+    return props.selectedPath
+  }
+
+  if (props.document?.path && !props.document.path.endsWith('/')) {
+    return props.document.path
+  }
+
+  return null
+})
+const visibleDocumentPath = computed(() => {
+  if (activeDocumentPath.value) {
+    return activeDocumentPath.value
+  }
+
+  if (props.isLoading) {
+    return lastDeletablePath.value
+  }
+
+  return null
+})
+const deleteTargetPath = computed(() => pendingDeletePath.value || visibleDocumentPath.value)
+const deleteTargetName = computed(() => {
+  if (props.document?.path === deleteTargetPath.value) {
+    return props.document.name
+  }
+
+  return deleteTargetPath.value?.split('/').filter(Boolean).pop() || ''
+})
+const canDeleteDocument = computed(() => Boolean(visibleDocumentPath.value))
 const isDocumentLoading = computed(() => {
   if (!props.selectedPath || !props.isLoading) return false
   return props.document?.path !== props.selectedPath
@@ -64,19 +96,23 @@ function formatTime(iso: string | null | undefined) {
   })
 }
 
-function requestDelete() {
-  if (!props.document?.path || props.isLoading) return
+function requestDelete(path?: string) {
+  const targetPath = path && !path.endsWith('/') ? path : activeDocumentPath.value
+  if (!targetPath || props.isLoading) return
+  pendingDeletePath.value = targetPath
   showDeleteConfirm.value = true
 }
 
 function cancelDelete() {
   showDeleteConfirm.value = false
+  pendingDeletePath.value = null
 }
 
 function handleDelete() {
-  const path = props.document?.path
+  const path = deleteTargetPath.value
   if (!path || props.isLoading) return
   showDeleteConfirm.value = false
+  pendingDeletePath.value = null
   emit('delete', path)
 }
 
@@ -93,6 +129,7 @@ watch(
   () => props.selectedPath,
   (path) => {
     showDeleteConfirm.value = false
+    pendingDeletePath.value = null
     expandAncestors(path)
   },
   { immediate: true },
@@ -102,7 +139,23 @@ watch(
   () => props.document?.path,
   () => {
     showDeleteConfirm.value = false
+    pendingDeletePath.value = null
   },
+)
+
+watch(
+  [activeDocumentPath, () => props.isLoading],
+  ([path, isLoading]) => {
+    if (path) {
+      lastDeletablePath.value = path
+      return
+    }
+
+    if (!isLoading) {
+      lastDeletablePath.value = null
+    }
+  },
+  { immediate: true },
 )
 </script>
 
@@ -136,6 +189,7 @@ watch(
             :expanded-paths="expandedPaths"
             @select="emit('select', $event)"
             @toggle="togglePath"
+            @request-delete="requestDelete"
           />
         </div>
       </section>
@@ -151,23 +205,33 @@ watch(
           <div class="memory-head-actions">
             <button
               v-if="canDeleteDocument"
+              type="button"
               class="memory-delete"
+              aria-label="删除当前记忆文件"
+              title="删除当前记忆文件"
               :disabled="isLoading"
-              @click="requestDelete"
+              @click="requestDelete()"
             >
-              删除
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6" />
+                <path d="M14 11v6" />
+                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+              </svg>
+              <span>删除</span>
             </button>
           </div>
         </div>
 
         <transition name="memory-confirm-fade">
-          <div v-if="showDeleteConfirm && document" class="memory-confirm">
+          <div v-if="showDeleteConfirm && deleteTargetPath" class="memory-confirm">
             <div class="memory-confirm-copy">
               <div class="memory-confirm-title">确认删除当前记忆文件？</div>
               <div class="memory-confirm-text">
                 删除后将无法恢复，当前文件会从记忆列表中移除。
               </div>
-              <div class="memory-confirm-file">{{ document.name }}</div>
+              <div class="memory-confirm-file">{{ deleteTargetName }}</div>
             </div>
             <div class="memory-confirm-actions">
               <button
@@ -217,6 +281,7 @@ watch(
   padding: 10px;
   height: 100%;
   min-height: 0;
+  min-width: 0;
 }
 
 .memory-note {
@@ -226,29 +291,30 @@ watch(
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg-input);
+  background: var(--bg-soft);
 }
 
 .memory-note-title {
-  color: var(--cyan);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 600;
 }
 
 .memory-note-text {
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 1.5;
 }
 
 .memory-note-error {
-  color: var(--red);
+  color: var(--danger);
   font-size: 11px;
 }
 
 .memory-split {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: grid;
   grid-template-rows: minmax(160px, 42%) minmax(0, 1fr);
   gap: 10px;
@@ -258,9 +324,10 @@ watch(
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg-panel);
+  background: var(--card);
 }
 
 .memory-section-head {
@@ -268,12 +335,13 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
 
 .memory-section-title {
-  color: var(--text-bright);
+  color: var(--text-strong);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -283,7 +351,7 @@ watch(
   border: 1px solid var(--border);
   border-radius: 4px;
   background: transparent;
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 11px;
   padding: 4px 8px;
   cursor: pointer;
@@ -291,40 +359,59 @@ watch(
 
 .memory-refresh:hover {
   color: var(--text);
-  border-color: var(--text-dim);
+  border-color: var(--text-muted);
 }
 
 .memory-head-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .memory-delete {
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--danger) 22%, var(--border) 78%);
   border-radius: 999px;
-  background: transparent;
+  background: color-mix(in srgb, var(--danger) 8%, var(--card) 92%);
   color: var(--danger);
-  font-size: 11px;
-  font-weight: 600;
-  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
   cursor: pointer;
   transition:
     background 0.15s ease,
+    color 0.15s ease,
     border-color 0.15s ease,
-    transform 0.15s ease,
-    opacity 0.15s ease;
+    transform 0.15s ease;
+}
+
+.memory-delete svg {
+  flex-shrink: 0;
+}
+
+.memory-delete span {
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .memory-delete:hover:not(:disabled) {
-  background: rgba(200, 111, 100, 0.12);
+  background: color-mix(in srgb, var(--danger) 14%, var(--card) 86%);
   border-color: var(--danger);
+  color: var(--danger);
   transform: translateY(-1px);
 }
 
 .memory-delete:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+  border-color: color-mix(in srgb, var(--danger) 26%, var(--border) 74%);
+  background: color-mix(in srgb, var(--danger) 10%, var(--card) 90%);
+  color: color-mix(in srgb, var(--danger) 86%, var(--text-muted) 14%);
+  cursor: wait;
+  opacity: 1;
+  transform: none;
 }
 
 .memory-confirm {
@@ -346,13 +433,13 @@ watch(
 }
 
 .memory-confirm-title {
-  color: var(--text-bright);
+  color: var(--text-strong);
   font-size: 13px;
   font-weight: 600;
 }
 
 .memory-confirm-text {
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -395,11 +482,11 @@ watch(
 
 .memory-confirm-cancel {
   background: transparent;
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 
 .memory-confirm-cancel:hover:not(:disabled) {
-  background: var(--bg-input);
+  background: var(--bg-soft);
   color: var(--text);
 }
 
@@ -446,47 +533,68 @@ watch(
 }
 
 .dim {
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 1.6;
 }
 
 .memory-preview-meta {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .memory-updated {
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 10px;
 }
 
 .memory-content {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .memory-document-name {
-  color: var(--cyan);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 600;
   padding: 10px 12px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .memory-document-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   margin: 0;
   padding: 10px 12px 12px;
   overflow: auto;
-  color: var(--text-bright);
+  color: var(--text-strong);
   font-size: 12px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.memory-refresh:focus-visible,
+.memory-delete:focus-visible,
+.memory-confirm-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (max-width: 560px) {
+  .memory-preview .memory-section-head {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
 }
 </style>
