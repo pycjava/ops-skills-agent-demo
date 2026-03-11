@@ -1,6 +1,6 @@
 ---
 name: volcengine-rds-report-summarizer
-description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 巡检报告并输出跨实例周报式总结。当用户要批量分析多个 RDS 实例巡检报告、做风险总览、归纳共性问题或生成管理摘要时使用。"
+description: "Use when users need to batch analyze multiple Volcengine RDS MySQL 巡检报告、查看跨实例风险总览、归纳共性问题，或生成管理摘要。"
 ---
 
 # Volcengine RDS 巡检报告汇总
@@ -105,14 +105,18 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
 4. `巡检汇总及问题建议`
 5. `附录`
 
+`summary_report_template.md` 是输出 Markdown 的唯一骨架来源，必须固定章节/标题顺序。
+
 写作要求：
 
 - 整体风格面向正式巡检报告，同时保留跨实例汇总的管理视角
-- `2.2 实例分析` 需要覆盖所有纳入统计的实例，按排序后的实例列表逐个展开，不要只保留 Top 3
+- `二、MySQL巡检分析` 章节只保留 `2.1 整体风险概览`，不要生成 `2.2`、`2.3` 小节
+- `3.1 实例汇总` 必须覆盖所有纳入统计的实例，不能只汇总部分实例，且实例顺序必须与排序后的实例列表保持一致
+- `三、巡检汇总及问题建议` 章节只保留 `3.1 实例汇总`，不要生成 `3.2`、`3.3`、`3.4` 小节
 - 内存、磁盘相关风险描述需同时给出百分比和实际数值；优先写成 `78%（约 25 GiB / 32 GiB）`、`85%（约 850 GiB / 1 TiB）` 这种格式
 - 磁盘相关实际值优先复用单实例报告中的 `实际使用` / `存储容量`；只有百分比时，可按总容量换算已用值
 - 内存相关实际值优先根据单实例报告中的 `节点规格`、`实例类型` 或其他可识别规格推导总内存，再按百分比换算；无法可靠推导时写“未获取”，不要编造
-- 每个实例只保留最关键的 `1-3` 个风险点，不要逐实例复述全部指标
+- `3.1 实例汇总` 中每个实例只保留最关键的风险摘要或建议，不要逐实例复述全部指标
 - 如果所有实例都较健康，也要明确写出“本批次未发现需要立即升级处理的共性风险”
 
 ## 聊天回复格式
@@ -123,7 +127,6 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
 - 风险分布
 - Top 风险实例列表
 - `3` 条以内最重要的共性问题
-- 按“立即处理 / 近期跟进 / 长期治理”分组的建议
 - 已保存文档的路径与文件名
 
 ## 保存 Markdown
@@ -137,10 +140,15 @@ description: "汇总多个由 volcengine-rds-health-analyzer 生成的 Markdown 
 保存前：
 
 - 先读取 `./skills/volcengine-rds-report-summarizer/assets/summary_report_template.md`
-- 按模板结构填充，不要改一级、二级标题顺序
-- 模板中的 `customer_name`、`inspector_name`、`instance_analysis_sections`、`instance_summary_rows` 也需要补齐；无法判断时写“未获取”或“无”
-- `instance_analysis_sections` 按每个实例一个三级标题的形式展开，包含“健康评分 / 风险级别 / 关键问题 / 处理建议”四项
-- `instance_analysis_sections`、`capacity_patterns` 等正文中，只要出现内存或磁盘百分比，就同时补充按实例配置换算的实际数值；无法换算时明确标记“未获取”
+- 固定章节/标题顺序，只允许在模板已有占位符所在位置填充内容
+- 不得新增、删除、改名、重排模板中已存在的固定章节或标题
+- 保留模板中现有一级、二级、三级标题及编号顺序；动态展开仅限模板明确允许的区块
+- `二、MySQL巡检分析` 章节只保留 `2.1 整体风险概览`，不要生成 `2.2`、`2.3` 小节
+- 模板中的 `customer_name`、`inspector_name`、`instance_summary_rows` 也需要补齐；无法判断时写“未获取”或“无”
+- `instance_summary_rows` 只允许填充 `3.1 实例汇总` 表格行
+- `instance_summary_rows` 必须覆盖所有纳入统计的实例，不能遗漏实例
+- `3.1 实例汇总` 中实例顺序必须与排序后的实例列表保持一致
+- `overall_summary`、`instance_summary_rows` 等正文中，只要出现内存或磁盘百分比，就同时补充按实例配置换算的实际数值；无法换算时明确标记“未获取”
 - 没有数据的字段写“未获取”或“无”
 
 保存路径：

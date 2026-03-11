@@ -1,6 +1,6 @@
 ---
 name: volcengine-rds-health-analyzer
-description: 使用火山引擎云监控 API 和本技能自带脚本，对 Volcengine RDS MySQL 实例做健康巡检、容量评估和巡检报告生成。当用户要求分析 CPU/内存/磁盘/QPS/TPS/主从延迟、排查资源瓶颈，或生成火山引擎 RDS MySQL 巡检报告时使用。
+description: Use when users need Volcengine RDS MySQL 单实例健康巡检、CPU/内存/磁盘/QPS/TPS/主从延迟分析、资源瓶颈排查，或生成单实例巡检报告。
 ---
 
 # 火山引擎 RDS MySQL 巡检技能
@@ -31,6 +31,8 @@ description: 使用火山引擎云监控 API 和本技能自带脚本，对 Volc
 - 不要在回复中泄露 `AK/SK`、完整凭证或敏感配置。
 - `analysis_depth` 与 `time_range` 是独立参数，不要绑定。
 - 对用户提供的参数值必须原样使用，不得擅自改写、猜测修正、补全、截断、拼接、解码、重新编码、改变大小写或脱敏后再传给脚本。
+- 对用户输入、长期记忆命中的实例信息、脚本采集结果、以及最终写入报告的字段值，都必须按原值使用，不对任何数据做修改。
+- 不得改写、猜测修正、补全、截断、拼接、重新编码、改变大小写、四舍五入、格式化美化、单位换算、乘除换算、百分比折算或用估算值覆盖原值。
 - 凭证优先使用 `credential_ref`，再由脚本从 `backend/.env` 解析真实 `AK/SK`；不要要求用户在聊天中直接提交真实密钥。
 - 数据值已经是最终单位，禁止自行乘以 `100` 或做额外单位换算。
 - 始终显式传入 `--output`，避免脚本把文件写到默认硬编码目录。
@@ -53,6 +55,14 @@ description: 使用火山引擎云监控 API 和本技能自带脚本，对 Volc
 | `< 24h` | `5m` |
 | `1d - <7d` | `1h` |
 | `>= 7d` | `6h` |
+
+双窗口辅助规则：
+
+- 当主窗口 `time_range >= 7d` 时，除主窗口采集外，必须额外执行一次最近 `3d` 的辅助采集
+- 最近 `3d` 辅助窗口固定使用 `1h` 粒度，不跟随主窗口 `>= 7d` 时的 `6h` 粒度
+- `analysis_depth` 不影响这条双窗口规则；只要主窗口达到 `7d` 及以上，就执行最近 `3d` 辅助采集
+- 如果用户显式要求只分析 `3d` 或更短时间范围，则不再追加第二个 `3d` 辅助窗口
+- 最近 `3d` 辅助窗口用于判断问题是否仍在持续发生，不替代主窗口的长期趋势、容量与周期性分析
 
 ## 标准工作流
 
@@ -78,6 +88,10 @@ description: 使用火山引擎云监控 API 和本技能自带脚本，对 Volc
 
 3. 用 `execute` 运行采集脚本，输出到项目内相对路径，例如：
 
+   - 主窗口继续写到 `./metric_data/instance_data.json`
+   - 当主窗口 `time_range >= 7d` 时，最近 `3d` 辅助窗口写到 `./metric_data/instance_data_recent3d.json`
+   - 两个窗口必须分别采集、分别落盘，避免覆盖主窗口文件
+
 ```bash
 py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --instance-id <instance_id> \
@@ -87,6 +101,19 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --period <period> \
   --action all \
   --output ./metric_data/instance_data.json
+```
+
+当主窗口 `time_range >= 7d` 时，再额外执行一次最近 `3d` 辅助采集：
+
+```bash
+py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
+  --instance-id <instance_id> \
+  --region <region> \
+  --credential-ref <credential_ref> \
+  --hours 72 \
+  --period 1h \
+  --action all \
+  --output ./metric_data/instance_data_recent3d.json
 ```
 
 如果用户提供的是明确的起止时间，则改用：
@@ -103,11 +130,15 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --output ./metric_data/instance_data.json
 ```
 
+如果主窗口起止时间覆盖范围达到 `7d` 及以上，仍需额外执行上面的最近 `3d` 辅助采集；该辅助窗口始终表示“执行巡检时刻往回最近 3 天”。
+
 4. 用 `glob` 查找生成的结果文件：
-   - `./metric_data/instance_data_*.json`
+   - 主窗口：`./metric_data/instance_data_*.json`
+   - 当主窗口 `time_range >= 7d` 时，辅助窗口：`./metric_data/instance_data_recent3d_*.json`
 
 5. 用 `read_file` 按需逐个读取结果文件，优先看每个指标里的 `summary` 和 `node_summaries`：
    - 推荐直接读取 `metric_data/instance_data_*.json`
+   - 当主窗口 `time_range >= 7d` 时，分析阶段按同一指标成对读取：先读主窗口结果，再读最近 `3d` 辅助窗口结果
    - 如果 `glob` 返回的是 `/metric_data/...`，可直接原样传给 `read_file`
    - 不要把路径改写成 `/backend/...`
    - 不要使用 `B:\...` 或 `/memories/../backend/...`
@@ -136,17 +167,26 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - 不创建新脚本来进行分析；不得在 `backend/`、`backend/tmp/`、`/tmp` 或当前工作目录生成任何分析脚本，所有分析工作应通过读取已有文件完成
    - Skill 触发后，不要重新退回“先问 `instance_id`”的旧路径；如果长期记忆已经提供了高置信实例候选，应沿用该候选继续流程
    - 不要要求用户在聊天中提交真实 `AK/SK`；如果用户直接粘贴明文凭证，应提示改用 `credential_ref + backend/.env`
+   - 当主窗口 `time_range >= 7d` 时，主窗口负责长期趋势、容量与周期性风险判断；最近 `3d` 辅助窗口负责确认问题是否当前仍在异常
+   - 主窗口异常 + 最近 `3d` 异常：判定为“持续性 / 当前仍存在的问题”
+   - 主窗口异常 + 最近 `3d` 正常：判定为“历史波动或阶段性问题”
+   - 主窗口正常 + 最近 `3d` 异常：判定为“最近新出现或近期加剧的问题”
+   - 主窗口正常 + 最近 `3d` 正常：维持健康 / 低风险结论
+   - 如果最近 `3d` 辅助采集失败但主窗口成功，仍可输出主窗口分析，但必须明确写“最近 3 天辅助判断未获取”，不能脑补近期结论
 
 7. 输出巡检结果：
-   - 巡检概要
-   - 健康评分
-   - 核心指标分析
-   - 异常发现
-   - 行动建议
+   - 如果用户只是要“结论”“概览”“摘要”，可以用简版结构回复：
+     - 巡检概要
+     - 健康评分
+     - 核心指标分析
+     - 异常发现
+     - 行动建议
+   - 如果用户明确要“报告”“巡检报告”“完整报告”或“按模板输出”，不要自由组织章节，直接遵循下方“报告输出要求”
 
 8. 如用户要求“保存报告”或“生成文件”，使用 `obsidian-markdown` 风格写成 Markdown，并用 `write_file` 写入 `/memories/reports/` 下的 `.md` 文件。
    - 生成报告前，先使用 `read_file` 读取模板文件 `./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
-   - 报告内容必须按照模板结构填充，不要改变一级、二级标题顺序
+   - 报告内容必须按照模板结构填充，只允许在模板已有占位符所在位置写入实际内容
+   - 不要改变一级、二级标题顺序，也不要新增、删除、改名、重排模板固定章节
    - 没有数据的字段写“未获取”或“无异常”，不要删除模板章节
    - 报告文件名必须使用 `/memories/reports/<sanitized_instance_name>-inspection-<YYYYMMDD>.md` 格式，不要再使用 `inspection_report_<instance_id>_<YYYYMMDD>.md`
    - 文件名前缀优先使用采集结果里的 `instance_name`；缺失时回退到 `instance_id`
@@ -249,7 +289,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 
 ## 报告输出要求
 
-报告至少包含以下部分：
+以下部分由模板固定提供，仅用于帮助理解模板覆盖范围；不要据此自行改写模板目录：
 
 - **巡检概要**：实例信息、巡检范围、分析深度
 - **健康评分**：总分与扣分说明
@@ -258,14 +298,24 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - **行动建议**：给出具体可执行建议
 - **多节点拆分**：对节点级指标补充拓扑摘要和热点节点说明
 
-如需生成 Markdown 报告，必须使用模板文件：
+凡是输出“巡检报告”类内容（无论是在聊天中直接展示，还是保存为 Markdown 文件），都必须先读取模板文件：
 
 - 模板路径：`./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
 - 先用 `read_file` 读取该模板，再按模板结构填充实际分析结果
-- 不要随意调整章节顺序；没有数据的字段写“未获取”或“无异常”
-- 最终输出必须保持模板中的一级、二级标题和主要表格结构
+- `inspection_report_template.md` 是巡检 Markdown 报告的唯一骨架来源，必须固定章节/标题顺序
+- 固定章节/标题顺序，只允许在模板已有占位符所在位置填充内容
+- 不得新增、删除、改名、重排模板中已存在的固定章节或标题
+- 保留模板中现有一级、二级标题顺序，以及 Markdown 表格、callout、分隔线和内部备注块
+- 模板已有表格必须继续使用，不要改成纯段落、列表或新增自定义小节
+- 所有填入占位符的实例 ID、实例名称、节点 ID、时间、配置值、监控值都必须来自原始输入或采集结果原文
+- 分析结论、健康评分、风险等级可以新增，但它们属于派生内容，不得反向覆盖、替换或伪装成原始采集数据
+- 没有数据的字段写“未获取”或“无异常”
+- 无法确认时写“未获取”，不要估算、脑补或生成近似值
+- 所有双窗口判断只能填入模板现有占位符位置
+- 当主窗口 `time_range >= 7d` 时，必须显式区分“主窗口（用户请求范围）”与“最近 3 天辅助窗口”
+- 不允许用最近 `3d` 的数据覆盖主窗口数据，也不允许把主窗口数据改写成最近 `3d` 结论；两者都必须按原值引用并带窗口标签
 - `{{node_topology_summary}}`：写实例的节点拓扑摘要；`2` 节点突出对比，`3` 节点及以上突出排序
-- `{{cpu_node_breakdown}}`、`{{memory_node_breakdown}}`、`{{disk_node_breakdown}}`、`{{replication_node_breakdown}}`、`{{iops_network_node_breakdown}}`：必须输出 Markdown 表格，列固定为 `Node | Avg | Max | 风险级别 | 说明`，并按 `avg` 从高到低排序
+- `{{cpu_node_breakdown}}`、`{{memory_node_breakdown}}`、`{{disk_node_breakdown}}`、`{{replication_node_breakdown}}`、`{{iops_network_node_breakdown}}` 只允许填充模板已有位置；必须输出 Markdown 表格，列固定为 `Node | Avg | Max | 风险级别 | 说明`，并按 `avg` 从高到低排序
 - `{{qps_tps_scope_note}}`：明确写“该指标当前无节点拆分，不能用于定位单节点热点”
 
 如果保存为 Markdown，建议文件名与路径：
