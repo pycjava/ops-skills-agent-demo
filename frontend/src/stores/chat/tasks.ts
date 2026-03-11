@@ -1,7 +1,12 @@
 import type { Ref } from 'vue'
 
 import { readErrorMessage } from './helpers'
-import type { InspectionTask, InspectionTaskDraft, InspectionTaskRun } from './types'
+import type {
+  InspectionTask,
+  InspectionTaskDraft,
+  InspectionTaskFromConversationMessageResult,
+  InspectionTaskRun,
+} from './types'
 
 interface TaskDomainDeps {
   backendUrl: string
@@ -19,6 +24,10 @@ function replaceTask(tasks: Ref<InspectionTask[]>, task: InspectionTask) {
   }
 
   tasks.value = tasks.value.map((item, itemIndex) => (itemIndex === index ? task : item))
+}
+
+function removeTask(tasks: Ref<InspectionTask[]>, taskId: string) {
+  tasks.value = tasks.value.filter((item) => item.id !== taskId)
 }
 
 export function createTaskDomain({
@@ -113,6 +122,41 @@ export function createTaskDomain({
     return task
   }
 
+  async function createInspectionTaskFromConversationMessage(
+    conversationId: string,
+    message: string,
+  ): Promise<InspectionTaskFromConversationMessageResult | null> {
+    inspectionTaskError.value = null
+    const res = await fetch(`${backendUrl}/api/inspection-tasks/from-conversation-message`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        message,
+      }),
+    })
+
+    if (!res.ok) {
+      const message = await readErrorMessage(res, `HTTP ${res.status}`)
+      inspectionTaskError.value = message
+      return null
+    }
+
+    const result = (await res.json()) as InspectionTaskFromConversationMessageResult
+    if (result.status === 'created') {
+      replaceTask(inspectionTasks, result.task)
+      return result
+    }
+
+    if (result.status === 'error') {
+      inspectionTaskError.value = result.message
+    }
+
+    return result
+  }
+
   async function updateInspectionTask(
     taskId: string,
     payload: Partial<InspectionTaskDraft>,
@@ -135,6 +179,23 @@ export function createTaskDomain({
     const task = (await res.json()) as InspectionTask
     replaceTask(inspectionTasks, task)
     return task
+  }
+
+  async function deleteInspectionTask(taskId: string): Promise<boolean> {
+    inspectionTaskError.value = null
+    const res = await fetch(`${backendUrl}/api/inspection-tasks/${encodeURIComponent(taskId)}`, {
+      method: 'DELETE',
+    })
+
+    if (!res.ok) {
+      const message = await readErrorMessage(res, `HTTP ${res.status}`)
+      inspectionTaskError.value = message
+      return false
+    }
+
+    removeTask(inspectionTasks, taskId)
+    inspectionTaskRuns.value = inspectionTaskRuns.value.filter((run) => run.task_id !== taskId)
+    return true
   }
 
   async function triggerInspectionTask(taskId: string): Promise<InspectionTaskRun | null> {
@@ -162,8 +223,10 @@ export function createTaskDomain({
     fetchInspectionTasks,
     fetchInspectionTaskRuns,
     buildInspectionTaskDraft,
+    createInspectionTaskFromConversationMessage,
     createInspectionTask,
     updateInspectionTask,
+    deleteInspectionTask,
     triggerInspectionTask,
   }
 }

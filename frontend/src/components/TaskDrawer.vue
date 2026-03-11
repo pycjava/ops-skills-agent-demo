@@ -10,18 +10,22 @@ const props = defineProps<{
   tasks: InspectionTask[]
   runs: InspectionTaskRun[]
   draft: InspectionTaskDraft | null
+  draftNotice?: string | null
   activeTab: TaskDrawerTab
   isLoading: boolean
   isSaving: boolean
   error: string | null
+  canCreateDraft?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'change-tab', tab: TaskDrawerTab): void
+  (e: 'open-draft'): void
   (e: 'refresh'): void
   (e: 'trigger', taskId: string): void
   (e: 'toggle', taskId: string, enabled: boolean): void
+  (e: 'delete-task', taskId: string): void
   (e: 'open-conversation', conversationId: string): void
   (e: 'save-draft', draft: InspectionTaskDraft): void
 }>()
@@ -87,43 +91,58 @@ function handleSaveDraft() {
 <template>
   <div v-if="visible" class="task-drawer">
     <div class="task-drawer-head">
-      <div class="task-drawer-copy">
-        <h3 class="task-drawer-title">定时任务</h3>
-        <p class="task-drawer-subtitle">独立管理巡检任务和执行记录</p>
+      <div class="task-drawer-top">
+        <div class="task-drawer-copy">
+          <h3 class="task-drawer-title">定时任务</h3>
+          <p class="task-drawer-subtitle">独立管理巡检任务和执行记录</p>
+        </div>
+
+        <div class="task-drawer-actions">
+          <button
+            data-testid="task-open-draft"
+            class="task-head-btn ui-pill-btn"
+            type="button"
+            :disabled="!canCreateDraft"
+            @click="emit('open-draft')"
+          >
+            创建定时任务
+          </button>
+          <button class="task-head-btn ui-pill-btn" type="button" @click="emit('refresh')">
+            刷新
+          </button>
+          <button class="task-head-btn ui-pill-btn" type="button" @click="emit('close')">
+            关闭
+          </button>
+        </div>
       </div>
 
-      <div class="task-drawer-actions">
-        <button class="task-head-btn" type="button" @click="emit('refresh')">刷新</button>
-        <button class="task-head-btn" type="button" @click="emit('close')">关闭</button>
+      <div class="task-tabs ui-segmented-tabs">
+        <button
+          class="task-tab ui-segmented-tab"
+          :class="{ active: activeTab === 'tasks' }"
+          type="button"
+          @click="emit('change-tab', 'tasks')"
+        >
+          任务列表
+        </button>
+        <button
+          class="task-tab ui-segmented-tab"
+          :class="{ active: activeTab === 'runs' }"
+          type="button"
+          @click="emit('change-tab', 'runs')"
+        >
+          执行记录
+        </button>
+        <button
+          v-if="draft"
+          class="task-tab ui-segmented-tab"
+          :class="{ active: activeTab === 'draft' }"
+          type="button"
+          @click="emit('change-tab', 'draft')"
+        >
+          任务草稿
+        </button>
       </div>
-    </div>
-
-    <div class="task-tabs">
-      <button
-        class="task-tab"
-        :class="{ active: activeTab === 'tasks' }"
-        type="button"
-        @click="emit('change-tab', 'tasks')"
-      >
-        任务列表
-      </button>
-      <button
-        class="task-tab"
-        :class="{ active: activeTab === 'runs' }"
-        type="button"
-        @click="emit('change-tab', 'runs')"
-      >
-        执行记录
-      </button>
-      <button
-        v-if="draft"
-        class="task-tab"
-        :class="{ active: activeTab === 'draft' }"
-        type="button"
-        @click="emit('change-tab', 'draft')"
-      >
-        任务草稿
-      </button>
     </div>
 
     <div v-if="error" class="task-error">{{ error }}</div>
@@ -145,7 +164,7 @@ function handleSaveDraft() {
 
             <button
               :data-testid="`task-toggle-${task.id}`"
-              class="task-toggle-btn"
+              class="task-toggle-btn ui-pill-btn"
               type="button"
               @click="emit('toggle', task.id, !task.enabled)"
             >
@@ -156,11 +175,19 @@ function handleSaveDraft() {
           <div class="task-card-actions">
             <button
               :data-testid="`task-trigger-${task.id}`"
-              class="task-action-btn primary"
+              class="task-action-btn ui-pill-btn ui-pill-btn--primary"
               type="button"
               @click="emit('trigger', task.id)"
             >
               手动触发
+            </button>
+            <button
+              :data-testid="`task-delete-${task.id}`"
+              class="task-action-btn ui-pill-btn"
+              type="button"
+              @click="emit('delete-task', task.id)"
+            >
+              删除
             </button>
           </div>
         </article>
@@ -182,7 +209,7 @@ function handleSaveDraft() {
 
           <button
             v-if="run.conversation_id"
-            class="task-action-btn"
+            class="task-action-btn ui-pill-btn"
             type="button"
             @click="emit('open-conversation', run.conversation_id)"
           >
@@ -194,6 +221,8 @@ function handleSaveDraft() {
 
     <div v-else class="task-body">
       <div class="task-form-card">
+        <div v-if="draftNotice" class="task-draft-notice">{{ draftNotice }}</div>
+
         <label class="task-form-field">
           <span class="task-form-label">任务名称</span>
           <input
@@ -226,7 +255,7 @@ function handleSaveDraft() {
 
         <button
           data-testid="task-draft-save"
-          class="task-action-btn primary"
+          class="task-action-btn ui-pill-btn ui-pill-btn--primary"
           type="button"
           :disabled="!isDraftValid || isSaving"
           @click="handleSaveDraft"
@@ -243,12 +272,20 @@ function handleSaveDraft() {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
   padding: 18px;
   background: var(--card-strong);
 }
 
 .task-drawer-head {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: -18px -18px 0;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.task-drawer-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -268,40 +305,26 @@ function handleSaveDraft() {
 }
 
 .task-drawer-actions,
-.task-card-actions,
-.task-tabs {
+.task-card-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.task-head-btn,
-.task-tab,
-.task-action-btn,
-.task-toggle-btn {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
+.task-tabs {
+  width: fit-content;
+  max-width: 100%;
 }
 
-.task-head-btn,
-.task-tab,
-.task-toggle-btn {
-  padding: 8px 14px;
-}
-
-.task-tab.active {
-  background: rgba(139, 115, 255, 0.12);
-  color: var(--accent);
-  border-color: rgba(139, 115, 255, 0.28);
+.task-tab {
+  font-weight: 500;
 }
 
 .task-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  padding-top: 18px;
 }
 
 .task-card-list,
@@ -364,14 +387,18 @@ function handleSaveDraft() {
   font-size: 12px;
 }
 
-.task-action-btn {
-  padding: 10px 14px;
+.task-draft-notice {
+  padding: 12px 14px;
+  border: 1px solid rgba(179, 138, 89, 0.24);
+  border-radius: 14px;
+  background: rgba(179, 138, 89, 0.08);
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
-.task-action-btn.primary {
-  background: var(--text-strong);
-  border-color: transparent;
-  color: var(--card-strong);
+.task-action-btn {
+  align-self: flex-start;
 }
 
 .task-empty {

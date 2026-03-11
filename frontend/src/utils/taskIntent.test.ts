@@ -6,6 +6,7 @@ describe('taskIntent', () => {
   test('detects creating a scheduled task from the current conversation', () => {
     expect(isInspectionTaskIntent('把上述会话做成定时任务，每天 9 点执行')).toBe(true)
     expect(isInspectionTaskIntent('将当前巡检会话设成定时巡检')).toBe(true)
+    expect(isInspectionTaskIntent('创建定时任务，每天 9 点执行')).toBe(true)
     expect(isInspectionTaskIntent('继续分析这个实例')).toBe(false)
   })
 
@@ -16,6 +17,7 @@ describe('taskIntent', () => {
     expect(suggestCronFromTaskIntent('把这个会话设成定时任务，每天18:30执行')).toBe(
       '30 18 * * *',
     )
+    expect(suggestCronFromTaskIntent('创建定时任务，每周一 9 点执行')).toBe('0 9 * * 1')
     expect(suggestCronFromTaskIntent('把这个会话做成定时任务')).toBeNull()
   })
 })

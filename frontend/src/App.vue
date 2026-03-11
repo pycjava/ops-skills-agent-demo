@@ -22,7 +22,7 @@ import {
   buildMysqlSelectionSystemHint,
   isMysqlInspectionIntent,
 } from './utils/mysqlInspection'
-import { isInspectionTaskIntent, suggestCronFromTaskIntent } from './utils/taskIntent'
+import { suggestCronFromTaskIntent } from './utils/taskIntent'
 
 const chatStore = useChatStore()
 const chatContainer = ref<HTMLElement | null>(null)
@@ -39,6 +39,7 @@ const attachmentBarRef = ref<{ triggerFileSelect: () => void } | null>(null)
 const showTaskDrawer = ref(false)
 const taskDrawerTab = ref<'tasks' | 'runs' | 'draft'>('tasks')
 const inspectionTaskDraft = ref<InspectionTaskDraft | null>(null)
+const inspectionTaskDraftNotice = ref('')
 const isTaskDraftSaving = ref(false)
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
@@ -224,24 +225,32 @@ function closeTaskDrawer() {
   showTaskDrawer.value = false
 }
 
-async function openTaskDraftFromConversation(suggestedCron?: string | null) {
-  if (!chatStore.currentConversationId) return
+async function openTaskDraftFromConversation(options?: {
+  suggestedCron?: string | null
+  notice?: string
+}) {
+  if (!chatStore.currentConversationId) return false
 
+  chatStore.inspectionTaskError = null
   const draft = await chatStore.buildInspectionTaskDraft(chatStore.currentConversationId)
   if (!draft) {
+    inspectionTaskDraftNotice.value = ''
     showTaskDrawer.value = true
     taskDrawerTab.value = 'tasks'
-    return
+    return false
   }
 
-  inspectionTaskDraft.value = {
-    ...draft,
-    cron_expr: suggestedCron || draft.cron_expr,
+  if (options?.suggestedCron?.trim()) {
+    draft.cron_expr = options.suggestedCron.trim()
   }
+
+  inspectionTaskDraft.value = draft
+  inspectionTaskDraftNotice.value = options?.notice || ''
   closeInspector()
   showTaskDrawer.value = true
   taskDrawerTab.value = 'draft'
   await refreshTaskDrawer()
+  return true
 }
 
 async function handleTaskDraftSave(draft: InspectionTaskDraft) {
@@ -275,6 +284,12 @@ async function handleTaskToggle(taskId: string, enabled: boolean) {
   await refreshTaskDrawer()
 }
 
+async function handleTaskDelete(taskId: string) {
+  const deleted = await chatStore.deleteInspectionTask(taskId)
+  if (!deleted) return
+  await refreshTaskDrawer()
+}
+
 async function handleTaskConversationOpen(conversationId: string) {
   await chatStore.switchConversation(conversationId)
   closeTaskDrawer()
@@ -289,15 +304,43 @@ async function handleComposerSend(displayContent: string, sendContent?: string) 
   const normalizedDisplayContent = displayContent.trim()
   const normalizedSendContent = (sendContent || displayContent).trim()
 
-  if (
-    chatStore.currentConversationId &&
-    isInspectionTaskIntent(normalizedDisplayContent)
-  ) {
-    await openTaskDraftFromConversation(
-      suggestCronFromTaskIntent(normalizedDisplayContent),
+  if (chatStore.currentConversationId) {
+    const taskResult = await chatStore.createInspectionTaskFromConversationMessage(
+      chatStore.currentConversationId,
+      normalizedDisplayContent,
     )
-    clearInput()
-    return false
+
+    if (taskResult?.status === 'created') {
+      inspectionTaskDraft.value = null
+      inspectionTaskDraftNotice.value = ''
+      closeInspector()
+      showTaskDrawer.value = true
+      taskDrawerTab.value = 'tasks'
+      clearInput()
+      await refreshTaskDrawer()
+      return false
+    }
+
+    if (taskResult?.status === 'error' || (!taskResult && chatStore.inspectionTaskError)) {
+      const openedDraft = await openTaskDraftFromConversation({
+        suggestedCron: suggestCronFromTaskIntent(normalizedDisplayContent),
+        notice:
+          taskResult?.message ||
+          chatStore.inspectionTaskError ||
+          '未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。',
+      })
+
+      if (openedDraft) {
+        clearInput()
+        return false
+      }
+
+      closeInspector()
+      showTaskDrawer.value = true
+      taskDrawerTab.value = 'tasks'
+      await refreshTaskDrawer()
+      return false
+    }
   }
 
   if (
@@ -636,7 +679,7 @@ async function handleConversationTitleSave(title: string) {
             <span class="chat-kicker">{{ currentConversationSubtitle }}</span>
             <span class="agent-chip">{{ activeAgentLabel }}</span>
           </div>
-          <div class="chat-title-row">
+          <div class="chat-title-row chat-title-row-stable chat-title-row-actions-inline">
             <ConversationTitleEditor
               v-if="chatStore.currentConversationId"
               :title="currentConversationTitle"
@@ -647,14 +690,6 @@ async function handleConversationTitleSave(title: string) {
             />
             <h2 v-else class="chat-title">{{ currentConversationTitle }}</h2>
 
-            <button
-              v-if="chatStore.currentConversationId"
-              class="chat-header-btn"
-              type="button"
-              @click="openTaskDraftFromConversation()"
-            >
-              创建定时任务
-            </button>
           </div>
           <div v-if="currentConversationTaskOrigin" class="chat-task-origin">
             {{ currentConversationTaskOrigin }}
@@ -774,21 +809,25 @@ async function handleConversationTitleSave(title: string) {
 
       <transition name="drawer-fade">
         <div v-if="showTaskDrawer" class="task-overlay" @click.self="closeTaskDrawer">
-          <aside class="task-drawer-shell">
+          <aside class="task-drawer-shell ui-panel-shell">
             <TaskDrawer
               :visible="showTaskDrawer"
               :tasks="chatStore.inspectionTasks"
               :runs="chatStore.inspectionTaskRuns"
               :draft="inspectionTaskDraft"
+              :draft-notice="inspectionTaskDraftNotice"
               :active-tab="taskDrawerTab"
               :is-loading="chatStore.isInspectionTaskLoading"
               :is-saving="isTaskDraftSaving"
               :error="chatStore.inspectionTaskError"
+              :can-create-draft="Boolean(chatStore.currentConversationId)"
               @close="closeTaskDrawer"
               @change-tab="taskDrawerTab = $event"
+              @open-draft="openTaskDraftFromConversation()"
               @refresh="refreshTaskDrawer"
               @trigger="handleTaskTrigger"
               @toggle="handleTaskToggle"
+              @delete-task="handleTaskDelete"
               @open-conversation="handleTaskConversationOpen"
               @save-draft="handleTaskDraftSave"
             />
@@ -798,25 +837,25 @@ async function handleConversationTitleSave(title: string) {
 
       <transition name="drawer-fade">
         <div v-if="showInspector" class="inspector-overlay" @click.self="closeInspector">
-          <aside class="inspector-drawer">
+          <aside class="inspector-drawer ui-panel-shell">
             <div class="inspector-head">
-              <div class="inspector-tabs">
+              <div class="inspector-tabs ui-segmented-tabs">
                 <button
-                  class="inspector-tab"
+                  class="inspector-tab ui-segmented-tab"
                   :class="{ active: rightPanelTab === 'skills' }"
                   @click="rightPanelTab = 'skills'"
                 >
                   Skills
                 </button>
                 <button
-                  class="inspector-tab"
+                  class="inspector-tab ui-segmented-tab"
                   :class="{ active: rightPanelTab === 'mcp' }"
                   @click="rightPanelTab = 'mcp'"
                 >
                   MCP
                 </button>
                 <button
-                  class="inspector-tab"
+                  class="inspector-tab ui-segmented-tab"
                   :class="{ active: rightPanelTab === 'memory' }"
                   @click="rightPanelTab = 'memory'"
                 >
@@ -932,6 +971,76 @@ button,
 textarea,
 input {
   font: inherit;
+}
+
+.ui-pill-btn {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease;
+  white-space: nowrap;
+}
+
+.ui-pill-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--card-strong);
+  color: var(--text-strong);
+}
+
+.ui-pill-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ui-pill-btn--primary {
+  border-color: transparent;
+  background: var(--text-strong);
+  color: var(--card-strong);
+}
+
+.ui-panel-shell {
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--card-strong);
+  box-shadow: var(--shadow-soft);
+}
+
+.ui-segmented-tabs {
+  display: inline-flex;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+}
+
+.ui-segmented-tab {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.ui-segmented-tab.active {
+  background: var(--card-strong);
+  color: var(--text-strong);
+  box-shadow: 0 4px 12px rgba(86, 73, 51, 0.08);
 }
 
 .app-shell {
@@ -1406,6 +1515,11 @@ input {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
+}
+
+.chat-title-row-actions-inline {
+  align-items: center;
 }
 
 .chat-meta {
@@ -1441,12 +1555,6 @@ input {
 
 .chat-header-btn {
   flex-shrink: 0;
-  padding: 10px 16px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--text-strong);
-  cursor: pointer;
 }
 
 .chat-task-origin {
@@ -1582,24 +1690,12 @@ input {
 
 .task-drawer-shell {
   width: min(460px, 100%);
-  height: 100%;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 24px;
-  background: var(--card-strong);
-  box-shadow: var(--shadow-soft);
 }
 
 .inspector-drawer {
   width: min(420px, 100%);
-  height: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 24px;
-  background: var(--card-strong);
-  box-shadow: var(--shadow-soft);
 }
 
 .inspector-head {
@@ -1609,29 +1705,6 @@ input {
   gap: 12px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--border);
-}
-
-.inspector-tabs {
-  display: inline-flex;
-  gap: 8px;
-  padding: 4px;
-  border-radius: 999px;
-  background: var(--bg-soft);
-}
-
-.inspector-tab {
-  padding: 8px 14px;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.inspector-tab.active {
-  background: var(--card-strong);
-  color: var(--text-strong);
-  box-shadow: 0 4px 12px rgba(86, 73, 51, 0.08);
 }
 
 .inspector-body {
@@ -1694,6 +1767,15 @@ input {
   .composer-footer {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .chat-title-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chat-header-btn {
+    align-self: flex-start;
   }
 
   .composer-actions {

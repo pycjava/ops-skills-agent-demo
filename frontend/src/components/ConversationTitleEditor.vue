@@ -89,11 +89,11 @@ function handleKeyDown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="conversation-title-editor">
-    <div v-if="!isEditing" class="title-display-row">
+  <div class="conversation-title-editor title-layout-stable">
+    <div v-if="!isEditing" class="title-display-row title-row-stable">
       <h2 class="chat-title">{{ title }}</h2>
       <button
-        class="title-action-btn"
+        class="title-action-btn title-action-btn-stable ui-pill-btn"
         type="button"
         data-testid="edit-title-btn"
         @click="startEditing"
@@ -102,7 +102,7 @@ function handleKeyDown(event: KeyboardEvent) {
       </button>
     </div>
 
-    <div v-else class="title-edit-row">
+    <div v-else class="title-edit-row title-row-stable">
       <input
         ref="inputRef"
         v-model="draftTitle"
@@ -114,7 +114,7 @@ function handleKeyDown(event: KeyboardEvent) {
       />
       <div class="title-actions">
         <button
-          class="title-action-btn primary"
+          class="title-action-btn title-action-btn-stable ui-pill-btn ui-pill-btn--primary"
           type="button"
           data-testid="save-title-btn"
           :disabled="isSaveDisabled"
@@ -123,7 +123,7 @@ function handleKeyDown(event: KeyboardEvent) {
           {{ saving ? '保存中...' : '保存' }}
         </button>
         <button
-          class="title-action-btn"
+          class="title-action-btn title-action-btn-stable ui-pill-btn"
           type="button"
           data-testid="cancel-title-btn"
           :disabled="saving"
@@ -143,8 +143,12 @@ function handleKeyDown(event: KeyboardEvent) {
 <style scoped>
 .conversation-title-editor {
   display: flex;
+  flex-basis: auto;
   flex-direction: column;
+  flex-grow: 1;
+  flex-shrink: 1;
   gap: 10px;
+  min-width: 0;
 }
 
 .title-display-row,
@@ -152,6 +156,7 @@ function handleKeyDown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .title-display-row {
@@ -159,12 +164,18 @@ function handleKeyDown(event: KeyboardEvent) {
 }
 
 .chat-title {
+  flex-basis: auto;
+  flex-grow: 1;
+  flex-shrink: 1;
   margin: 0;
   min-width: 0;
   color: var(--text-strong);
   font-size: clamp(28px, 4vw, 36px);
   font-weight: 700;
   letter-spacing: -0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .title-input {
@@ -189,37 +200,11 @@ function handleKeyDown(event: KeyboardEvent) {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .title-action-btn {
-  height: 36px;
-  padding: 0 14px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease,
-    color 0.15s ease;
-}
-
-.title-action-btn:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background: var(--card-strong);
-  color: var(--text-strong);
-}
-
-.title-action-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.title-action-btn.primary {
-  border-color: transparent;
-  background: var(--text-strong);
-  color: var(--card-strong);
+  flex-shrink: 0;
 }
 
 .title-error {

@@ -77,6 +77,19 @@ export interface InspectionTask extends InspectionTaskDraft {
   updated_at: string | null
 }
 
+export type InspectionTaskFromConversationMessageResult =
+  | {
+      status: 'created'
+      task: InspectionTask
+    }
+  | {
+      status: 'not_task_creation'
+    }
+  | {
+      status: 'error'
+      message: string
+    }
+
 export interface InspectionTaskRun {
   id: string
   task_id: string

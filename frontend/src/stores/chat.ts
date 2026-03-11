@@ -284,8 +284,11 @@ export const useChatStore = defineStore('chat', () => {
     fetchInspectionTasks: taskDomain.fetchInspectionTasks,
     fetchInspectionTaskRuns: taskDomain.fetchInspectionTaskRuns,
     buildInspectionTaskDraft: taskDomain.buildInspectionTaskDraft,
+    createInspectionTaskFromConversationMessage:
+      taskDomain.createInspectionTaskFromConversationMessage,
     createInspectionTask: taskDomain.createInspectionTask,
     updateInspectionTask: taskDomain.updateInspectionTask,
+    deleteInspectionTask: taskDomain.deleteInspectionTask,
     triggerInspectionTask: taskDomain.triggerInspectionTask,
     fetchSkills,
     resolveCloudRequestContext,

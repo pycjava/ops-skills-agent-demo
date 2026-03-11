@@ -29,7 +29,7 @@ async def test_create_draft_route_extracts_conversation_prompt(session_factory):
             Message(
                 conversation_id=conversation.id,
                 role="user",
-                content="请巡检 peets-prod-member-mysql 最近 30 天状态",
+                content="Please inspect peets-prod-member-mysql for the last 30 days",
                 type="text",
                 agent_id="dba",
             )
@@ -47,7 +47,7 @@ async def test_create_draft_route_extracts_conversation_prompt(session_factory):
     payload = response.json()
     assert payload["source_conversation_id"] == conversation.id
     assert payload["name"] == "Peets Weekly Inspection"
-    assert payload["prompt_template"] == "请巡检 peets-prod-member-mysql 最近 30 天状态"
+    assert payload["prompt_template"] == "Please inspect peets-prod-member-mysql for the last 30 days"
 
 
 def test_create_and_list_tasks_round_trip(session_factory):
@@ -59,7 +59,7 @@ def test_create_and_list_tasks_round_trip(session_factory):
             "name": "Peets Daily Inspection",
             "agent_id": "dba",
             "skill_id": "volcengine-rds-health-analyzer",
-            "prompt_template": "请巡检 peets-prod-pos-mysql 最近 7 天状态",
+            "prompt_template": "Please inspect peets-prod-pos-mysql for the last 7 days",
             "target_payload": {"instance_name": "peets-prod-pos-mysql"},
             "cron_expr": "0 9 * * *",
             "enabled": True,
@@ -81,6 +81,123 @@ def test_create_and_list_tasks_round_trip(session_factory):
     assert payload[0]["last_status"] == "idle"
 
 
+def test_create_from_conversation_message_route_returns_created_task(
+    session_factory,
+    monkeypatch,
+):
+    client = create_test_client(session_factory)
+
+    async def fake_create_from_message(conversation_id, message, *, session_factory, now=None):
+        assert conversation_id == "conv-1"
+        assert message == "Generate a scheduled task and run it every day at 09:00"
+        assert now == datetime(2026, 3, 11, 8, 0)
+        return {
+            "status": "created",
+            "task": {
+                "id": "task-1",
+                "name": "Peets Daily Inspection",
+                "source_conversation_id": conversation_id,
+                "agent_id": "dba",
+                "skill_id": "volcengine-rds-health-analyzer",
+                "prompt_template": "Inspect peets-prod-pos-mysql for slow queries",
+                "target_payload": {"instance_name": "peets-prod-pos-mysql"},
+                "schedule_type": "cron",
+                "cron_expr": "0 9 * * *",
+                "enabled": True,
+                "last_run_at": None,
+                "next_run_at": "2026-03-11T09:00:00.000",
+                "last_status": "idle",
+                "created_at": "2026-03-11T08:00:00.000",
+                "updated_at": "2026-03-11T08:00:00.000",
+            },
+        }
+
+    monkeypatch.setattr(
+        inspection_tasks_router,
+        "create_inspection_task_from_conversation_message",
+        fake_create_from_message,
+    )
+
+    response = client.post(
+        "/api/inspection-tasks/from-conversation-message",
+        json={
+            "conversation_id": "conv-1",
+            "message": "Generate a scheduled task and run it every day at 09:00",
+            "now": "2026-03-11T08:00:00",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "created"
+    assert response.json()["task"]["id"] == "task-1"
+
+
+def test_create_from_conversation_message_route_returns_not_task_creation(
+    session_factory,
+    monkeypatch,
+):
+    client = create_test_client(session_factory)
+
+    async def fake_create_from_message(conversation_id, message, *, session_factory, now=None):
+        assert conversation_id == "conv-1"
+        assert message == "Can you summarize the latest findings?"
+        assert now is None
+        return {"status": "not_task_creation"}
+
+    monkeypatch.setattr(
+        inspection_tasks_router,
+        "create_inspection_task_from_conversation_message",
+        fake_create_from_message,
+    )
+
+    response = client.post(
+        "/api/inspection-tasks/from-conversation-message",
+        json={
+            "conversation_id": "conv-1",
+            "message": "Can you summarize the latest findings?",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "not_task_creation"}
+
+
+def test_create_from_conversation_message_route_returns_error_status(
+    session_factory,
+    monkeypatch,
+):
+    client = create_test_client(session_factory)
+
+    async def fake_create_from_message(conversation_id, message, *, session_factory, now=None):
+        assert conversation_id == "conv-1"
+        assert message == "Create a scheduled task for this conversation"
+        assert now is None
+        return {
+            "status": "error",
+            "message": "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+        }
+
+    monkeypatch.setattr(
+        inspection_tasks_router,
+        "create_inspection_task_from_conversation_message",
+        fake_create_from_message,
+    )
+
+    response = client.post(
+        "/api/inspection-tasks/from-conversation-message",
+        json={
+            "conversation_id": "conv-1",
+            "message": "Create a scheduled task for this conversation",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "error",
+        "message": "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+    }
+
+
 def test_trigger_route_returns_created_run(session_factory, monkeypatch):
     client = create_test_client(session_factory)
 
@@ -90,7 +207,7 @@ def test_trigger_route_returns_created_run(session_factory, monkeypatch):
             "name": "Peets Daily Inspection",
             "agent_id": "dba",
             "skill_id": "volcengine-rds-health-analyzer",
-            "prompt_template": "请巡检 peets-prod-pos-mysql 最近 7 天状态",
+            "prompt_template": "Please inspect peets-prod-pos-mysql for the last 7 days",
             "target_payload": {"instance_name": "peets-prod-pos-mysql"},
             "cron_expr": "0 9 * * *",
             "enabled": True,
@@ -132,3 +249,30 @@ def test_trigger_route_returns_created_run(session_factory, monkeypatch):
     assert payload["task_id"] == created["id"]
     assert payload["trigger_type"] == "manual"
     assert payload["status"] == "running"
+
+
+def test_delete_task_route_deletes_task(session_factory):
+    client = create_test_client(session_factory)
+
+    created = client.post(
+        "/api/inspection-tasks",
+        json={
+            "name": "Peets Daily Inspection",
+            "agent_id": "dba",
+            "skill_id": "volcengine-rds-health-analyzer",
+            "prompt_template": "Please inspect peets-prod-pos-mysql for the last 7 days",
+            "target_payload": {"instance_name": "peets-prod-pos-mysql"},
+            "cron_expr": "0 9 * * *",
+            "enabled": True,
+            "now": "2026-03-11T08:00:00",
+        },
+    ).json()
+
+    response = client.delete(f"/api/inspection-tasks/{created['id']}")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted", "task_id": created["id"]}
+
+    list_response = client.get("/api/inspection-tasks")
+    assert list_response.status_code == 200
+    assert list_response.json() == []

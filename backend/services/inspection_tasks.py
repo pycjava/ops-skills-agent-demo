@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable
 
@@ -11,14 +12,55 @@ from agent import run_agent
 from services.agent_event_state import AgentEventState
 from services.conversation_messages import save_message
 from services.conversation_state import create_conversation, get_conversation, resolve_agent_id
+from services.inspection_task_llm import (
+    TaskConversationSummary,
+    TaskCreationIntentResult,
+    analyze_task_creation_intent,
+    summarize_task_template_from_conversation,
+)
 from db.session import AsyncSessionLocal
 from models import Conversation, InspectionTask, InspectionTaskRun, Message
 
 
 SessionFactory = async_sessionmaker[AsyncSession]
 AgentRunner = Callable[..., Awaitable[None]]
+TaskIntentAnalyzer = Callable[[str], Awaitable[TaskCreationIntentResult]]
+ConversationSummarizer = Callable[
+    [Conversation, list[Message]],
+    Awaitable[TaskConversationSummary],
+]
+TASK_KEYWORDS_EN = ("scheduledtask", "scheduleinspection", "inspectiontask")
+TASK_ACTION_KEYWORDS_EN = (
+    "create",
+    "generate",
+    "add",
+    "setup",
+    "schedule",
+    "configure",
+)
+CONVERSATION_REFERENCE_KEYWORDS_EN = (
+    "thisconversation",
+    "currentconversation",
+    "historyconversation",
+    "historicalconversation",
+)
+QUESTION_HINT_KEYWORDS_EN = ("how", "what", "why", "explain", "introduce")
 
 TASK_NAME_MAX_LENGTH = 200
+TASK_KEYWORDS = ("定时任务", "定时巡检", "定时执行")
+TASK_ACTION_KEYWORDS = ("创建", "新建", "生成", "做成", "设成", "设置成", "配置", "添加", "安排")
+CONVERSATION_REFERENCE_KEYWORDS = (
+    "上述会话",
+    "当前会话",
+    "这个会话",
+    "这段会话",
+    "历史会话",
+    "该会话",
+    "本会话",
+    "巡检会话",
+    "当前巡检",
+)
+QUESTION_HINT_KEYWORDS = ("怎么", "如何", "为何", "为什么", "是什么", "介绍", "解释")
 
 
 def _normalize_task_name(name: str) -> str:
@@ -28,6 +70,93 @@ def _normalize_task_name(name: str) -> str:
     if len(normalized) > TASK_NAME_MAX_LENGTH:
         raise ValueError(f"name must be at most {TASK_NAME_MAX_LENGTH} characters")
     return normalized
+
+
+def _normalize_task_intent_text(value: str) -> str:
+    return re.sub(r"\s+", "", str(value or "")).strip().lower()
+
+
+def _includes_any(value: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in value for keyword in keywords)
+
+
+def _has_schedule_hint(value: str) -> bool:
+    return bool(
+        "每天" in value
+        or "每周" in value
+        or "每月" in value
+        or "工作日" in value
+        or "cron" in value
+        or re.search(r"\d{1,2}(?:[:：]\d{1,2}|[点时])", value)
+    )
+
+
+def _is_task_configuration_message(value: str) -> bool:
+    normalized = _normalize_task_intent_text(value)
+    if not normalized:
+        return False
+
+    has_task_keyword = _includes_any(normalized, TASK_KEYWORDS)
+    if not has_task_keyword:
+        return False
+
+    has_action_keyword = _includes_any(normalized, TASK_ACTION_KEYWORDS)
+    has_conversation_reference = _includes_any(normalized, CONVERSATION_REFERENCE_KEYWORDS)
+    has_schedule_hint = _has_schedule_hint(normalized)
+
+    if not has_action_keyword and not has_conversation_reference and not has_schedule_hint:
+        return False
+
+    if (
+        not has_conversation_reference
+        and not has_schedule_hint
+        and _includes_any(normalized, QUESTION_HINT_KEYWORDS)
+    ):
+        return False
+
+    return True
+
+
+def _is_task_configuration_message_en(value: str) -> bool:
+    normalized = _normalize_task_intent_text(value)
+    if not normalized:
+        return False
+
+    has_task_keyword = _includes_any(normalized, TASK_KEYWORDS_EN)
+    if not has_task_keyword:
+        return False
+
+    has_action_keyword = _includes_any(normalized, TASK_ACTION_KEYWORDS_EN)
+    has_conversation_reference = _includes_any(
+        normalized,
+        CONVERSATION_REFERENCE_KEYWORDS_EN,
+    )
+    has_schedule_hint = bool(
+        "cron" in normalized
+        or "everyday" in normalized
+        or "everyweek" in normalized
+        or "everymonth" in normalized
+        or "daily" in normalized
+        or "weekly" in normalized
+        or "monthly" in normalized
+        or re.search(r"\d{1,2}:\d{2}", normalized)
+    )
+
+    if not has_action_keyword and not has_conversation_reference and not has_schedule_hint:
+        return False
+
+    if (
+        not has_conversation_reference
+        and not has_schedule_hint
+        and _includes_any(normalized, QUESTION_HINT_KEYWORDS_EN)
+    ):
+        return False
+
+    return True
+
+
+def _is_task_configuration_message_any_language(value: str) -> bool:
+    return _is_task_configuration_message(value) or _is_task_configuration_message_en(value)
 
 
 def _normalize_cron_expr(cron_expr: str) -> str:
@@ -117,10 +246,21 @@ async def build_inspection_task_draft(
             )
             .order_by(Message.created_at.desc())
         )
-        latest_user_message = result.scalars().first()
+        user_messages = list(result.scalars().all())
 
-    if latest_user_message is None:
+    if not user_messages:
         raise LookupError("conversation has no user message to template")
+
+    latest_user_message = next(
+        (
+            message
+            for message in user_messages
+            if not _is_task_configuration_message_any_language(message.content)
+        ),
+        None,
+    )
+    if latest_user_message is None:
+        raise LookupError("conversation has no inspection message to template")
 
     return {
         "source_conversation_id": conversation.id,
@@ -132,6 +272,96 @@ async def build_inspection_task_draft(
         "schedule_type": "cron",
         "cron_expr": "0 9 * * *",
         "enabled": True,
+    }
+
+
+async def _load_conversation_messages(
+    conversation_id: str,
+    *,
+    session_factory: SessionFactory,
+) -> tuple[Conversation, list[Message]]:
+    async with session_factory() as session:
+        conversation = await get_conversation(session, conversation_id)
+        if conversation is None:
+            raise LookupError("conversation not found")
+
+        result = await session.execute(
+            select(Message)
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.type == "text",
+            )
+            .order_by(Message.created_at.asc())
+        )
+        messages = list(result.scalars().all())
+
+    return conversation, messages
+
+
+def _filter_task_summary_messages(messages: list[Message]) -> list[Message]:
+    filtered_messages: list[Message] = []
+
+    for message in messages:
+        if message.role == "user" and _is_task_configuration_message_any_language(message.content):
+            continue
+
+        content = (message.content or "").strip()
+        if not content:
+            continue
+
+        filtered_messages.append(message)
+
+    return filtered_messages
+
+
+async def create_inspection_task_from_conversation_message(
+    conversation_id: str,
+    message: str,
+    *,
+    session_factory: SessionFactory = AsyncSessionLocal,
+    intent_analyzer: TaskIntentAnalyzer = analyze_task_creation_intent,
+    conversation_summarizer: ConversationSummarizer = summarize_task_template_from_conversation,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    normalized_message = str(message or "").strip()
+    if not normalized_message:
+        raise ValueError("message is required")
+
+    intent = await intent_analyzer(normalized_message)
+    if not intent.is_task_creation:
+        return {"status": "not_task_creation"}
+
+    if not intent.cron_expr:
+        return {
+            "status": "error",
+            "message": intent.error_message
+            or "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+        }
+
+    conversation, messages = await _load_conversation_messages(
+        conversation_id,
+        session_factory=session_factory,
+    )
+    filtered_messages = _filter_task_summary_messages(messages)
+    if not filtered_messages:
+        raise LookupError("conversation has no inspection message to template")
+
+    summary = await conversation_summarizer(conversation, filtered_messages)
+    task = await create_inspection_task(
+        name=(summary.name or "").strip() or conversation.title,
+        source_conversation_id=conversation.id,
+        agent_id=conversation.agent_id,
+        skill_id=summary.skill_id,
+        prompt_template=summary.prompt_template,
+        target_payload=summary.target_payload,
+        cron_expr=intent.cron_expr,
+        enabled=True,
+        now=now,
+        session_factory=session_factory,
+    )
+    return {
+        "status": "created",
+        "task": task.to_dict(),
     }
 
 
@@ -255,6 +485,20 @@ async def update_inspection_task(
         await session.commit()
         await session.refresh(task)
         return task
+
+
+async def delete_inspection_task(
+    task_id: str,
+    *,
+    session_factory: SessionFactory = AsyncSessionLocal,
+) -> None:
+    async with session_factory() as session:
+        task = await session.get(InspectionTask, task_id)
+        if task is None:
+            raise LookupError("inspection task not found")
+
+        await session.delete(task)
+        await session.commit()
 
 
 async def execute_inspection_task(

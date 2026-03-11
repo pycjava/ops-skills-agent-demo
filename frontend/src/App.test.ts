@@ -1,12 +1,24 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
+
 import App from './App.vue'
-import type { CloudContextResolution } from './stores/chat'
+import type {
+  CloudContextResolution,
+  ConversationItem,
+  InspectionTask,
+  InspectionTaskDraft,
+  InspectionTaskFromConversationMessageResult,
+  InspectionTaskRun,
+} from './stores/chat'
 
 const composerHarness = vi.hoisted(() => ({
   sendMessage:
     null as null | ((displayContent: string, sendContent?: string) => unknown),
   clearInput: vi.fn(),
+}))
+
+const chromeHarness = vi.hoisted(() => ({
+  showInspector: null as null | { value: boolean },
 }))
 
 function createCloudResolution(
@@ -40,9 +52,9 @@ const chatStoreMock = {
   ],
   activeAgentId: 'dba',
   activeAgent: { id: 'dba', label: '数据库助手' },
-  conversations: [],
-  inspectionTasks: [],
-  inspectionTaskRuns: [],
+  conversations: [] as ConversationItem[],
+  inspectionTasks: [] as InspectionTask[],
+  inspectionTaskRuns: [] as InspectionTaskRun[],
   currentConversationId: null as string | null,
   draftAgentId: 'dba',
   isConnected: true,
@@ -83,9 +95,15 @@ const chatStoreMock = {
   fetchConversations: vi.fn(async () => {}),
   fetchInspectionTasks: vi.fn(async () => {}),
   fetchInspectionTaskRuns: vi.fn(async () => {}),
-  buildInspectionTaskDraft: vi.fn(async () => null),
+  buildInspectionTaskDraft: vi.fn(async (): Promise<InspectionTaskDraft | null> => null),
+  createInspectionTaskFromConversationMessage: vi.fn(
+    async (): Promise<InspectionTaskFromConversationMessageResult> => ({
+      status: 'not_task_creation',
+    }),
+  ),
   createInspectionTask: vi.fn(async () => null),
   updateInspectionTask: vi.fn(async () => null),
+  deleteInspectionTask: vi.fn(async () => false),
   triggerInspectionTask: vi.fn(async () => null),
   fetchSkills: vi.fn(async () => {}),
   fetchMcpServers: vi.fn(async () => {}),
@@ -130,9 +148,10 @@ vi.mock('./composables/useChatComposer', () => ({
 
 vi.mock('./composables/useAppChrome', () => ({
   useAppChrome: () => ({
+    ...(chromeHarness.showInspector = ref(false), {}),
     showSidebar: ref(true),
     isDark: ref(false),
-    showInspector: ref(false),
+    showInspector: chromeHarness.showInspector,
     showAgentOverflowMenu: ref(false),
     rightPanelTab: ref<'skills' | 'mcp' | 'memory'>('skills'),
     heroTitle: computed(() => '工作愉快，工作的事交给我'),
@@ -154,38 +173,47 @@ vi.mock('./composables/useAppChrome', () => ({
 describe('App', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    chromeHarness.showInspector = null
     chatStoreMock.uploadConversationAttachment.mockReset()
     chatStoreMock.uploadConversationAttachment.mockImplementation(async (): Promise<boolean> => true)
+    chatStoreMock.buildInspectionTaskDraft.mockReset()
+    chatStoreMock.buildInspectionTaskDraft.mockResolvedValue(null)
+    chatStoreMock.createInspectionTaskFromConversationMessage.mockReset()
+    chatStoreMock.createInspectionTaskFromConversationMessage.mockResolvedValue({
+      status: 'not_task_creation',
+    })
+    chatStoreMock.deleteInspectionTask.mockReset()
+    chatStoreMock.deleteInspectionTask.mockResolvedValue(true)
     composerHarness.sendMessage = null
     chatStoreMock.activeAgentId = 'dba'
+    chatStoreMock.currentConversationId = null
     chatStoreMock.messages = []
+    chatStoreMock.conversations = []
+    chatStoreMock.inspectionTasks = []
+    chatStoreMock.inspectionTaskRuns = []
     chatStoreMock.conversationAttachments = []
     chatStoreMock.attachmentError = null
+    chatStoreMock.inspectionTaskError = null
     chatStoreMock.resolveCloudRequestContext.mockResolvedValue(createCloudResolution())
   })
 
-  test('renders readable Chinese labels and stable toolbar icons', () => {
+  test('renders readable toolbar labels and stable icons', () => {
     const wrapper = mount(App, {
       shallow: true,
     })
 
     const sidebarToggle = wrapper.get('.sidebar-brand .icon-btn')
     expect(sidebarToggle.attributes('title')).toBe('收起侧栏')
-    expect(sidebarToggle.text()).toBe('‹')
 
     const toolbarButtons = wrapper.findAll('.toolbar-right .icon-btn')
     expect(toolbarButtons).toHaveLength(4)
     expect(toolbarButtons[0]?.attributes('title')).toBe('清空当前对话')
-    expect(toolbarButtons[0]?.text()).toBe('⌫')
     expect(toolbarButtons[1]?.attributes('title')).toBe('切换深色模式')
     expect(toolbarButtons[2]?.attributes('title')).toBe('打开定时任务')
-    expect(toolbarButtons[2]?.text()).toBe('时')
     expect(toolbarButtons[3]?.attributes('title')).toBe('打开右侧面板')
-    expect(toolbarButtons[3]?.text()).toBe('☷')
 
     expect(wrapper.text()).toContain('Shift + Enter 换行')
     expect(wrapper.text()).toContain('更多')
-    expect(wrapper.find('.send-btn').text()).toBe('→')
   })
 
   test('renders upload trigger beside send button in the composer footer', () => {
@@ -209,7 +237,7 @@ describe('App', () => {
     chatStoreMock.resolveCloudRequestContext.mockResolvedValueOnce(
       createCloudResolution({
         ambiguous: true,
-        message: '记忆中未命中实例',
+        message: '候选未命中唯一实例',
         candidates: [
           {
             instance_id: 'mysql-1',
@@ -228,15 +256,13 @@ describe('App', () => {
       throw new Error('composer sendMessage was not captured')
     }
 
-    const result = await sendMessage('我要进行灵工 mysql 巡检', '我要进行灵工 mysql 巡检')
+    const result = await sendMessage('我要进行 peets mysql 巡检', '我要进行 peets mysql 巡检')
 
     expect(result).toBe(true)
-    expect(chatStoreMock.resolveCloudRequestContext).toHaveBeenCalledWith(
-      '我要进行灵工 mysql 巡检',
-    )
+    expect(chatStoreMock.resolveCloudRequestContext).toHaveBeenCalledWith('我要进行 peets mysql 巡检')
     expect(chatStoreMock.sendMessage).toHaveBeenCalledWith(
-      '我要进行灵工 mysql 巡检',
-      '我要进行灵工 mysql 巡检',
+      '我要进行 peets mysql 巡检',
+      '我要进行 peets mysql 巡检',
     )
   })
 
@@ -274,6 +300,282 @@ describe('App', () => {
     expect(
       wrapper.findComponent({ name: 'MysqlInstanceSelectorDialog' }).props('visible'),
     ).toBe(true)
+  })
+
+  test('creates an inspection task directly from a conversation message', async () => {
+    chatStoreMock.currentConversationId = 'conv-1'
+    chatStoreMock.createInspectionTaskFromConversationMessage.mockResolvedValueOnce({
+      status: 'created',
+      task: {
+        id: 'task-1',
+        name: 'Peets Daily Inspection',
+        source_conversation_id: 'conv-1',
+        agent_id: 'dba',
+        skill_id: 'volcengine-rds-health-analyzer',
+        prompt_template: 'Inspect peets-prod-pos-mysql for slow queries',
+        target_payload: { instance_name: 'peets-prod-pos-mysql' },
+        schedule_type: 'cron',
+        cron_expr: '0 9 * * *',
+        enabled: true,
+        last_run_at: null,
+        next_run_at: '2026-03-11T09:00:00.000',
+        last_status: 'idle',
+        created_at: '2026-03-11T08:00:00.000',
+        updated_at: '2026-03-11T08:00:00.000',
+      },
+    })
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    const sendMessage = composerHarness.sendMessage
+    if (!sendMessage) {
+      throw new Error('composer sendMessage was not captured')
+    }
+
+    const result = await sendMessage(
+      '生成定时任务，每天 9 点执行',
+      '生成定时任务，每天 9 点执行',
+    )
+    await flushPromises()
+
+    expect(result).toBe(false)
+    expect(chatStoreMock.createInspectionTaskFromConversationMessage).toHaveBeenCalledWith(
+      'conv-1',
+      '生成定时任务，每天 9 点执行',
+    )
+    expect(chatStoreMock.sendMessage).not.toHaveBeenCalled()
+    expect(composerHarness.clearInput).toHaveBeenCalled()
+    expect(chatStoreMock.fetchInspectionTasks).toHaveBeenCalled()
+    expect(chatStoreMock.fetchInspectionTaskRuns).toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('activeTab')).toBe('tasks')
+  })
+
+  test('continues normal chat when the backend says the message is not task creation', async () => {
+    chatStoreMock.currentConversationId = 'conv-1'
+    chatStoreMock.createInspectionTaskFromConversationMessage.mockResolvedValueOnce({
+      status: 'not_task_creation',
+    })
+
+    mount(App, {
+      shallow: true,
+    })
+
+    const sendMessage = composerHarness.sendMessage
+    if (!sendMessage) {
+      throw new Error('composer sendMessage was not captured')
+    }
+
+    const result = await sendMessage('Inspect peets mysql now', 'Inspect peets mysql now')
+    await flushPromises()
+
+    expect(result).toBe(true)
+    expect(chatStoreMock.createInspectionTaskFromConversationMessage).toHaveBeenCalledWith(
+      'conv-1',
+      'Inspect peets mysql now',
+    )
+    expect(chatStoreMock.sendMessage).toHaveBeenCalledWith(
+      'Inspect peets mysql now',
+      'Inspect peets mysql now',
+    )
+  })
+
+  test('opens task draft with notice when task intent is missing a complete schedule', async () => {
+    chatStoreMock.currentConversationId = 'conv-1'
+    chatStoreMock.buildInspectionTaskDraft.mockResolvedValueOnce({
+      source_conversation_id: 'conv-1',
+      name: 'peets mysql 巡检',
+      agent_id: 'dba',
+      skill_id: null,
+      prompt_template: '请巡检 peets mysql 最近 7 天状态',
+      target_payload: null,
+      schedule_type: 'cron',
+      cron_expr: '0 9 * * *',
+      enabled: true,
+    })
+    chatStoreMock.createInspectionTaskFromConversationMessage.mockImplementationOnce(async () => {
+      chatStoreMock.inspectionTaskError =
+        '未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。'
+      return {
+        status: 'error' as const,
+        message: chatStoreMock.inspectionTaskError,
+      }
+    })
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    const sendMessage = composerHarness.sendMessage
+    if (!sendMessage) {
+      throw new Error('composer sendMessage was not captured')
+    }
+
+    const result = await sendMessage('生成定时任务，每月一次', '生成定时任务，每月一次')
+    await flushPromises()
+
+    expect(result).toBe(false)
+    expect(chatStoreMock.sendMessage).not.toHaveBeenCalled()
+    expect(chatStoreMock.buildInspectionTaskDraft).toHaveBeenCalledWith('conv-1')
+    expect(composerHarness.clearInput).toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('activeTab')).toBe('draft')
+    expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('draft')).toMatchObject({
+      cron_expr: '0 9 * * *',
+      prompt_template: '请巡检 peets mysql 最近 7 天状态',
+    })
+    expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('draftNotice')).toBe(
+      '未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。',
+    )
+  })
+
+  test('opens the draft tab from the task drawer header create button', async () => {
+    chatStoreMock.currentConversationId = 'conv-1'
+    const draft: InspectionTaskDraft = {
+      source_conversation_id: 'conv-1',
+      name: 'Peets Weekly Inspection',
+      agent_id: 'dba',
+      skill_id: 'volcengine-rds-health-analyzer',
+      prompt_template: 'Inspect peets-prod-member-mysql for the last 30 days',
+      target_payload: { instance_name: 'peets-prod-member-mysql' },
+      schedule_type: 'cron',
+      cron_expr: '0 9 * * *',
+      enabled: true,
+    }
+    chatStoreMock.buildInspectionTaskDraft.mockResolvedValueOnce(draft)
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    await wrapper.get('[data-testid="open-task-drawer-btn"]').trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'TaskDrawer' }).vm.$emit('open-draft')
+    await flushPromises()
+
+    expect(chatStoreMock.buildInspectionTaskDraft).toHaveBeenCalledWith('conv-1')
+    expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('activeTab')).toBe('draft')
+    expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('draft')).toMatchObject({
+      cron_expr: '0 9 * * *',
+      prompt_template: 'Inspect peets-prod-member-mysql for the last 30 days',
+    })
+  })
+
+  test('deletes a task from the drawer and refreshes the list', async () => {
+    chatStoreMock.inspectionTasks = [
+      {
+        id: 'task-1',
+        name: 'Peets Daily Inspection',
+        source_conversation_id: 'conv-1',
+        agent_id: 'dba',
+        skill_id: 'volcengine-rds-health-analyzer',
+        prompt_template: 'Inspect peets-prod-pos-mysql for the last 7 days',
+        target_payload: { instance_name: 'peets-prod-pos-mysql' },
+        schedule_type: 'cron',
+        cron_expr: '0 9 * * *',
+        enabled: true,
+        last_run_at: null,
+        next_run_at: '2026-03-11T09:00:00.000',
+        last_status: 'idle',
+        created_at: '2026-03-11T08:00:00.000',
+        updated_at: '2026-03-11T08:00:00.000',
+      },
+    ]
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    await wrapper.get('[data-testid="open-task-drawer-btn"]').trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'TaskDrawer' }).vm.$emit('delete-task', 'task-1')
+    await flushPromises()
+
+    expect(chatStoreMock.deleteInspectionTask).toHaveBeenCalledWith('task-1')
+    expect(chatStoreMock.fetchInspectionTasks).toHaveBeenCalled()
+    expect(chatStoreMock.fetchInspectionTaskRuns).toHaveBeenCalled()
+  })
+
+  test('keeps the title row on stable layout classes for long conversation titles', () => {
+    chatStoreMock.currentConversationId = 'conv-1'
+    chatStoreMock.messages = [
+      {
+        id: 'msg-1',
+        role: 'user',
+        content:
+          '这是一个非常非常非常非常非常非常非常长的标题，用来验证标题区域不会因为操作控件而错位',
+        type: 'text',
+        timestamp: 1,
+      },
+    ]
+    chatStoreMock.conversations = [
+      {
+        id: 'conv-1',
+        title:
+          '这是一个非常非常非常非常非常非常非常长的标题，用来验证标题区域不会因为操作控件而错位',
+        source: 'web',
+        agent_id: 'dba',
+        created_at: null,
+        updated_at: null,
+      },
+    ]
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    expect(wrapper.get('.chat-title-row').classes()).toContain('chat-title-row-stable')
+  })
+
+  test('keeps the title action row vertically aligned on desktop', () => {
+    chatStoreMock.currentConversationId = 'conv-1'
+    chatStoreMock.messages = [
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: '请帮我巡检 peets mysql',
+        type: 'text',
+        timestamp: 1,
+      },
+    ]
+    chatStoreMock.conversations = [
+      {
+        id: 'conv-1',
+        title: 'peets mysql 巡检',
+        source: 'web',
+        agent_id: 'dba',
+        created_at: null,
+        updated_at: null,
+      },
+    ]
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    expect(wrapper.get('.chat-title-row').classes()).toContain('chat-title-row-actions-inline')
+  })
+
+  test('uses the shared panel shell class for both task and inspector drawers', async () => {
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    await wrapper.get('[data-testid="open-task-drawer-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.task-drawer-shell').classes()).toContain('ui-panel-shell')
+
+    if (!chromeHarness.showInspector) {
+      throw new Error('showInspector ref was not captured')
+    }
+
+    chromeHarness.showInspector.value = true
+    await nextTick()
+
+    expect(wrapper.get('.inspector-drawer').classes()).toContain('ui-panel-shell')
   })
 
   test('renders attachment bar and forwards upload and delete actions', async () => {

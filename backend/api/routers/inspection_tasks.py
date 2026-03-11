@@ -9,6 +9,8 @@ from db.session import AsyncSessionLocal
 from services.inspection_tasks import (
     build_inspection_task_draft,
     create_inspection_task,
+    create_inspection_task_from_conversation_message,
+    delete_inspection_task,
     execute_inspection_task,
     get_inspection_task,
     list_inspection_task_runs,
@@ -43,6 +45,12 @@ class UpdateInspectionTaskRequest(BaseModel):
     target_payload: dict[str, Any] | None = None
     cron_expr: str | None = None
     enabled: bool | None = None
+    now: datetime | None = None
+
+
+class CreateInspectionTaskFromConversationMessageRequest(BaseModel):
+    conversation_id: str
+    message: str
     now: datetime | None = None
 
 
@@ -86,6 +94,25 @@ async def create_inspection_task_route(body: CreateInspectionTaskRequest):
     return JSONResponse(task.to_dict())
 
 
+@router.post("/from-conversation-message")
+async def create_inspection_task_from_conversation_message_route(
+    body: CreateInspectionTaskFromConversationMessageRequest,
+):
+    try:
+        result = await create_inspection_task_from_conversation_message(
+            body.conversation_id,
+            body.message,
+            session_factory=AsyncSessionLocal,
+            now=body.now,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return JSONResponse(result)
+
+
 @router.get("/{task_id}")
 async def get_inspection_task_route(task_id: str):
     try:
@@ -115,6 +142,16 @@ async def update_inspection_task_route(task_id: str, body: UpdateInspectionTaskR
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return JSONResponse(task.to_dict())
+
+
+@router.delete("/{task_id}")
+async def delete_inspection_task_route(task_id: str):
+    try:
+        await delete_inspection_task(task_id, session_factory=AsyncSessionLocal)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return JSONResponse({"status": "deleted", "task_id": task_id})
 
 
 @router.post("/{task_id}/trigger")

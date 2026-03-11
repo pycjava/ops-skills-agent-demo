@@ -55,4 +55,26 @@ describe('ConversationTitleEditor', () => {
     expect(wrapper.get('[data-testid="title-error"]').text()).toContain('200')
     expect(wrapper.get('[data-testid="save-title-btn"]').attributes('disabled')).toBeDefined()
   })
+
+  test('keeps the edit button stable when the title is long', () => {
+    const wrapper = mount(ConversationTitleEditor, {
+      props: {
+        title: '这是一个非常非常非常非常非常非常非常长的标题，用来验证标题区域不会把编辑按钮挤压变形',
+      },
+    })
+
+    expect(wrapper.get('.conversation-title-editor').classes()).toContain('title-layout-stable')
+    expect(wrapper.get('.title-display-row').classes()).toContain('title-row-stable')
+    expect(wrapper.get('[data-testid="edit-title-btn"]').classes()).toContain('title-action-btn-stable')
+  })
+
+  test('uses the shared pill button class for the edit action', () => {
+    const wrapper = mount(ConversationTitleEditor, {
+      props: {
+        title: '当前标题',
+      },
+    })
+
+    expect(wrapper.get('[data-testid="edit-title-btn"]').classes()).toContain('ui-pill-btn')
+  })
 })
