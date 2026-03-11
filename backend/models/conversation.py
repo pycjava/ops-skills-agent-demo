@@ -9,6 +9,7 @@ from db.base_class import Base
 
 if TYPE_CHECKING:
     from models.conversation_attachment import ConversationAttachment
+    from models.inspection_task import InspectionTask
     from models.message import Message
 
 
@@ -22,6 +23,11 @@ class Conversation(Base):
     source: Mapped[str] = mapped_column(String(20), default="web", server_default="web")
     agent_id: Mapped[str] = mapped_column(
         String(50), default="general", server_default="general"
+    )
+    source_task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_task_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_task_trigger_type: Mapped[str | None] = mapped_column(
+        String(20), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -38,6 +44,10 @@ class Conversation(Base):
         cascade="all, delete-orphan",
         order_by="ConversationAttachment.created_at",
     )
+    inspection_tasks: Mapped[list["InspectionTask"]] = relationship(
+        back_populates="source_conversation",
+        foreign_keys="InspectionTask.source_conversation_id",
+    )
 
     def to_dict(self):
         return {
@@ -45,6 +55,9 @@ class Conversation(Base):
             "title": self.title,
             "source": self.source,
             "agent_id": self.agent_id,
+            "source_task_id": self.source_task_id,
+            "source_task_run_id": self.source_task_run_id,
+            "source_task_trigger_type": self.source_task_trigger_type,
             "created_at": (
                 self.created_at.isoformat(timespec="milliseconds")
                 if self.created_at

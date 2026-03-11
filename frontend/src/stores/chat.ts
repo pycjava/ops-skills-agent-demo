@@ -6,12 +6,15 @@ import { getDefaultAgentId, resolveAgentId } from './chat/helpers'
 import { createMcpDomain } from './chat/mcp'
 import { createMemoryDomain } from './chat/memory'
 import { createSocketDomain } from './chat/socket'
+import { createTaskDomain } from './chat/tasks'
 import type {
   AgentInfo,
   ChatMessage,
   CloudContextResolution,
   ConversationAttachment,
   ConversationItem,
+  InspectionTask,
+  InspectionTaskRun,
   McpServer,
   MemoryDocument,
   MemoryNode,
@@ -34,6 +37,8 @@ export const useChatStore = defineStore('chat', () => {
   const mcpServers = ref<McpServer[]>([])
   const conversations = ref<ConversationItem[]>([])
   const conversationAttachments = ref<ConversationAttachment[]>([])
+  const inspectionTasks = ref<InspectionTask[]>([])
+  const inspectionTaskRuns = ref<InspectionTaskRun[]>([])
   const currentConversationId = ref<string | null>(null)
   const draftAgentId = ref('general')
   const memoryTree = ref<MemoryNode[]>([])
@@ -48,8 +53,10 @@ export const useChatStore = defineStore('chat', () => {
   const isAttachmentUploading = ref(false)
   const isMcpLoading = ref(false)
   const mcpError = ref<string | null>(null)
+  const inspectionTaskError = ref<string | null>(null)
   const testingServerIds = ref<string[]>([])
   const deletingAttachmentIds = ref<string[]>([])
+  const isInspectionTaskLoading = ref(false)
 
   const isMemoryLoading = computed(
     () =>
@@ -195,6 +202,14 @@ export const useChatStore = defineStore('chat', () => {
     fetchSkills,
   })
 
+  const taskDomain = createTaskDomain({
+    backendUrl,
+    inspectionTasks,
+    inspectionTaskRuns,
+    inspectionTaskError,
+    isInspectionTaskLoading,
+  })
+
   watch(
     currentConversationId,
     (conversationId) => {
@@ -233,6 +248,8 @@ export const useChatStore = defineStore('chat', () => {
     mcpServers,
     conversations,
     conversationAttachments,
+    inspectionTasks,
+    inspectionTaskRuns,
     currentConversationId,
     draftAgentId,
     activeAgentId,
@@ -246,8 +263,10 @@ export const useChatStore = defineStore('chat', () => {
     isAttachmentUploading,
     isMcpLoading,
     mcpError,
+    inspectionTaskError,
     testingServerIds,
     deletingAttachmentIds,
+    isInspectionTaskLoading,
     connect: socketDomain.connect,
     sendMessage: socketDomain.sendMessage,
     clearChat: socketDomain.clearChat,
@@ -262,6 +281,12 @@ export const useChatStore = defineStore('chat', () => {
     fetchConversationAttachments: attachmentDomain.fetchConversationAttachments,
     uploadConversationAttachment: attachmentDomain.uploadConversationAttachment,
     deleteConversationAttachment: attachmentDomain.deleteConversationAttachment,
+    fetchInspectionTasks: taskDomain.fetchInspectionTasks,
+    fetchInspectionTaskRuns: taskDomain.fetchInspectionTaskRuns,
+    buildInspectionTaskDraft: taskDomain.buildInspectionTaskDraft,
+    createInspectionTask: taskDomain.createInspectionTask,
+    updateInspectionTask: taskDomain.updateInspectionTask,
+    triggerInspectionTask: taskDomain.triggerInspectionTask,
     fetchSkills,
     resolveCloudRequestContext,
     fetchMcpServers: mcpDomain.fetchMcpServers,

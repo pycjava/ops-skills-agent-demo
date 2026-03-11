@@ -10,13 +10,19 @@ import MemoryPanel from './components/MemoryPanel.vue'
 import MessageBubble from './components/MessageBubble.vue'
 import MysqlInstanceSelectorDialog from './components/MysqlInstanceSelectorDialog.vue'
 import SkillPanel from './components/SkillPanel.vue'
+import TaskDrawer from './components/TaskDrawer.vue'
 import { MAX_CONVERSATION_ATTACHMENTS } from './constants/attachments'
-import { useChatStore, type CloudContextCandidate } from './stores/chat'
+import {
+  useChatStore,
+  type CloudContextCandidate,
+  type InspectionTaskDraft,
+} from './stores/chat'
 import { toAttachmentSnapshot } from './stores/chat/helpers'
 import {
   buildMysqlSelectionSystemHint,
   isMysqlInspectionIntent,
 } from './utils/mysqlInspection'
+import { isInspectionTaskIntent, suggestCronFromTaskIntent } from './utils/taskIntent'
 
 const chatStore = useChatStore()
 const chatContainer = ref<HTMLElement | null>(null)
@@ -30,6 +36,10 @@ const pendingMysqlMessage = ref<{
 } | null>(null)
 const quickPrompts: Array<{ label: string; prompt: string }> = []
 const attachmentBarRef = ref<{ triggerFileSelect: () => void } | null>(null)
+const showTaskDrawer = ref(false)
+const taskDrawerTab = ref<'tasks' | 'runs' | 'draft'>('tasks')
+const inspectionTaskDraft = ref<InspectionTaskDraft | null>(null)
+const isTaskDraftSaving = ref(false)
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
 const agentLabels = computed(() =>
@@ -67,6 +77,16 @@ const currentConversationTitle = computed(
 const currentConversationSubtitle = computed(() =>
   hasMessages.value ? '对话由 AI 生成' : '',
 )
+const currentConversationTaskOrigin = computed(() => {
+  if (!currentConversation.value?.source_task_id) return ''
+  const taskName = chatStore.inspectionTasks.find(
+    (task) => task.id === currentConversation.value?.source_task_id,
+  )?.name
+  const prefix = currentConversation.value.source_task_trigger_type === 'scheduled'
+    ? '来自定时任务'
+    : '来自手动触发任务'
+  return taskName ? `${prefix} · ${taskName}` : prefix
+})
 const submittedAttachmentIds = computed(() => {
   const attachmentIds = new Set<string>()
 
@@ -186,9 +206,99 @@ function sendWithPendingAttachments(displayContent: string, sendContent?: string
   chatStore.sendMessage(displayContent, sendContent)
 }
 
+async function refreshTaskDrawer() {
+  await Promise.all([
+    chatStore.fetchInspectionTasks(),
+    chatStore.fetchInspectionTaskRuns(),
+  ])
+}
+
+async function openTaskDrawer(tab: 'tasks' | 'runs' | 'draft' = 'tasks') {
+  closeInspector()
+  showTaskDrawer.value = true
+  taskDrawerTab.value = tab
+  await refreshTaskDrawer()
+}
+
+function closeTaskDrawer() {
+  showTaskDrawer.value = false
+}
+
+async function openTaskDraftFromConversation(suggestedCron?: string | null) {
+  if (!chatStore.currentConversationId) return
+
+  const draft = await chatStore.buildInspectionTaskDraft(chatStore.currentConversationId)
+  if (!draft) {
+    showTaskDrawer.value = true
+    taskDrawerTab.value = 'tasks'
+    return
+  }
+
+  inspectionTaskDraft.value = {
+    ...draft,
+    cron_expr: suggestedCron || draft.cron_expr,
+  }
+  closeInspector()
+  showTaskDrawer.value = true
+  taskDrawerTab.value = 'draft'
+  await refreshTaskDrawer()
+}
+
+async function handleTaskDraftSave(draft: InspectionTaskDraft) {
+  isTaskDraftSaving.value = true
+
+  try {
+    const created = await chatStore.createInspectionTask(draft)
+    if (!created) return
+    inspectionTaskDraft.value = null
+    taskDrawerTab.value = 'tasks'
+    await refreshTaskDrawer()
+  } finally {
+    isTaskDraftSaving.value = false
+  }
+}
+
+async function handleTaskTrigger(taskId: string) {
+  const run = await chatStore.triggerInspectionTask(taskId)
+  if (!run) return
+  taskDrawerTab.value = 'runs'
+  await refreshTaskDrawer()
+}
+
+async function handleTaskToggle(taskId: string, enabled: boolean) {
+  const task = chatStore.inspectionTasks.find((candidate) => candidate.id === taskId)
+  if (!task) return
+
+  await chatStore.updateInspectionTask(taskId, {
+    enabled,
+  })
+  await refreshTaskDrawer()
+}
+
+async function handleTaskConversationOpen(conversationId: string) {
+  await chatStore.switchConversation(conversationId)
+  closeTaskDrawer()
+}
+
+function handleOpenInspectorDrawer() {
+  closeTaskDrawer()
+  openInspector('skills')
+}
+
 async function handleComposerSend(displayContent: string, sendContent?: string) {
   const normalizedDisplayContent = displayContent.trim()
   const normalizedSendContent = (sendContent || displayContent).trim()
+
+  if (
+    chatStore.currentConversationId &&
+    isInspectionTaskIntent(normalizedDisplayContent)
+  ) {
+    await openTaskDraftFromConversation(
+      suggestCronFromTaskIntent(normalizedDisplayContent),
+    )
+    clearInput()
+    return false
+  }
 
   if (
     chatStore.activeAgentId !== 'dba' ||
@@ -353,7 +463,15 @@ async function handleConversationTitleSave(title: string) {
           >
             {{ isDark ? '☀️' : '🌙' }}
           </button>
-          <button class="icon-btn" title="打开右侧面板" @click="openInspector('skills')">
+          <button
+            class="icon-btn"
+            data-testid="open-task-drawer-btn"
+            title="打开定时任务"
+            @click="openTaskDrawer('tasks')"
+          >
+            时
+          </button>
+          <button class="icon-btn" title="打开右侧面板" @click="handleOpenInspectorDrawer">
             ☷
           </button>
         </div>
@@ -518,15 +636,29 @@ async function handleConversationTitleSave(title: string) {
             <span class="chat-kicker">{{ currentConversationSubtitle }}</span>
             <span class="agent-chip">{{ activeAgentLabel }}</span>
           </div>
-          <ConversationTitleEditor
-            v-if="chatStore.currentConversationId"
-            :title="currentConversationTitle"
-            :error="titleRenameError"
-            :saving="isTitleUpdating"
-            @save="handleConversationTitleSave"
-            @cancel="titleRenameError = ''"
-          />
-          <h2 v-else class="chat-title">{{ currentConversationTitle }}</h2>
+          <div class="chat-title-row">
+            <ConversationTitleEditor
+              v-if="chatStore.currentConversationId"
+              :title="currentConversationTitle"
+              :error="titleRenameError"
+              :saving="isTitleUpdating"
+              @save="handleConversationTitleSave"
+              @cancel="titleRenameError = ''"
+            />
+            <h2 v-else class="chat-title">{{ currentConversationTitle }}</h2>
+
+            <button
+              v-if="chatStore.currentConversationId"
+              class="chat-header-btn"
+              type="button"
+              @click="openTaskDraftFromConversation()"
+            >
+              创建定时任务
+            </button>
+          </div>
+          <div v-if="currentConversationTaskOrigin" class="chat-task-origin">
+            {{ currentConversationTaskOrigin }}
+          </div>
         </div>
 
         <div ref="chatContainer" class="chat-scroll">
@@ -639,6 +771,30 @@ async function handleConversationTitleSave(title: string) {
         @select="confirmMysqlSelection"
         @cancel="closeMysqlSelection"
       />
+
+      <transition name="drawer-fade">
+        <div v-if="showTaskDrawer" class="task-overlay" @click.self="closeTaskDrawer">
+          <aside class="task-drawer-shell">
+            <TaskDrawer
+              :visible="showTaskDrawer"
+              :tasks="chatStore.inspectionTasks"
+              :runs="chatStore.inspectionTaskRuns"
+              :draft="inspectionTaskDraft"
+              :active-tab="taskDrawerTab"
+              :is-loading="chatStore.isInspectionTaskLoading"
+              :is-saving="isTaskDraftSaving"
+              :error="chatStore.inspectionTaskError"
+              @close="closeTaskDrawer"
+              @change-tab="taskDrawerTab = $event"
+              @refresh="refreshTaskDrawer"
+              @trigger="handleTaskTrigger"
+              @toggle="handleTaskToggle"
+              @open-conversation="handleTaskConversationOpen"
+              @save-draft="handleTaskDraftSave"
+            />
+          </aside>
+        </div>
+      </transition>
 
       <transition name="drawer-fade">
         <div v-if="showInspector" class="inspector-overlay" @click.self="closeInspector">
@@ -1245,6 +1401,13 @@ input {
   padding: 2px 8px 10px;
 }
 
+.chat-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .chat-meta {
   display: flex;
   align-items: center;
@@ -1274,6 +1437,22 @@ input {
   color: var(--text-strong);
   font-size: clamp(24px, 3vw, 34px);
   font-weight: 700;
+}
+
+.chat-header-btn {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text-strong);
+  cursor: pointer;
+}
+
+.chat-task-origin {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .chat-scroll {
@@ -1385,6 +1564,30 @@ input {
 
 [data-theme='dark'] .inspector-overlay {
   background: rgba(0, 0, 0, 0.26);
+}
+
+.task-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px;
+  background: rgba(31, 26, 20, 0.12);
+}
+
+[data-theme='dark'] .task-overlay {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.task-drawer-shell {
+  width: min(460px, 100%);
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--card-strong);
+  box-shadow: var(--shadow-soft);
 }
 
 .inspector-drawer {

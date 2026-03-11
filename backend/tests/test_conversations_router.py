@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.routers import conversations as conversations_router
-from models import Message
+from models import Conversation, Message
 
 
 def create_test_client(session_factory):
@@ -112,3 +112,27 @@ async def test_get_messages_returns_attachment_snapshot(
             "created_at": "2026-03-10T10:00:00.000",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_list_conversations_includes_task_source_metadata(session_factory):
+    async with session_factory() as session:
+        conversation = Conversation(
+            title="任务生成的巡检",
+            source="task",
+            agent_id="dba",
+            source_task_id="task-1",
+            source_task_run_id="run-1",
+            source_task_trigger_type="scheduled",
+        )
+        session.add(conversation)
+        await session.commit()
+
+    client = create_test_client(session_factory)
+    response = client.get("/api/conversations")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["source_task_id"] == "task-1"
+    assert payload[0]["source_task_run_id"] == "run-1"
+    assert payload[0]["source_task_trigger_type"] == "scheduled"

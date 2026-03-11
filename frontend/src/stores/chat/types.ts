@@ -49,8 +49,43 @@ export interface ConversationItem {
   title: string
   source?: string
   agent_id: string
+  source_task_id?: string | null
+  source_task_run_id?: string | null
+  source_task_trigger_type?: 'manual' | 'scheduled' | null
   created_at: string | null
   updated_at: string | null
+}
+
+export interface InspectionTaskDraft {
+  source_conversation_id: string | null
+  name: string
+  agent_id: string
+  skill_id: string | null
+  prompt_template: string
+  target_payload: Record<string, unknown> | null
+  schedule_type: 'cron'
+  cron_expr: string
+  enabled: boolean
+}
+
+export interface InspectionTask extends InspectionTaskDraft {
+  id: string
+  last_run_at: string | null
+  next_run_at: string | null
+  last_status: 'idle' | 'running' | 'succeeded' | 'failed'
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface InspectionTaskRun {
+  id: string
+  task_id: string
+  trigger_type: 'manual' | 'scheduled'
+  status: 'running' | 'succeeded' | 'failed'
+  conversation_id: string | null
+  started_at: string | null
+  finished_at: string | null
+  error_message: string | null
 }
 
 export interface ConversationAttachment {

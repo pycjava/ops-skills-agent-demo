@@ -39,6 +39,12 @@ function formatTime(iso: string | null): string {
 
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
+
+function getTaskBadgeLabel(triggerType?: string | null): string | null {
+  if (triggerType === 'scheduled') return '定时'
+  if (triggerType === 'manual') return '手动触发'
+  return null
+}
 </script>
 
 <template>
@@ -73,6 +79,12 @@ function formatTime(iso: string | null): string {
         <div class="conv-main">
           <div class="conv-title-row">
             <span v-if="conv.source === 'api'" class="api-badge">API</span>
+            <span
+              v-if="getTaskBadgeLabel(conv.source_task_trigger_type)"
+              class="task-badge"
+            >
+              {{ getTaskBadgeLabel(conv.source_task_trigger_type) }}
+            </span>
             <span class="agent-badge">{{ agentLabels[conv.agent_id] || conv.agent_id }}</span>
             <span class="conv-title">{{ conv.title || '新对话' }}</span>
           </div>
@@ -254,6 +266,16 @@ function formatTime(iso: string | null): string {
   color: var(--accent);
   font-size: 10px;
   font-weight: 700;
+}
+
+.task-badge {
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: rgba(113, 147, 111, 0.14);
+  color: var(--success);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .agent-badge {

@@ -16,6 +16,7 @@ from api.routers import (
     cloud_credentials,
     conversation_attachments,
     conversations,
+    inspection_tasks,
     mcp,
     memories,
     skills,
@@ -23,9 +24,11 @@ from api.routers import (
 from api.ws import chat
 from config import ANTHROPIC_API_KEY, BASE_DIR, SKILLS_DIR
 from db.session import close_db, init_db
+from services.inspection_scheduler import InspectionSchedulerRuntime
 from utils.logger import logger
 
 app = FastAPI(title="Claude Agent Demo", version="0.2.0")
+inspection_scheduler = InspectionSchedulerRuntime()
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,6 +61,7 @@ def build_uvicorn_reload_kwargs() -> dict[str, object]:
 async def startup():
     await init_db()
     await init_agent_runtime()
+    await inspection_scheduler.start()
 
     logger.info(f"Skills 目录: {SKILLS_DIR}")
     if ANTHROPIC_API_KEY:
@@ -81,12 +85,14 @@ async def startup():
 async def shutdown():
     from agent import close_agent_runtime
 
+    await inspection_scheduler.stop()
     await close_agent_runtime()
     await close_db()
 
 
 app.include_router(conversations.router)
 app.include_router(conversation_attachments.router)
+app.include_router(inspection_tasks.router)
 app.include_router(agents.router)
 app.include_router(skills.router)
 app.include_router(mcp.router)

@@ -29,9 +29,20 @@ async def create_conversation(
     *,
     source: str = "web",
     agent_id: str | None = None,
+    title: str | None = None,
+    source_task_id: str | None = None,
+    source_task_run_id: str | None = None,
+    source_task_trigger_type: str | None = None,
 ) -> Conversation:
     resolved_agent_id = resolve_agent_id(agent_id)
-    conversation = Conversation(source=source, agent_id=resolved_agent_id)
+    conversation = Conversation(
+        title=(title or "").strip() or "鏂板璇?",
+        source=source,
+        agent_id=resolved_agent_id,
+        source_task_id=source_task_id,
+        source_task_run_id=source_task_run_id,
+        source_task_trigger_type=source_task_trigger_type,
+    )
     session.add(conversation)
     await session.commit()
     await session.refresh(conversation)

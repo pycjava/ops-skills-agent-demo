@@ -56,6 +56,22 @@ def _bootstrap_sqlite_compat_columns(sync_conn):
         )
     )
 
+    if not _has_column(sync_conn, "conversations", "source_task_id"):
+        sync_conn.execute(text("ALTER TABLE conversations ADD COLUMN source_task_id VARCHAR(36)"))
+
+    if not _has_column(sync_conn, "conversations", "source_task_run_id"):
+        sync_conn.execute(
+            text("ALTER TABLE conversations ADD COLUMN source_task_run_id VARCHAR(36)")
+        )
+
+    if not _has_column(sync_conn, "conversations", "source_task_trigger_type"):
+        sync_conn.execute(
+            text(
+                "ALTER TABLE conversations "
+                "ADD COLUMN source_task_trigger_type VARCHAR(20)"
+            )
+        )
+
     if not _has_column(sync_conn, "messages", "agent_id"):
         sync_conn.execute(text("ALTER TABLE messages ADD COLUMN agent_id VARCHAR(50)"))
 

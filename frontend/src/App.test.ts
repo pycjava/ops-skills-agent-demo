@@ -41,17 +41,21 @@ const chatStoreMock = {
   activeAgentId: 'dba',
   activeAgent: { id: 'dba', label: '数据库助手' },
   conversations: [],
+  inspectionTasks: [],
+  inspectionTaskRuns: [],
   currentConversationId: null as string | null,
   draftAgentId: 'dba',
   isConnected: true,
   isLoading: false,
   skills: [],
   mcpServers: [],
+  inspectionTaskError: null as string | null,
   memoryTree: [],
   selectedMemoryPath: null as string | null,
   memoryContent: null,
   memoryError: null as string | null,
   isMemoryLoading: false,
+  isInspectionTaskLoading: false,
   conversationAttachments: [] as Array<{
     id: string
     conversation_id: string
@@ -77,6 +81,12 @@ const chatStoreMock = {
   connect: vi.fn(),
   fetchAgents: vi.fn(async () => {}),
   fetchConversations: vi.fn(async () => {}),
+  fetchInspectionTasks: vi.fn(async () => {}),
+  fetchInspectionTaskRuns: vi.fn(async () => {}),
+  buildInspectionTaskDraft: vi.fn(async () => null),
+  createInspectionTask: vi.fn(async () => null),
+  updateInspectionTask: vi.fn(async () => null),
+  triggerInspectionTask: vi.fn(async () => null),
   fetchSkills: vi.fn(async () => {}),
   fetchMcpServers: vi.fn(async () => {}),
   fetchMemoryTree: vi.fn(async () => {}),
@@ -164,12 +174,14 @@ describe('App', () => {
     expect(sidebarToggle.text()).toBe('‹')
 
     const toolbarButtons = wrapper.findAll('.toolbar-right .icon-btn')
-    expect(toolbarButtons).toHaveLength(3)
+    expect(toolbarButtons).toHaveLength(4)
     expect(toolbarButtons[0]?.attributes('title')).toBe('清空当前对话')
     expect(toolbarButtons[0]?.text()).toBe('⌫')
     expect(toolbarButtons[1]?.attributes('title')).toBe('切换深色模式')
-    expect(toolbarButtons[2]?.attributes('title')).toBe('打开右侧面板')
-    expect(toolbarButtons[2]?.text()).toBe('☷')
+    expect(toolbarButtons[2]?.attributes('title')).toBe('打开定时任务')
+    expect(toolbarButtons[2]?.text()).toBe('时')
+    expect(toolbarButtons[3]?.attributes('title')).toBe('打开右侧面板')
+    expect(toolbarButtons[3]?.text()).toBe('☷')
 
     expect(wrapper.text()).toContain('Shift + Enter 换行')
     expect(wrapper.text()).toContain('更多')

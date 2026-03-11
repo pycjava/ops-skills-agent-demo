@@ -30,7 +30,9 @@ class Message(Base):
     tool_input: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     attachments_snapshot: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     thinking: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, server_default=func.now()
+    )
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
 
