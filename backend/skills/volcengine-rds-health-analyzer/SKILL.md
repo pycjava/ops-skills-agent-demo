@@ -48,21 +48,16 @@ description: Use when users need Volcengine RDS MySQL 单实例健康巡检、CP
 
 ## 时间粒度策略
 
-根据时间范围自动选择 `--period`：
-
-| time_range | period |
-|------------|--------|
-| `< 24h` | `5m` |
-| `1d - <7d` | `1h` |
-| `>= 7d` | `6h` |
+主窗口统一使用 `5m` 粒度采集，优先保留完整原始点位，再通过脚本预计算出的证据摘要进行分析。
 
 双窗口辅助规则：
 
 - 当主窗口 `time_range >= 7d` 时，除主窗口采集外，必须额外执行一次最近 `3d` 的辅助采集
-- 最近 `3d` 辅助窗口固定使用 `1h` 粒度，不跟随主窗口 `>= 7d` 时的 `6h` 粒度
+- 主窗口统一使用 `5m` 粒度采集
+- 最近 `3d` 辅助窗口也使用 `5m` 粒度
 - `analysis_depth` 不影响这条双窗口规则；只要主窗口达到 `7d` 及以上，就执行最近 `3d` 辅助采集
 - 如果用户显式要求只分析 `3d` 或更短时间范围，则不再追加第二个 `3d` 辅助窗口
-- 最近 `3d` 辅助窗口用于判断问题是否仍在持续发生，不替代主窗口的长期趋势、容量与周期性分析
+- 最近 `3d` 辅助窗口用于快速判断近期问题是否仍在持续发生，不替代主窗口的长期趋势、容量与周期性分析
 
 ## 标准工作流
 
@@ -98,7 +93,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --region <region> \
   --credential-ref <credential_ref> \
   --hours <hours> \
-  --period <period> \
+  --period 5m \
   --action all \
   --output ./metric_data/instance_data.json
 ```
@@ -111,7 +106,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --region <region> \
   --credential-ref <credential_ref> \
   --hours 72 \
-  --period 1h \
+  --period 5m \
   --action all \
   --output ./metric_data/instance_data_recent3d.json
 ```
@@ -125,7 +120,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --credential-ref <credential_ref> \
   --start "YYYY-MM-DD HH:MM" \
   --end "YYYY-MM-DD HH:MM" \
-  --period <period> \
+  --period 5m \
   --action all \
   --output ./metric_data/instance_data.json
 ```
@@ -136,7 +131,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - 主窗口：`./metric_data/instance_data_*.json`
    - 当主窗口 `time_range >= 7d` 时，辅助窗口：`./metric_data/instance_data_recent3d_*.json`
 
-5. 用 `read_file` 按需逐个读取结果文件，优先看每个指标里的 `summary` 和 `node_summaries`：
+5. 用 `read_file` 按需逐个读取结果文件，优先看每个指标里的 `summary`、`evidence` 和 `node_summaries`：
    - 推荐直接读取 `metric_data/instance_data_*.json`
    - 当主窗口 `time_range >= 7d` 时，分析阶段按同一指标成对读取：先读主窗口结果，再读最近 `3d` 辅助窗口结果
    - 如果 `glob` 返回的是 `/metric_data/...`，可直接原样传给 `read_file`
@@ -144,25 +139,40 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - 不要使用 `B:\...` 或 `/memories/../backend/...`
    - `summary.min`
    - `summary.max`
+   - `summary.range`
    - `summary.avg`
    - `summary.median`
    - `summary.weighted`
    - `summary.data_point_count`
+   - `evidence.coverage`
+   - `evidence.distribution`
+   - `evidence.variability`
+   - `evidence.spikes.sliding_mad`
+   - `evidence.trend`
    - `node_summaries[*].node`
    - `node_summaries[*].avg`
    - `node_summaries[*].median`
    - `node_summaries[*].weighted`
+   - `node_summaries[*].range`
+   - `node_summaries[*].evidence`
    - `node_summaries[*].max`
    - `node_summaries[*].all_zero`
    - `nodes`
 
 6. 分析时遵循以下原则：
-   - 先看 `summary`，不要一开始就把所有原始点位全读进上下文
+   - 先读 `summary`
+   - 再读 `evidence`
+   - 最后才在异常指标上回看 `nodes[].data_points`，不要一开始就把所有原始点位全读进上下文
    - `node_count == 1` 或指标为 `qps` / `tps` 时，沿用实例级分析
    - `node_count > 1` 且指标为 `cpu` / `memory` / `disk_util` / `IOPSRate` / `network_in` / `network_out` / `replication_delay` 时，必须先比较 `summary` 与 `node_summaries`
    - 只有某个指标异常、或 `node_summaries` 已显示明显热点节点 / 偏斜时，才继续读取对应文件里的 `nodes` / `data_points`
    - 顺序分析异常指标，不要并行读取一批大文件
    - 正常指标直接基于 `summary` 给出结论
+   - `summary` 负责轻量统计概览；`evidence` 负责分析证据，不要把 `nodes[].data_points` 当作默认入口
+   - 用 `summary.range` / `node_summaries[*].range` 解释波动幅度，用 `evidence.distribution` / `evidence.variability` 解释分布与波动，用 `evidence.spikes.sliding_mad` 判断是否存在瞬时尖峰
+   - `evidence.spikes.sliding_mad.method` 固定为 `sliding_mad`，阈值固定为 `6 x MAD`
+   - `evidence.spikes.sliding_mad.spike_count > 0` 且 `avg` / `median` 正常时，仍需明确写出“存在瞬时尖峰，不能仅因均值正常而判定为低风险”
+   - `evidence.coverage.coverage_ratio` 偏低时，要明确说明证据不完整，不要脑补高置信结论
    - 多节点结论必须同时写“实例整体结论”和“节点拆分结论”
    - 不猜测主节点 / 从节点 / 只读节点角色，只使用 `Node ID` 叙述
    - JSON 结果分析必须优先通过 `read_file` / `glob` / `grep` 完成，不要用 `execute python -c`、heredoc 或 PowerShell inline script 读取、汇总或分析 JSON
@@ -257,6 +267,10 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   - `cpu` / `memory` / `disk_util` 等节点级指标，先按 `summary.weighted` 计算实例级得分，再按每个适用节点的 `node.weighted` 计算节点得分，最终取更差者：`final_score = min(score(summary.weighted), min(score(node.weighted) for node in node_summaries if node.weighted is not None))`
   - `replication_delay` 仍按延迟上界判断，但仅比较 `all_zero != true` 的节点；最终取实例级与最差适用节点中更差者
   - `qps` / `tps` 继续按实例级 `summary` 评分 / 分析，不做节点排名
+  - `range = max - min`，用于描述波动幅度；瞬时尖峰统一以 `evidence.spikes.sliding_mad` / `node_summaries[*].evidence.spikes.sliding_mad` 为准
+  - `sliding_mad` 的阈值固定为 `6 x MAD`
+  - `evidence.distribution.p95` / `evidence.distribution.p99` 用于识别高位压力
+  - `evidence.variability.stddev` / `evidence.variability.cv` 用于识别波动强度
 
 1. CPU（20 分）
    - `avg < 60` → `20`
@@ -278,7 +292,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 
 4. 稳定性（15 分）
    - 初始 `15`
-   - `qps`、`tps`、`IOPSRate` 中每出现一个 `max > 3 * avg` 的严重尖峰，扣 `5`
+   - `qps`、`tps`、`IOPSRate`、`network_in`、`network_out` 中每出现一个 `evidence.spikes.sliding_mad.spike_count > 0` 的指标，扣 `5`
    - 最低 `0`
 
 5. 主从延迟（15 分）
@@ -288,9 +302,9 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - `max >= 10` → `0`
 
 6. 综合健康（10 分）
-   - 没有红色指标 → `10`
-   - `1-2` 个红色指标 → `5`
-   - 超过 `2` 个红色指标 → `0`
+   - 没有核心指标出现 `evidence.spikes.sliding_mad.spike_count > 0` → `10`
+   - `1-2` 个核心指标出现 `evidence.spikes.sliding_mad.spike_count > 0` → `5`
+   - 超过 `2` 个核心指标出现 `evidence.spikes.sliding_mad.spike_count > 0` → `0`
 
 ## 报告输出要求
 
@@ -322,6 +336,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - `{{node_topology_summary}}`：写实例的节点拓扑摘要；`2` 节点突出对比，`3` 节点及以上突出排序
 - `{{cpu_node_breakdown}}`、`{{memory_node_breakdown}}`、`{{disk_node_breakdown}}`、`{{replication_node_breakdown}}`、`{{iops_network_node_breakdown}}` 只允许填充模板已有位置；必须输出 Markdown 表格，列固定为 `Node | Avg | Median | Max | 风险级别 | 说明`，并按加权值从高到低排序
 - `{{qps_tps_scope_note}}`：明确写“该指标当前无节点拆分，不能用于定位单节点热点”
+- `{{cpu_range}}`、`{{memory_range}}`、`{{disk_range}}`、`{{qps_range}}`、`{{tps_range}}`、`{{replication_range}}`、`{{iops_range}}`、`{{network_in_range}}`、`{{network_out_range}}` 必须填写原始统计值对应的极差（`max - min`）
 
 ## median / weighted 补充约定
 
@@ -330,6 +345,12 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - `node_summaries[*].median` 用于识别持续偏高节点，而不是只看瞬时峰值
 - `summary.weighted` 用于实例级排序、热点判断和 CPU / 内存 / 磁盘评分
 - `node_summaries[*].weighted` 用于节点排序、热点节点判断和节点级评分
+- `summary.range` / `node_summaries[*].range` 用于衡量波动区间，避免瞬时尖峰被平均值和中位数掩盖
+- `evidence.distribution` 用于汇总 `min` / `max` / `range` / `avg` / `median` / `p95` / `p99`
+- `evidence.variability` 用于输出 `stddev` 与 `cv`
+- `evidence.spikes.sliding_mad` 用于输出滑动窗口 MAD 尖峰判断结果，其中 `method` 固定为 `sliding_mad`
+- `node_summaries[*].evidence` 用于节点级证据摘要；优先用它定位热点节点，而不是默认读原始点位
+- `evidence.spikes.sliding_mad.spike_count > 0` 时，应在结论、异常发现和行动建议里显式说明“瞬时尖峰已被识别”
 - `weighted = 0.5 * avg + 0.5 * median`
 - 节点拆分表格固定表头：`Node | Avg | Median | Max | 风险级别 | 说明`
 - `3` 节点及以上时，热点节点、次热点节点和低负载节点均按加权值排序与描述

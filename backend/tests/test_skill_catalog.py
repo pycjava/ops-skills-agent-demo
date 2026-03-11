@@ -161,8 +161,10 @@ def test_volcengine_rds_health_analyzer_uses_recent_3d_aux_window_for_long_range
     assert "instance_data_*.json" in skill_text
     assert "instance_data_recent3d_*.json" in skill_text
     assert "`3d`" in skill_text
-    assert "1h" in skill_text
-    assert "6h" in skill_text
+    assert "主窗口统一使用 `5m` 粒度采集" in skill_text
+    assert "最近 `3d` 辅助窗口也使用 `5m` 粒度" in skill_text
+    assert "| `1d - <7d` | `1h` |" not in skill_text
+    assert "| `>= 7d` | `6h` |" not in skill_text
     assert "time_range >= 7d" in template_text
 
 
@@ -182,10 +184,35 @@ def test_volcengine_rds_health_analyzer_documents_median_and_weighted_analysis()
     skill_text = read_backend_text(
         "skills", "volcengine-rds-health-analyzer", "SKILL.md"
     )
+    template_text = read_backend_text(
+        "skills",
+        "volcengine-rds-health-analyzer",
+        "assets",
+        "inspection_report_template.md",
+    )
 
     assert "`summary.median`" in skill_text
     assert "`node_summaries[*].median`" in skill_text
     assert "`summary.weighted`" in skill_text
     assert "`node_summaries[*].weighted`" in skill_text
+    assert "`summary.range`" in skill_text
+    assert "`node_summaries[*].range`" in skill_text
+    assert "`evidence.distribution`" in skill_text
+    assert "`evidence.variability`" in skill_text
+    assert "`evidence.spikes.sliding_mad`" in skill_text
+    assert "`node_summaries[*].evidence`" in skill_text
+    assert "先读 `summary`" in skill_text
+    assert "再读 `evidence`" in skill_text
+    assert "sliding_mad" in skill_text
+    assert "6 x MAD" in skill_text
     assert "`weighted = 0.5 * avg + 0.5 * median`" in skill_text
     assert "按加权值" in skill_text
+    assert "{{cpu_range}}" in template_text
+    assert "{{memory_range}}" in template_text
+    assert "{{disk_range}}" in template_text
+    assert "{{qps_range}}" in template_text
+    assert "{{tps_range}}" in template_text
+    assert "{{replication_range}}" in template_text
+    assert "{{iops_range}}" in template_text
+    assert "{{network_in_range}}" in template_text
+    assert "{{network_out_range}}" in template_text

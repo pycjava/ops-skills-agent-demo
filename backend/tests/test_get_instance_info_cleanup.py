@@ -87,10 +87,25 @@ def build_expected_summary(values):
         "data_point_count": len(values),
         "min": round(min(values), 4),
         "max": round(max(values), 4),
+        "range": round(max(values) - min(values), 4),
         "avg": avg,
         "median": median,
         "weighted": round((avg + median) / 2, 4),
     }
+
+
+def build_data_points(values, start_time, interval_minutes: int = 5):
+    data_points = []
+    for index, value in enumerate(values):
+        point_time = start_time + timedelta(minutes=index * interval_minutes)
+        data_points.append(
+            {
+                "ts": int(point_time.timestamp()),
+                "time": point_time.strftime("%Y-%m-%d %H:%M"),
+                "value": value,
+            }
+        )
+    return data_points
 
 
 def test_cleanup_expired_metric_data_deletes_only_stale_json(monkeypatch, tmp_path):
@@ -181,57 +196,62 @@ def test_build_arg_parser_supports_metric_data_retention_flags(monkeypatch):
 def test_build_node_summaries_include_median_and_weighted(monkeypatch):
     module = load_get_instance_info_module(monkeypatch)
     collector = module.MySQLInstanceInfoCollector(ak="ak", sk="sk", region="cn-shanghai")
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 20, 0)
     parsed_nodes = [
         {
             "legend": "node-a",
             "dimensions": {"Node": "node-a"},
-            "data_points": [
-                {"value": 1.0},
-                {"value": 2.0},
-                {"value": 100.0},
-                {"value": None},
-            ],
+            "data_points": build_data_points([1.0, 2.0, 100.0, 2.0, 1.0], start_time),
         },
         {
             "legend": "node-b",
             "dimensions": {"Node": "node-b"},
-            "data_points": [
-                {"value": 10.0},
-                {"value": 20.0},
-                {"value": 30.0},
-            ],
+            "data_points": build_data_points([10.0, 20.0, 30.0, 40.0, 50.0], start_time),
         },
     ]
 
-    node_summaries = collector._build_node_summaries(parsed_nodes)
+    node_summaries = collector._build_node_summaries(
+        parsed_nodes,
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
 
-    assert node_summaries[0] == {
-        "node": "node-a",
-        "legend": "node-a",
-        **build_expected_summary([1.0, 2.0, 100.0]),
-        "all_zero": False,
-    }
-    assert node_summaries[1] == {
-        "node": "node-b",
-        "legend": "node-b",
-        **build_expected_summary([10.0, 20.0, 30.0]),
-        "all_zero": False,
-    }
+    assert node_summaries[0]["node"] == "node-a"
+    assert node_summaries[0]["legend"] == "node-a"
+    assert node_summaries[0]["range"] == 99.0
+    assert "spike_detection" not in node_summaries[0]
+    assert node_summaries[0]["evidence"]["source_period"] == "5m"
+    assert node_summaries[0]["evidence"]["coverage"]["expected_point_count"] == 5
+    assert node_summaries[0]["evidence"]["spikes"]["sliding_mad"]["window_size"] == 5
+    assert node_summaries[0]["evidence"]["spikes"]["sliding_mad"]["spike_count"] == 1
+    assert node_summaries[0]["all_zero"] is False
+
+    assert node_summaries[1]["node"] == "node-b"
+    assert node_summaries[1]["legend"] == "node-b"
+    assert node_summaries[1]["range"] == 40.0
+    assert node_summaries[1]["evidence"]["distribution"]["p95"] == 50.0
+    assert node_summaries[1]["evidence"]["trend"]["direction"] == "up"
+    assert node_summaries[1]["evidence"]["spikes"]["sliding_mad"]["spike_count"] == 0
+    assert node_summaries[1]["all_zero"] is False
 
 
 def test_get_metric_data_summary_includes_median_and_weighted(monkeypatch):
     module = load_get_instance_info_module(monkeypatch)
     collector = module.MySQLInstanceInfoCollector(ak="ak", sk="sk", region="cn-shanghai")
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 20, 0)
     parsed_nodes = [
         {
             "legend": "node-a",
             "dimensions": {"Node": "node-a"},
-            "data_points": [{"value": 1.0}, {"value": 2.0}, {"value": 100.0}],
+            "data_points": build_data_points([10.0, 10.0, 10.0, 100.0, 10.0], start_time),
         },
         {
             "legend": "node-b",
             "dimensions": {"Node": "node-b"},
-            "data_points": [{"value": 10.0}, {"value": 20.0}, {"value": 30.0}],
+            "data_points": build_data_points([5.0, 10.0, 15.0, 20.0, 25.0], start_time),
         },
     ]
 
@@ -241,14 +261,61 @@ def test_get_metric_data_summary_includes_median_and_weighted(monkeypatch):
     result = collector.get_metric_data(
         instance_id="mysql-demo",
         metric_key="cpu",
-        start_time=datetime(2026, 3, 10, 0, 0, 0),
-        end_time=datetime(2026, 3, 11, 0, 0, 0),
-        period="1h",
+        start_time=start_time,
+        end_time=end_time,
+        period="5m",
     )
 
-    assert result["summary"] == build_expected_summary([1.0, 2.0, 100.0, 10.0, 20.0, 30.0])
-    assert result["node_summaries"][0]["median"] == build_expected_summary([1.0, 2.0, 100.0])["median"]
-    assert result["node_summaries"][0]["weighted"] == build_expected_summary([1.0, 2.0, 100.0])["weighted"]
+    expected_summary = build_expected_summary(
+        [10.0, 10.0, 10.0, 100.0, 10.0, 5.0, 10.0, 15.0, 20.0, 25.0]
+    )
+    for key, value in expected_summary.items():
+        assert result["summary"][key] == value
+    assert "spike_detection" not in result["summary"]
+    assert result["evidence"]["source_point_count"] == 10
+    assert result["evidence"]["source_period"] == "5m"
+    assert result["evidence"]["coverage"]["expected_point_count"] == 10
+    assert result["evidence"]["coverage"]["actual_point_count"] == 10
+    assert result["evidence"]["distribution"]["p95"] == 100.0
+    assert result["evidence"]["spikes"]["sliding_mad"]["window_size"] == 5
+    assert result["evidence"]["spikes"]["sliding_mad"]["spike_count"] == 1
+    assert result["evidence"]["spikes"]["sliding_mad"]["top_spikes"][0]["node"] == "node-a"
+    assert result["evidence"]["spikes"]["sliding_mad"]["top_spikes"][0]["time"] == "2026-03-10 00:15"
+    assert result["node_summaries"][0]["median"] == build_expected_summary([10.0, 10.0, 10.0, 100.0, 10.0])["median"]
+    assert result["node_summaries"][0]["weighted"] == build_expected_summary([10.0, 10.0, 10.0, 100.0, 10.0])["weighted"]
+    assert result["node_summaries"][0]["evidence"]["spikes"]["sliding_mad"]["spike_count"] == 1
+
+
+def test_build_metric_evidence_includes_distribution_coverage_and_trend(
+    monkeypatch,
+):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 20, 0)
+    data_points = build_data_points([10.0, 20.0, 30.0, 40.0, 50.0], start_time)
+
+    evidence = module.build_metric_evidence(
+        data_points,
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    assert evidence["source_point_count"] == 5
+    assert evidence["source_period"] == "5m"
+    assert evidence["window"]["start"] == start_time.isoformat()
+    assert evidence["window"]["end"] == end_time.isoformat()
+    assert evidence["coverage"]["expected_point_count"] == 5
+    assert evidence["coverage"]["actual_point_count"] == 5
+    assert evidence["coverage"]["missing_point_count"] == 0
+    assert evidence["coverage"]["coverage_ratio"] == 1.0
+    assert evidence["distribution"]["min"] == 10.0
+    assert evidence["distribution"]["p95"] == 50.0
+    assert evidence["distribution"]["p99"] == 50.0
+    assert evidence["variability"]["stddev"] > 0.0
+    assert evidence["variability"]["cv"] > 0.0
+    assert evidence["trend"]["direction"] == "up"
+    assert evidence["spikes"]["sliding_mad"]["spike_count"] == 0
 
 
 def test_main_cleans_expired_metric_files_before_writing_output(

@@ -19,6 +19,7 @@ import os
 import json
 import re
 import time
+import math
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -190,12 +191,175 @@ def cleanup_expired_metric_data(
     return summary
 
 
-def build_value_summary(values: List[float]) -> Dict[str, Any]:
+def resolve_mad_window_size(period: str | None) -> int:
+    normalized = str(period or "").strip().lower()
+    if normalized == "5m":
+        return 5
+    if normalized in {"1h", "6h"}:
+        return 3
+    return 3
+
+
+def period_to_seconds(period: str | None) -> int:
+    normalized = str(period or "").strip().lower()
+    if normalized.endswith("m"):
+        return int(normalized[:-1]) * 60
+    if normalized.endswith("h"):
+        return int(normalized[:-1]) * 3600
+    if normalized.endswith("d"):
+        return int(normalized[:-1]) * 86400
+    raise ValueError(f"不支持的 period: {period}")
+
+
+def percentile_nearest_rank(values: List[float], percentile: int) -> Optional[float]:
+    if not values:
+        return None
+    ordered_values = sorted(values)
+    rank = max(1, math.ceil((percentile / 100) * len(ordered_values)))
+    return round(ordered_values[rank - 1], 4)
+
+
+def calculate_coverage(
+    *,
+    start_time: Optional[datetime],
+    end_time: Optional[datetime],
+    period: str,
+    actual_point_count: int,
+    series_count: int = 1,
+) -> Dict[str, Any]:
+    expected_point_count = 0
+    if start_time and end_time and end_time >= start_time:
+        period_seconds = period_to_seconds(period)
+        duration_seconds = int((end_time - start_time).total_seconds())
+        expected_point_count = ((duration_seconds // period_seconds) + 1) * max(
+            series_count, 1
+        )
+
+    missing_point_count = max(expected_point_count - actual_point_count, 0)
+    coverage_ratio = (
+        round(actual_point_count / expected_point_count, 4)
+        if expected_point_count
+        else 0.0
+    )
+    return {
+        "expected_point_count": expected_point_count,
+        "actual_point_count": actual_point_count,
+        "missing_point_count": missing_point_count,
+        "coverage_ratio": coverage_ratio,
+    }
+
+
+def compute_trend(values: List[float]) -> Dict[str, Any]:
+    if len(values) < 2:
+        return {"direction": "flat", "slope": 0.0}
+
+    x_values = list(range(len(values)))
+    x_mean = statistics.mean(x_values)
+    y_mean = statistics.mean(values)
+    numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_values, values))
+    denominator = sum((x - x_mean) ** 2 for x in x_values)
+    slope = (numerator / denominator) if denominator else 0.0
+    rounded_slope = round(slope, 4)
+    if abs(rounded_slope) < 1e-9:
+        direction = "flat"
+    elif rounded_slope > 0:
+        direction = "up"
+    else:
+        direction = "down"
+    return {"direction": direction, "slope": rounded_slope}
+
+
+def detect_sliding_mad_spikes(
+    data_points: List[Dict[str, Any]],
+    *,
+    window_size: int,
+    mad_multiplier: float = 6.0,
+    top_n: int = 3,
+) -> Dict[str, Any]:
+    ordered_points = [dp for dp in data_points if dp.get("value") is not None]
+    values = [dp["value"] for dp in ordered_points]
+    spike_scores: dict[int, Dict[str, Any]] = {}
+
+    if window_size < 3 or len(values) < window_size:
+        return {
+            "method": "sliding_mad",
+            "window_size": window_size,
+            "mad_multiplier": float(mad_multiplier),
+            "evaluated_point_count": 0,
+            "spike_count": 0,
+            "spike_ratio": 0.0,
+            "max_deviation_score": 0.0,
+            "has_spike": False,
+            "top_spikes": [],
+        }
+
+    evaluated_indexes: set[int] = set()
+
+    for window_start in range(0, len(values) - window_size + 1):
+        window_values = values[window_start : window_start + window_size]
+        for offset, center_value in enumerate(window_values):
+            baseline = window_values[:offset] + window_values[offset + 1 :]
+            if not baseline:
+                continue
+
+            global_index = window_start + offset
+            evaluated_indexes.add(global_index)
+            baseline_median = statistics.median(baseline)
+            deviation = abs(center_value - baseline_median)
+            baseline_deviations = [abs(value - baseline_median) for value in baseline]
+            mad = statistics.median(baseline_deviations)
+
+            if mad == 0:
+                if deviation <= 0:
+                    continue
+                score = mad_multiplier + deviation
+            else:
+                score = deviation / mad
+
+            if score > mad_multiplier:
+                rounded_score = round(score, 4)
+                point = ordered_points[global_index]
+                previous_score = spike_scores.get(global_index, {}).get("score", 0.0)
+                if rounded_score >= previous_score:
+                    spike_scores[global_index] = {
+                        "ts": point.get("ts"),
+                        "time": point.get("time"),
+                        "value": point.get("value"),
+                        "score": rounded_score,
+                        "node": point.get("node"),
+                    }
+
+    spike_count = len(spike_scores)
+    evaluated_points = len(evaluated_indexes)
+    spike_ratio = round(spike_count / evaluated_points, 4) if evaluated_points else 0.0
+    top_spikes = sorted(
+        spike_scores.values(),
+        key=lambda item: (-item["score"], item.get("ts") or 0),
+    )[:top_n]
+    return {
+        "method": "sliding_mad",
+        "window_size": window_size,
+        "mad_multiplier": float(mad_multiplier),
+        "evaluated_point_count": evaluated_points,
+        "spike_count": spike_count,
+        "spike_ratio": spike_ratio,
+        "max_deviation_score": (
+            max(item["score"] for item in spike_scores.values()) if spike_scores else 0.0
+        ),
+        "has_spike": spike_count > 0,
+        "top_spikes": top_spikes,
+    }
+
+
+def build_value_summary(
+    values: List[float], *, period: str | None = "5m"
+) -> Dict[str, Any]:
     if not values:
         return {
             "data_point_count": 0,
             "min": None,
             "max": None,
+            "range": None,
             "avg": None,
             "median": None,
             "weighted": None,
@@ -207,9 +371,155 @@ def build_value_summary(values: List[float]) -> Dict[str, Any]:
         "data_point_count": len(values),
         "min": round(min(values), 4),
         "max": round(max(values), 4),
+        "range": round(max(values) - min(values), 4),
         "avg": avg,
         "median": median,
         "weighted": round((avg + median) / 2, 4),
+    }
+
+
+def build_metric_evidence(
+    data_points: List[Dict[str, Any]],
+    *,
+    period: str = "5m",
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    series_count: int = 1,
+) -> Dict[str, Any]:
+    ordered_points = [dp for dp in data_points if dp.get("value") is not None]
+    values = [dp["value"] for dp in ordered_points]
+    window_size = resolve_mad_window_size(period)
+
+    derived_start_time = start_time
+    derived_end_time = end_time
+    if ordered_points and (derived_start_time is None or derived_end_time is None):
+        timestamps = [dp["ts"] for dp in ordered_points if dp.get("ts") is not None]
+        if timestamps:
+            if derived_start_time is None:
+                derived_start_time = datetime.fromtimestamp(min(timestamps))
+            if derived_end_time is None:
+                derived_end_time = datetime.fromtimestamp(max(timestamps))
+
+    if not values:
+        return {
+            "source_point_count": 0,
+            "source_period": period,
+            "window": {
+                "start": derived_start_time.isoformat() if derived_start_time else None,
+                "end": derived_end_time.isoformat() if derived_end_time else None,
+            },
+            "coverage": calculate_coverage(
+                start_time=derived_start_time,
+                end_time=derived_end_time,
+                period=period,
+                actual_point_count=0,
+                series_count=series_count,
+            ),
+            "distribution": {
+                "min": None,
+                "max": None,
+                "range": None,
+                "avg": None,
+                "median": None,
+                "p95": None,
+                "p99": None,
+            },
+            "variability": {
+                "stddev": 0.0,
+                "cv": 0.0,
+            },
+            "spikes": {
+                "sliding_mad": detect_sliding_mad_spikes(
+                    [],
+                    window_size=window_size,
+                )
+            },
+            "trend": {"direction": "flat", "slope": 0.0},
+        }
+
+    avg = statistics.mean(values)
+    stddev = statistics.pstdev(values) if len(values) > 1 else 0.0
+    cv = (stddev / avg) if abs(avg) > 1e-9 else 0.0
+    grouped_points: Dict[str, List[Dict[str, Any]]] = {}
+    for point in ordered_points:
+        node_key = point.get("node") or "__single__"
+        grouped_points.setdefault(node_key, []).append(point)
+
+    if len(grouped_points) == 1:
+        spike_evidence = detect_sliding_mad_spikes(
+            sorted(ordered_points, key=lambda item: item.get("ts") or 0),
+            window_size=window_size,
+        )
+    else:
+        grouped_spike_results = []
+        for group_points in grouped_points.values():
+            grouped_spike_results.append(
+                detect_sliding_mad_spikes(
+                    sorted(group_points, key=lambda item: item.get("ts") or 0),
+                    window_size=window_size,
+                )
+            )
+
+        merged_top_spikes = sorted(
+            [
+                spike
+                for result in grouped_spike_results
+                for spike in result.get("top_spikes", [])
+            ],
+            key=lambda item: (-item["score"], item.get("ts") or 0),
+        )[:3]
+        evaluated_point_count = sum(
+            result.get("evaluated_point_count", 0) for result in grouped_spike_results
+        )
+        spike_count = sum(result["spike_count"] for result in grouped_spike_results)
+        spike_evidence = {
+            "method": "sliding_mad",
+            "window_size": window_size,
+            "mad_multiplier": 6.0,
+            "evaluated_point_count": evaluated_point_count,
+            "spike_count": spike_count,
+            "spike_ratio": (
+                round(spike_count / evaluated_point_count, 4)
+                if evaluated_point_count
+                else 0.0
+            ),
+            "max_deviation_score": max(
+                (result["max_deviation_score"] for result in grouped_spike_results),
+                default=0.0,
+            ),
+            "has_spike": spike_count > 0,
+            "top_spikes": merged_top_spikes,
+        }
+
+    return {
+        "source_point_count": len(values),
+        "source_period": period,
+        "window": {
+            "start": derived_start_time.isoformat() if derived_start_time else None,
+            "end": derived_end_time.isoformat() if derived_end_time else None,
+        },
+        "coverage": calculate_coverage(
+            start_time=derived_start_time,
+            end_time=derived_end_time,
+            period=period,
+            actual_point_count=len(values),
+            series_count=series_count,
+        ),
+        "distribution": {
+            "min": round(min(values), 4),
+            "max": round(max(values), 4),
+            "range": round(max(values) - min(values), 4),
+            "avg": round(avg, 4),
+            "median": round(statistics.median(values), 4),
+            "p95": percentile_nearest_rank(values, 95),
+            "p99": percentile_nearest_rank(values, 99),
+        },
+        "variability": {
+            "stddev": round(stddev, 4),
+            "cv": round(cv, 4),
+        },
+        "spikes": {"sliding_mad": spike_evidence},
+        "trend": compute_trend(values),
     }
 
 
@@ -524,7 +834,12 @@ class MySQLInstanceInfoCollector:
         return nodes
 
     def _build_node_summaries(
-        self, parsed_nodes: List[Dict[str, Any]]
+        self,
+        parsed_nodes: List[Dict[str, Any]],
+        *,
+        period: str = "5m",
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ) -> List[Dict[str, Any]]:
         """
         为每个节点生成轻量统计摘要，便于多节点场景下优先比较节点差异。
@@ -546,13 +861,20 @@ class MySQLInstanceInfoCollector:
 
             all_zero = bool(values) and all(abs(value) < 1e-9 for value in values)
             dimensions = node.get("dimensions", {})
-            summary = build_value_summary(values)
+            summary = build_value_summary(values, period=period)
+            evidence = build_metric_evidence(
+                node.get("data_points", []),
+                period=period,
+                start_time=start_time,
+                end_time=end_time,
+            )
 
             node_summaries.append(
                 {
                     "node": dimensions.get("Node", ""),
                     "legend": node.get("legend", ""),
                     **summary,
+                    "evidence": evidence,
                     "all_zero": all_zero,
                 }
             )
@@ -613,7 +935,12 @@ class MySQLInstanceInfoCollector:
 
         # 解析SDK response对象，提取干净的数据
         parsed_nodes = self._parse_metric_response(response)
-        node_summaries = self._build_node_summaries(parsed_nodes)
+        node_summaries = self._build_node_summaries(
+            parsed_nodes,
+            period=period,
+            start_time=start_time,
+            end_time=end_time,
+        )
 
         result = {
             "metric_key": metric_key,
@@ -627,13 +954,26 @@ class MySQLInstanceInfoCollector:
 
         # 计算汇总统计
         all_values = []
+        all_points = []
         for node in parsed_nodes:
             for dp in node.get("data_points", []):
                 if dp.get("value") is not None:
                     all_values.append(dp["value"])
+                    all_points.append(
+                        {
+                            **dp,
+                            "node": node.get("dimensions", {}).get("Node", ""),
+                        }
+                    )
 
-        if all_values:
-            result["summary"] = build_value_summary(all_values)
+        result["summary"] = build_value_summary(all_values, period=period)
+        result["evidence"] = build_metric_evidence(
+            all_points,
+            period=period,
+            start_time=start_time,
+            end_time=end_time,
+            series_count=max(len(parsed_nodes), 1),
+        )
 
         return result
 

@@ -74,6 +74,7 @@
 |------|------|
 | 最小值 | {{cpu_min}} |
 | 最大值 | {{cpu_max}} |
+| 极差 | {{cpu_range}} |
 | 平均值 | {{cpu_avg}} |
 | 中位数 | {{cpu_median}} |
 | 结论 | {{cpu_conclusion}} |
@@ -92,6 +93,7 @@
 |------|------|
 | 最小值 | {{memory_min}} |
 | 最大值 | {{memory_max}} |
+| 极差 | {{memory_range}} |
 | 平均值 | {{memory_avg}} |
 | 中位数 | {{memory_median}} |
 | 结论 | {{memory_conclusion}} |
@@ -110,6 +112,7 @@
 |------|------|
 | 最小值 | {{disk_min}} |
 | 最大值 | {{disk_max}} |
+| 极差 | {{disk_range}} |
 | 平均值 | {{disk_avg}} |
 | 中位数 | {{disk_median}} |
 | 结论 | {{disk_conclusion}} |
@@ -124,10 +127,10 @@
 
 **统计值**：
 
-| 指标 | 最小值 | 最大值 | 平均值 | 中位数 | 结论 |
-|------|--------|--------|--------|--------|------|
-| QPS | {{qps_min}} | {{qps_max}} | {{qps_avg}} | {{qps_median}} | {{qps_conclusion}} |
-| TPS | {{tps_min}} | {{tps_max}} | {{tps_avg}} | {{tps_median}} | {{tps_conclusion}} |
+| 指标 | 最小值 | 最大值 | 极差 | 平均值 | 中位数 | 结论 |
+|------|--------|--------|------|--------|--------|------|
+| QPS | {{qps_min}} | {{qps_max}} | {{qps_range}} | {{qps_avg}} | {{qps_median}} | {{qps_conclusion}} |
+| TPS | {{tps_min}} | {{tps_max}} | {{tps_range}} | {{tps_avg}} | {{tps_median}} | {{tps_conclusion}} |
 
 **范围说明**：
 {{qps_tps_scope_note}}
@@ -143,6 +146,7 @@
 |------|------|
 | 最小值 | {{replication_min}} |
 | 最大值 | {{replication_max}} |
+| 极差 | {{replication_range}} |
 | 平均值 | {{replication_avg}} |
 | 中位数 | {{replication_median}} |
 | 结论 | {{replication_conclusion}} |
@@ -157,11 +161,11 @@
 
 **统计值**：
 
-| 指标 | 最小值 | 最大值 | 平均值 | 中位数 | 结论 |
-|------|--------|--------|--------|--------|------|
-| IOPS | {{iops_min}} | {{iops_max}} | {{iops_avg}} | {{iops_median}} | {{iops_conclusion}} |
-| 网络入流量 | {{network_in_min}} | {{network_in_max}} | {{network_in_avg}} | {{network_in_median}} | {{network_in_conclusion}} |
-| 网络出流量 | {{network_out_min}} | {{network_out_max}} | {{network_out_avg}} | {{network_out_median}} | {{network_out_conclusion}} |
+| 指标 | 最小值 | 最大值 | 极差 | 平均值 | 中位数 | 结论 |
+|------|--------|--------|------|--------|--------|------|
+| IOPS | {{iops_min}} | {{iops_max}} | {{iops_range}} | {{iops_avg}} | {{iops_median}} | {{iops_conclusion}} |
+| 网络入流量 | {{network_in_min}} | {{network_in_max}} | {{network_in_range}} | {{network_in_avg}} | {{network_in_median}} | {{network_in_conclusion}} |
+| 网络出流量 | {{network_out_min}} | {{network_out_max}} | {{network_out_range}} | {{network_out_avg}} | {{network_out_median}} | {{network_out_conclusion}} |
 
 **分析说明**：
 {{iops_network_analysis}}
