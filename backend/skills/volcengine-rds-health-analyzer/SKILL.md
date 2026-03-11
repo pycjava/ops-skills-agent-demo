@@ -145,9 +145,13 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - `summary.min`
    - `summary.max`
    - `summary.avg`
+   - `summary.median`
+   - `summary.weighted`
    - `summary.data_point_count`
    - `node_summaries[*].node`
    - `node_summaries[*].avg`
+   - `node_summaries[*].median`
+   - `node_summaries[*].weighted`
    - `node_summaries[*].max`
    - `node_summaries[*].all_zero`
    - `nodes`
@@ -228,7 +232,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - `node_count > 1` 且属于节点级指标：先读 `summary` 与 `node_summaries`，只有节点异常或需要解释偏斜时才继续读 `nodes[].data_points`
 - 节点级结论必须分两层：先给实例整体结论，再给最差节点 / 热点节点结论，避免跨节点均值掩盖单节点热点
 - `2` 节点集群：重点写“节点 A vs 节点 B”的并排对比；如果整体正常但单节点进入告警档，异常发现里必须点名该 `Node ID`
-- `3` 节点及以上：按 `avg` 从高到低排序，明确写出热点节点、次热点节点和低负载节点，并解释负载分布
+- `3` 节点及以上：按加权值从高到低排序，明确写出热点节点、次热点节点和低负载节点，并解释负载分布；`weighted = 0.5 * avg + 0.5 * median`
 - 不猜测主从角色，只使用 `Node ID`；没有可靠角色字段时，不要自行标注“主节点 / 从节点 / 只读节点”
 - `replication_delay` 中 `all_zero = true` 的节点视为“非适用 / 疑似源节点候选”，不参与最差节点比较；若所有节点都为 `all_zero = true`，写“未观测到复制延迟”
 - `qps` / `tps` 明确标注为“实例级指标，无节点拆分，不能用于定位单节点热点”
@@ -249,7 +253,8 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 严格按以下规则计算：
 
 - 多节点补充规则：
-  - `cpu` / `memory` / `disk_util` 等按平均值判断的节点级指标，先按 `summary.avg` 计算实例级得分，再按每个适用节点的 `node.avg` 计算节点得分，最终取更差者：`final_score = min(score(summary.avg), min(score(node.avg) for node in node_summaries if node.avg is not None))`
+  - `cpu` / `memory` / `disk_util` 等节点级指标统一先计算 `weighted = 0.5 * avg + 0.5 * median`
+  - `cpu` / `memory` / `disk_util` 等节点级指标，先按 `summary.weighted` 计算实例级得分，再按每个适用节点的 `node.weighted` 计算节点得分，最终取更差者：`final_score = min(score(summary.weighted), min(score(node.weighted) for node in node_summaries if node.weighted is not None))`
   - `replication_delay` 仍按延迟上界判断，但仅比较 `all_zero != true` 的节点；最终取实例级与最差适用节点中更差者
   - `qps` / `tps` 继续按实例级 `summary` 评分 / 分析，不做节点排名
 
@@ -315,8 +320,19 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - 当主窗口 `time_range >= 7d` 时，必须显式区分“主窗口（用户请求范围）”与“最近 3 天辅助窗口”
 - 不允许用最近 `3d` 的数据覆盖主窗口数据，也不允许把主窗口数据改写成最近 `3d` 结论；两者都必须按原值引用并带窗口标签
 - `{{node_topology_summary}}`：写实例的节点拓扑摘要；`2` 节点突出对比，`3` 节点及以上突出排序
-- `{{cpu_node_breakdown}}`、`{{memory_node_breakdown}}`、`{{disk_node_breakdown}}`、`{{replication_node_breakdown}}`、`{{iops_network_node_breakdown}}` 只允许填充模板已有位置；必须输出 Markdown 表格，列固定为 `Node | Avg | Max | 风险级别 | 说明`，并按 `avg` 从高到低排序
+- `{{cpu_node_breakdown}}`、`{{memory_node_breakdown}}`、`{{disk_node_breakdown}}`、`{{replication_node_breakdown}}`、`{{iops_network_node_breakdown}}` 只允许填充模板已有位置；必须输出 Markdown 表格，列固定为 `Node | Avg | Median | Max | 风险级别 | 说明`，并按加权值从高到低排序
 - `{{qps_tps_scope_note}}`：明确写“该指标当前无节点拆分，不能用于定位单节点热点”
+
+## median / weighted 补充约定
+
+- 多节点指标优先读取 `summary.avg`、`summary.median`、`summary.weighted`，再对比 `node_summaries[*].avg`、`node_summaries[*].median`、`node_summaries[*].weighted`
+- `summary.median` 用于补足只看均值时对持续高负载的识别盲区
+- `node_summaries[*].median` 用于识别持续偏高节点，而不是只看瞬时峰值
+- `summary.weighted` 用于实例级排序、热点判断和 CPU / 内存 / 磁盘评分
+- `node_summaries[*].weighted` 用于节点排序、热点节点判断和节点级评分
+- `weighted = 0.5 * avg + 0.5 * median`
+- 节点拆分表格固定表头：`Node | Avg | Median | Max | 风险级别 | 说明`
+- `3` 节点及以上时，热点节点、次热点节点和低负载节点均按加权值排序与描述
 
 如果保存为 Markdown，建议文件名与路径：
 
@@ -355,3 +371,8 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - `execute` 成功但无输出时，应把它视为“命令执行成功但没有终端文本”，不要围绕 `flush`、同一条 `python -c` 命令或其他 inline script 反复重试。
 - 不得通过 `write_file` / `edit_file` 生成分析脚本，也不得通过 `execute python -c`、`python <<EOF`、PowerShell inline script 对 `metric_data/*.json` 做脚本化分析。
 - 生成巡检 Markdown 报告时，必须遵循 `./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md` 的格式与章节结构。
+## metric_data retention
+
+- 每次执行采集脚本前，会自动清理 `./metric_data/` 中修改时间超过 `30` 天的 `.json` 文件
+- 可通过 `--retention-days <days>` 调整保留期
+- 可通过 `--skip-cleanup` 跳过本次清理

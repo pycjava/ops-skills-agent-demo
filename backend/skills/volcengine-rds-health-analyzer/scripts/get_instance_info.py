@@ -14,6 +14,7 @@ MySQL实例健康巡检脚本
 4. 生成结构化巡检报告
 """
 
+import argparse
 import os
 import json
 import re
@@ -28,6 +29,9 @@ import volcenginesdkcore
 import volcenginesdkrdsmysqlv2
 import volcenginesdkcloudmonitor
 from volcenginesdkcore.rest import ApiException
+
+
+DEFAULT_OUTPUT_DIR = r"D:\Study\python\agent\maintenance-agent\metric_data"
 
 
 def load_runtime_env() -> None:
@@ -94,6 +98,119 @@ def resolve_credentials(
             f"未找到 credential_ref={normalized_ref} 对应的环境变量，请检查 {ak_key} / {sk_key}"
         )
     return resolved_ak, resolved_sk
+
+
+def non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be a non-negative integer")
+    return parsed
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Collect Volcengine RDS MySQL instance details and metrics."
+    )
+    parser.add_argument("--instance-id", required=True, help="MySQL instance ID")
+    parser.add_argument("--ak", help="Volcengine access key")
+    parser.add_argument("--sk", help="Volcengine secret key")
+    parser.add_argument("--credential-ref", help="Credential ref")
+    parser.add_argument(
+        "--action",
+        choices=["detail", "metrics", "all"],
+        default="all",
+        help="detail, metrics, or all",
+    )
+    parser.add_argument("--start", help="Start time in YYYY-MM-DD HH:MM format")
+    parser.add_argument("--end", help="End time in YYYY-MM-DD HH:MM format")
+    parser.add_argument(
+        "--hours",
+        type=int,
+        default=1,
+        help="Recent hours to query when start/end are not provided",
+    )
+    parser.add_argument("--period", default="5m", help="Metric aggregation period")
+    parser.add_argument("--region", default="cn-shanghai", help="Volcengine region")
+    parser.add_argument("--output", help="Output file path in JSON format")
+    parser.add_argument(
+        "--retention-days",
+        type=non_negative_int,
+        default=30,
+        help="Delete metric_data JSON files older than this many days before collection",
+    )
+    parser.add_argument(
+        "--skip-cleanup",
+        action="store_true",
+        help="Skip deleting expired metric_data JSON files before collection",
+    )
+    return parser
+
+
+def cleanup_expired_metric_data(
+    output_dir: str | Path,
+    retention_days: int,
+    *,
+    now: datetime | None = None,
+    printer=print,
+) -> dict[str, int]:
+    metric_dir = Path(output_dir)
+    summary = {"scanned": 0, "deleted": 0, "failed": 0}
+
+    if not metric_dir.exists():
+        return summary
+
+    current_time = now or datetime.now()
+    cutoff_time = current_time - timedelta(days=retention_days)
+
+    for file_path in sorted(metric_dir.glob("*.json")):
+        if not file_path.is_file():
+            continue
+
+        summary["scanned"] += 1
+        modified_at = datetime.fromtimestamp(file_path.stat().st_mtime)
+        if modified_at >= cutoff_time:
+            continue
+
+        try:
+            os.remove(file_path)
+            summary["deleted"] += 1
+            printer(f"Deleted expired metric_data file: {file_path}")
+        except OSError as exc:
+            summary["failed"] += 1
+            printer(
+                f"Warning: failed to delete expired metric_data file {file_path}: {exc}"
+            )
+
+    printer(
+        "metric_data cleanup summary: "
+        f"scanned={summary['scanned']}, "
+        f"deleted={summary['deleted']}, "
+        f"failed={summary['failed']}"
+    )
+    return summary
+
+
+def build_value_summary(values: List[float]) -> Dict[str, Any]:
+    if not values:
+        return {
+            "data_point_count": 0,
+            "min": None,
+            "max": None,
+            "avg": None,
+            "median": None,
+            "weighted": None,
+        }
+
+    avg = round(statistics.mean(values), 4)
+    median = round(statistics.median(values), 4)
+    return {
+        "data_point_count": len(values),
+        "min": round(min(values), 4),
+        "max": round(max(values), 4),
+        "avg": avg,
+        "median": median,
+        "weighted": round((avg + median) / 2, 4),
+    }
 
 
 class MySQLInstanceInfoCollector:
@@ -429,15 +546,13 @@ class MySQLInstanceInfoCollector:
 
             all_zero = bool(values) and all(abs(value) < 1e-9 for value in values)
             dimensions = node.get("dimensions", {})
+            summary = build_value_summary(values)
 
             node_summaries.append(
                 {
                     "node": dimensions.get("Node", ""),
                     "legend": node.get("legend", ""),
-                    "data_point_count": len(values),
-                    "min": round(min(values), 4) if values else None,
-                    "max": round(max(values), 4) if values else None,
-                    "avg": round(statistics.mean(values), 4) if values else None,
+                    **summary,
                     "all_zero": all_zero,
                 }
             )
@@ -518,12 +633,7 @@ class MySQLInstanceInfoCollector:
                     all_values.append(dp["value"])
 
         if all_values:
-            result["summary"] = {
-                "data_point_count": len(all_values),
-                "min": round(min(all_values), 4),
-                "max": round(max(all_values), 4),
-                "avg": round(statistics.mean(all_values), 4),
-            }
+            result["summary"] = build_value_summary(all_values)
 
         return result
 
@@ -650,7 +760,7 @@ def main():
     import argparse
 
     load_runtime_env()
-    default_output_dir = r"D:\Study\python\agent\maintenance-agent\metric_data"
+    default_output_dir = DEFAULT_OUTPUT_DIR
 
     parser = argparse.ArgumentParser(
         description="获取MySQL实例基础配置和监控信息",
@@ -700,7 +810,30 @@ def main():
     parser.add_argument("--region", default="cn-shanghai", help="区域")
     parser.add_argument("--output", help="输出文件路径（JSON格式）")
 
+    parser.add_argument(
+        "--retention-days",
+        type=non_negative_int,
+        default=30,
+        help="metric_data JSON retention window in days before auto cleanup",
+    )
+    parser.add_argument(
+        "--skip-cleanup",
+        action="store_true",
+        help="skip deleting expired metric_data JSON files before collection",
+    )
+
     args = parser.parse_args()
+    output_dir = default_output_dir
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    default_base_name = f"{args.instance_id}_{args.action}_{timestamp}"
+
+    if args.output:
+        output_dir = os.path.dirname(args.output) or "."
+        base_name = os.path.splitext(os.path.basename(args.output))[0]
+    else:
+        base_name = default_base_name
+
+    os.makedirs(output_dir, exist_ok=True)
 
     if not ((args.ak and args.sk) or args.credential_ref):
         parser.error("必须提供 --credential-ref，或同时提供 --ak 和 --sk")
@@ -712,6 +845,12 @@ def main():
     else:
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=args.hours)
+
+    if not args.skip_cleanup:
+        cleanup_expired_metric_data(
+            output_dir=output_dir,
+            retention_days=args.retention_days,
+        )
 
     resolved_ak, resolved_sk = resolve_credentials(
         ak=args.ak,
@@ -744,18 +883,6 @@ def main():
             end_time=end_time,
             period=args.period,
         )
-
-    output_dir = default_output_dir
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    default_base_name = f"{args.instance_id}_{args.action}_{timestamp}"
-
-    if args.output:
-        output_dir = os.path.dirname(args.output) or "."
-        base_name = os.path.splitext(os.path.basename(args.output))[0]
-    else:
-        base_name = default_base_name
-
-    os.makedirs(output_dir, exist_ok=True)
 
     if args.action == "all":
         common_info = result["common"]
