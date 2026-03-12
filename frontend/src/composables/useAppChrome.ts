@@ -18,6 +18,7 @@ interface UseAppChromeOptions {
   connect: () => void
   fetchAgents: () => Promise<void>
   fetchConversations: () => Promise<void>
+  fetchTaskNotifications: () => Promise<void>
   fetchSkills: (agentId?: string) => Promise<void>
   fetchMcpServers: () => Promise<void>
   fetchMemoryTree: (force?: boolean) => Promise<void>
@@ -31,6 +32,7 @@ export function useAppChrome({
   connect,
   fetchAgents,
   fetchConversations,
+  fetchTaskNotifications,
   fetchSkills,
   fetchMcpServers,
   fetchMemoryTree,
@@ -198,6 +200,7 @@ export function useAppChrome({
     connect()
     await fetchAgents()
     await fetchConversations()
+    await fetchTaskNotifications()
     await fetchSkills()
     await fetchMcpServers()
     await nextTick()

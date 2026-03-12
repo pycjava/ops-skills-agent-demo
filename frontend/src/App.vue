@@ -11,12 +11,14 @@ import MessageBubble from './components/MessageBubble.vue'
 import MysqlInstanceSelectorDialog from './components/MysqlInstanceSelectorDialog.vue'
 import SkillPanel from './components/SkillPanel.vue'
 import TaskDrawer from './components/TaskDrawer.vue'
+import TaskNotificationCenter from './components/TaskNotificationCenter.vue'
 import { MAX_CONVERSATION_ATTACHMENTS } from './constants/attachments'
 import {
   useChatStore,
   type CloudContextCandidate,
   type InspectionTaskDraft,
   type InspectionTaskIntentAnalysis,
+  type TaskNotification,
 } from './stores/chat'
 import type { TaskStreamEvent } from './stores/chat/tasks'
 import { toAttachmentSnapshot } from './stores/chat/helpers'
@@ -165,6 +167,7 @@ const {
   connect: chatStore.connect,
   fetchAgents: chatStore.fetchAgents,
   fetchConversations: chatStore.fetchConversations,
+  fetchTaskNotifications: chatStore.fetchTaskNotifications,
   fetchSkills: chatStore.fetchSkills,
   fetchMcpServers: chatStore.fetchMcpServers,
   fetchMemoryTree: chatStore.fetchMemoryTree,
@@ -330,6 +333,37 @@ async function handleTaskDelete(taskId: string) {
 async function handleTaskConversationOpen(conversationId: string) {
   await chatStore.switchConversation(conversationId)
   closeTaskDrawer()
+}
+
+async function handleTaskNotificationRead(notificationId: string) {
+  await chatStore.markTaskNotificationRead(notificationId)
+}
+
+async function handleTaskNotificationReadAll() {
+  await chatStore.markAllTaskNotificationsRead()
+}
+
+async function handleTaskNotificationConversationOpen(conversationId: string) {
+  const notification = chatStore.taskNotifications.find(
+    (item) => item.conversation_id === conversationId,
+  )
+  if (notification && !notification.read_at) {
+    await chatStore.markTaskNotificationRead(notification.id)
+  }
+  closeTaskDrawer()
+  closeInspector()
+  await chatStore.switchConversation(conversationId)
+}
+
+async function handleTaskNotificationDownload(notification: TaskNotification) {
+  if (!notification.read_at) {
+    await chatStore.markTaskNotificationRead(notification.id)
+  }
+  if (!notification.report_path) return
+  await chatStore.downloadTaskNotificationReport(
+    notification.report_path,
+    notification.report_name,
+  )
 }
 
 function handleOpenInspectorDrawer() {
@@ -719,6 +753,16 @@ async function handleConversationTitleSave(title: string) {
           >
             {{ isDark ? '☀️' : '🌙' }}
           </button>
+          <TaskNotificationCenter
+            :notifications="chatStore.taskNotifications"
+            :unread-count="chatStore.unreadTaskNotificationCount"
+            :toast="chatStore.taskNotificationToast"
+            @read="handleTaskNotificationRead"
+            @read-all="handleTaskNotificationReadAll"
+            @open-conversation="handleTaskNotificationConversationOpen"
+            @download-report="handleTaskNotificationDownload"
+            @dismiss-toast="chatStore.dismissTaskNotificationToast"
+          />
           <button
             class="icon-btn"
             data-testid="open-task-drawer-btn"

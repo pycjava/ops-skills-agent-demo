@@ -87,10 +87,18 @@ def test_create_from_conversation_message_route_returns_created_task(
 ):
     client = create_test_client(session_factory)
 
-    async def fake_create_from_message(conversation_id, message, *, session_factory, now=None):
+    async def fake_create_from_message(
+        conversation_id,
+        message,
+        *,
+        session_factory,
+        now=None,
+        previous_context=None,
+    ):
         assert conversation_id == "conv-1"
         assert message == "Generate a scheduled task and run it every day at 09:00"
         assert now == datetime(2026, 3, 11, 8, 0)
+        assert previous_context is None
         return {
             "status": "created",
             "intent_analysis": {
@@ -147,10 +155,18 @@ def test_create_from_conversation_message_route_returns_not_task_creation(
 ):
     client = create_test_client(session_factory)
 
-    async def fake_create_from_message(conversation_id, message, *, session_factory, now=None):
+    async def fake_create_from_message(
+        conversation_id,
+        message,
+        *,
+        session_factory,
+        now=None,
+        previous_context=None,
+    ):
         assert conversation_id == "conv-1"
         assert message == "Can you summarize the latest findings?"
         assert now is None
+        assert previous_context is None
         return {"status": "not_task_creation"}
 
     monkeypatch.setattr(
@@ -178,10 +194,18 @@ def test_create_from_conversation_message_route_returns_error_status(
 ):
     client = create_test_client(session_factory)
 
-    async def fake_create_from_message(conversation_id, message, *, session_factory, now=None):
+    async def fake_create_from_message(
+        conversation_id,
+        message,
+        *,
+        session_factory,
+        now=None,
+        previous_context=None,
+    ):
         assert conversation_id == "conv-1"
         assert message == "Create a scheduled task for this conversation"
         assert now is None
+        assert previous_context is None
         return {
             "status": "error",
             "message": "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
