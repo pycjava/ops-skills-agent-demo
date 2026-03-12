@@ -1,4 +1,4 @@
-import type { CloudContextCandidate } from '../stores/chat'
+import type { CloudContextCandidate } from '../stores/chat/types'
 
 const MYSQL_KEYWORD_RE = /\b(mysql|rds)\b/i
 const INSPECTION_KEYWORD_RE =

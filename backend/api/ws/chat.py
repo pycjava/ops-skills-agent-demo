@@ -32,6 +32,13 @@ from utils.logger import logger
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
 
+SUBAGENT_LABELS = {
+    "dba": "数据库助手",
+    "ops": "运维助手",
+    "general-purpose": "通用助手",
+}
+
+
 @router.websocket("/chat")
 async def websocket_chat(ws: WebSocket):
     await ws.accept()
@@ -95,17 +102,35 @@ async def websocket_chat(ws: WebSocket):
         await ws.send_text(json.dumps(normalized_event, ensure_ascii=False))
 
         if etype == "tool_call":
+            tool_name = normalized_event.get("tool_name", "")
+            tool_input = normalized_event.get("tool_input", {})
             desc = normalized_event.get(
-                "tool_desc", f"执行 Tool: {normalized_event.get('tool_name', '')}"
+                "tool_desc", f"执行 Tool: {tool_name}"
             )
+            
+            if tool_name == "task":
+                subagent_type = tool_input.get("subagent_type", "unknown") if tool_input else "unknown"
+                subagent_label = SUBAGENT_LABELS.get(subagent_type, subagent_type)
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "routing",
+                            "subagent_type": subagent_type,
+                            "subagent_label": subagent_label,
+                            "agent_id": event_agent_id,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            
             await save_message(
                 current_conv_id,
                 "system",
                 desc,
                 "tool_call",
                 agent_id=event_agent_id,
-                tool_name=normalized_event.get("tool_name"),
-                tool_input=normalized_event.get("tool_input"),
+                tool_name=tool_name,
+                tool_input=tool_input,
                 thinking=event_state.pop_step_thinking(),
             )
         elif etype == "tool_result":

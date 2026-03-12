@@ -36,6 +36,81 @@ describe('createConversationDomain', () => {
     vi.restoreAllMocks()
   })
 
+  test('resets a new chat to orchestrator instead of reusing the previous conversation agent', () => {
+    const messages: Array<Record<string, unknown>> = [
+      {
+        id: 'msg-1',
+        role: 'assistant',
+        content: 'Existing conversation content',
+        type: 'text',
+      },
+    ]
+    const conversations = ref<ConversationItem[]>([
+      {
+        id: 'conv-1',
+        title: 'Legacy DBA conversation',
+        source: 'web',
+        agent_id: 'dba',
+        created_at: null,
+        updated_at: null,
+      },
+    ])
+    const currentConversationId = ref<string | null>('conv-1')
+    const draftAgentId = ref('dba')
+    const agents = ref<AgentInfo[]>([
+      {
+        id: 'orchestrator',
+        label: 'Orchestrator',
+        description: '',
+        capabilities: [],
+        is_default: true,
+      },
+      {
+        id: 'dba',
+        label: 'DBA',
+        description: '',
+        capabilities: [],
+        is_default: false,
+      },
+    ])
+    const isLoading = ref(true)
+    const wsState = {
+      current: {
+        readyState: WebSocket.OPEN,
+        send: vi.fn(),
+      } as Pick<WebSocket, 'readyState' | 'send'> as WebSocket,
+    }
+    const fetchSkills = vi.fn(async () => {})
+
+    const domain = createConversationDomain({
+      backendUrl: '',
+      messages: messages as never[],
+      conversations,
+      currentConversationId,
+      draftAgentId,
+      activeAgentId: computed(() => draftAgentId.value),
+      agents,
+      isLoading,
+      wsState,
+      fetchSkills,
+    })
+
+    domain.createConversation()
+
+    expect(currentConversationId.value).toBeNull()
+    expect(draftAgentId.value).toBe('orchestrator')
+    expect(messages).toEqual([])
+    expect(isLoading.value).toBe(false)
+    expect(fetchSkills).toHaveBeenCalledWith('orchestrator')
+    expect(wsState.current.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        type: 'init',
+        conversation_id: null,
+        agent_id: 'orchestrator',
+      }),
+    )
+  })
+
   test('restores attachment snapshots from conversation history messages', async () => {
     const messages: Array<Record<string, unknown>> = []
     const conversations = ref<ConversationItem[]>([

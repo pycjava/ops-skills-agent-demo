@@ -1,5 +1,5 @@
 import type { ComputedRef, Ref } from 'vue'
-import { readErrorMessage } from './helpers'
+import { CHAT_ENTRY_AGENT_ID, readErrorMessage } from './helpers'
 import type { AgentInfo, ConversationAttachment, ConversationItem } from './types'
 
 interface AttachmentDomainDeps {
@@ -128,7 +128,8 @@ export function createAttachmentDomain({
       if (previousConversationId) {
         formData.append('conversation_id', previousConversationId)
       } else {
-        formData.append('agent_id', activeAgentId.value)
+        void activeAgentId
+        formData.append('agent_id', CHAT_ENTRY_AGENT_ID)
       }
 
       const res = await fetch(`${backendUrl}/api/conversations/attachments`, {

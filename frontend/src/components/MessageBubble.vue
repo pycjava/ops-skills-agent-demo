@@ -164,6 +164,36 @@ const metaLabel = computed(() => {
   return '系统消息'
 })
 
+function resolveAgentLabel(agentId?: string): string | null {
+  const normalizedAgentId = typeof agentId === 'string' ? agentId.trim() : ''
+  if (!normalizedAgentId) return null
+
+  const matchingAgent = chatStore.agents.find((agent) => agent.id === normalizedAgentId)
+  return matchingAgent?.label || null
+}
+
+const messageAgentLabel = computed(() => {
+  if (props.message.role === 'user') return null
+
+  if (
+    props.message.type === 'tool_call' &&
+    props.message.toolName === 'task' &&
+    typeof props.message.toolInput?.subagent_type === 'string'
+  ) {
+    return resolveAgentLabel(props.message.toolInput.subagent_type) || '智能编排助手'
+  }
+
+  return resolveAgentLabel(props.message.agentId) || '智能编排助手'
+})
+
+const assistantAgentLabel = computed(() =>
+  props.message.role === 'assistant' ? messageAgentLabel.value : null,
+)
+
+const systemAgentLabel = computed(() =>
+  props.message.role === 'system' ? messageAgentLabel.value : null,
+)
+
 const formattedTime = computed(() => {
   if (!props.message.timestamp) return ''
   return new Date(props.message.timestamp).toLocaleTimeString('zh-CN', {
@@ -322,6 +352,11 @@ const artifactActionLabel = computed(() => {
     </div>
 
     <article v-else-if="isAssistant" class="assistant-row">
+      <div class="assistant-meta">
+        <span v-if="assistantAgentLabel" class="assistant-agent">{{ assistantAgentLabel }}</span>
+        <span v-if="formattedTime" class="assistant-time">{{ formattedTime }}</span>
+      </div>
+
       <div v-if="message.thinking" class="thinking-panel">
         <div class="thinking-header" @click="showThinking = !showThinking">
           <span class="thinking-badge">{{ message.streaming ? '思考中' : '思考过程' }}</span>
@@ -339,6 +374,7 @@ const artifactActionLabel = computed(() => {
       <div class="system-meta">
         <span class="system-badge" :class="{ danger: isError }">{{ metaLabel }}</span>
         <span v-if="toolLabel" class="system-tool">{{ toolLabel }}</span>
+        <span v-if="systemAgentLabel" class="system-agent">{{ systemAgentLabel }}</span>
         <span v-if="formattedTime" class="system-time">{{ formattedTime }}</span>
       </div>
 
@@ -533,6 +569,28 @@ const artifactActionLabel = computed(() => {
   color: var(--text-strong);
 }
 
+.assistant-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.assistant-agent {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(139, 115, 255, 0.12);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.assistant-time {
+  font-size: 12px;
+}
+
 .assistant-content {
   font-size: 18px;
   line-height: 1.85;
@@ -705,6 +763,15 @@ const artifactActionLabel = computed(() => {
 .system-tool {
   color: var(--text);
   font-weight: 600;
+}
+
+.system-agent {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(139, 115, 255, 0.12);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .system-time {

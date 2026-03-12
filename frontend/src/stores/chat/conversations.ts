@@ -1,6 +1,7 @@
 import type { ComputedRef, Ref } from 'vue'
 import { getConversationTitleError, normalizeConversationTitle } from '../../utils/conversationTitle'
 import {
+  CHAT_ENTRY_AGENT_ID,
   findRecentToolInput,
   normalizeAttachmentSnapshots,
   readErrorMessage,
@@ -91,12 +92,13 @@ export function createConversationDomain({
   }
 
   function createConversation() {
-    draftAgentId.value = activeAgentId.value
+    void activeAgentId
+    draftAgentId.value = CHAT_ENTRY_AGENT_ID
     currentConversationId.value = null
     messages.length = 0
     isLoading.value = false
-    void fetchSkills(draftAgentId.value)
-    sendConversationInit(wsState, null, draftAgentId.value)
+    void fetchSkills(CHAT_ENTRY_AGENT_ID)
+    sendConversationInit(wsState, null, CHAT_ENTRY_AGENT_ID)
   }
 
   async function switchConversation(convId: string) {
@@ -263,10 +265,11 @@ export function createConversationDomain({
           await switchConversation(conversations.value[0].id)
         } else {
           currentConversationId.value = null
+          draftAgentId.value = CHAT_ENTRY_AGENT_ID
           messages.length = 0
           isLoading.value = false
-          await fetchSkills(draftAgentId.value)
-          sendConversationInit(wsState, null, draftAgentId.value)
+          await fetchSkills(CHAT_ENTRY_AGENT_ID)
+          sendConversationInit(wsState, null, CHAT_ENTRY_AGENT_ID)
         }
       }
     } catch (error) {

@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue'
 import {
+  CHAT_ENTRY_AGENT_ID,
   findRecentToolInput,
   resolveConversationAgentId,
   toAttachmentSnapshot,
@@ -42,6 +43,13 @@ function finishStreamingAssistantMessage(messages: ChatMessage[]) {
   }
 }
 
+function normalizeAgentId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+
+  const normalized = value.trim()
+  return normalized || undefined
+}
+
 export function createSocketDomain({
   wsUrl,
   messages,
@@ -58,6 +66,10 @@ export function createSocketDomain({
   handleMemoryArtifact,
   handleTaskNotificationEvent,
 }: SocketDomainDeps) {
+  void activeAgentId
+  const pendingRoutedAgentIds: string[] = []
+  let pendingAssistantAgentId: string | undefined
+
   function connect() {
     if (
       wsState.current &&
@@ -75,7 +87,7 @@ export function createSocketDomain({
         JSON.stringify({
           type: 'init',
           conversation_id: currentConversationId.value,
-          agent_id: currentConversationId.value ? undefined : activeAgentId.value,
+          agent_id: currentConversationId.value ? undefined : CHAT_ENTRY_AGENT_ID,
         }),
       )
     }
@@ -97,14 +109,27 @@ export function createSocketDomain({
             role: 'assistant',
             content: data.content,
             type: 'text',
-            agentId: data.agent_id,
+            agentId:
+              pendingAssistantAgentId ||
+              normalizeAgentId(data.agent_id) ||
+              CHAT_ENTRY_AGENT_ID,
             timestamp: Date.now(),
           })
           break
 
         case 'text_delta': {
+          const incomingAgentId =
+            pendingAssistantAgentId ||
+            normalizeAgentId(data.agent_id) ||
+            CHAT_ENTRY_AGENT_ID
           const lastMessage = messages[messages.length - 1]
-          if (lastMessage && lastMessage.role === 'assistant' && lastMessage.type === 'text') {
+          if (
+            lastMessage &&
+            lastMessage.role === 'assistant' &&
+            lastMessage.type === 'text' &&
+            lastMessage.agentId === incomingAgentId &&
+            lastMessage.streaming
+          ) {
             lastMessage.content += data.content
             break
           }
@@ -114,7 +139,7 @@ export function createSocketDomain({
             role: 'assistant',
             content: data.content,
             type: 'text',
-            agentId: data.agent_id,
+            agentId: incomingAgentId,
             timestamp: Date.now(),
             streaming: true,
           })
@@ -122,8 +147,18 @@ export function createSocketDomain({
         }
 
         case 'thinking_delta': {
+          const incomingAgentId =
+            pendingAssistantAgentId ||
+            normalizeAgentId(data.agent_id) ||
+            CHAT_ENTRY_AGENT_ID
           const lastMessage = messages[messages.length - 1]
-          if (lastMessage && lastMessage.role === 'assistant') {
+          if (
+            lastMessage &&
+            lastMessage.role === 'assistant' &&
+            lastMessage.type === 'text' &&
+            lastMessage.agentId === incomingAgentId &&
+            lastMessage.streaming
+          ) {
             lastMessage.thinking = (lastMessage.thinking || '') + data.content
             break
           }
@@ -133,7 +168,7 @@ export function createSocketDomain({
             role: 'assistant',
             content: '',
             type: 'text',
-            agentId: data.agent_id,
+            agentId: incomingAgentId,
             timestamp: Date.now(),
             streaming: true,
             thinking: data.content,
@@ -141,28 +176,63 @@ export function createSocketDomain({
           break
         }
 
-        case 'tool_call':
+        case 'tool_call': {
+          const toolInput =
+            data.tool_input && typeof data.tool_input === 'object'
+              ? (data.tool_input as Record<string, unknown>)
+              : undefined
+          const subagentType = normalizeAgentId(toolInput?.subagent_type)
           messages.push({
             id: genId(),
             role: 'system',
             content: data.tool_desc || `正在执行 Tool: **${data.tool_name}**`,
             type: 'tool_call',
-            agentId: data.agent_id,
+            agentId: subagentType || normalizeAgentId(data.agent_id) || CHAT_ENTRY_AGENT_ID,
             toolName: data.tool_name,
             toolDesc: data.tool_desc,
-            toolInput: data.tool_input,
+            toolInput,
             timestamp: Date.now(),
           })
           break
+        }
+
+        case 'routing': {
+          const subagentType = normalizeAgentId(data.subagent_type)
+          const subagentLabel = data.subagent_label || data.subagent_type
+          if (subagentType) {
+            pendingRoutedAgentIds.push(subagentType)
+          }
+          messages.push({
+            id: genId(),
+            role: 'system',
+            content: `🔄 正在调用 ${subagentLabel}...`,
+            type: 'tool_call',
+            agentId: subagentType || normalizeAgentId(data.agent_id) || CHAT_ENTRY_AGENT_ID,
+            toolName: 'task',
+            toolDesc: `路由到 ${subagentLabel}`,
+            toolInput: subagentType ? { subagent_type: subagentType } : undefined,
+            timestamp: Date.now(),
+          })
+          break
+        }
 
         case 'tool_result': {
+          const routedAgentId =
+            data.tool_name === 'task' ? pendingRoutedAgentIds.shift() : undefined
+          if (routedAgentId) {
+            pendingAssistantAgentId = routedAgentId
+          }
           const toolResultInput = data.tool_input || findRecentToolInput(messages, data.tool_name)
           messages.push({
             id: genId(),
             role: 'system',
             content: data.result,
             type: 'tool_result',
-            agentId: data.agent_id,
+            agentId:
+              routedAgentId ||
+              normalizeAgentId(data.agent_id) ||
+              pendingAssistantAgentId ||
+              CHAT_ENTRY_AGENT_ID,
             toolName: data.tool_name,
             toolInput: toolResultInput,
             artifactKind: normalizeArtifactKind(data.artifact_kind),
@@ -175,6 +245,8 @@ export function createSocketDomain({
         case 'done':
           isLoading.value = false
           finishStreamingAssistantMessage(messages)
+          pendingAssistantAgentId = undefined
+          pendingRoutedAgentIds.length = 0
           void fetchConversations()
           break
 
@@ -188,6 +260,8 @@ export function createSocketDomain({
             timestamp: Date.now(),
           })
           isLoading.value = false
+          pendingAssistantAgentId = undefined
+          pendingRoutedAgentIds.length = 0
           break
 
         case 'cleared':
@@ -221,6 +295,8 @@ export function createSocketDomain({
       if (wasLoading) {
         isLoading.value = false
         finishStreamingAssistantMessage(messages)
+        pendingAssistantAgentId = undefined
+        pendingRoutedAgentIds.length = 0
         messages.push({
           id: genId(),
           role: 'system',
@@ -262,7 +338,7 @@ export function createSocketDomain({
     const nextAgentId = resolveConversationAgentId(
       currentConversationId.value,
       conversations.value,
-      draftAgentId.value,
+      currentConversationId.value ? draftAgentId.value : CHAT_ENTRY_AGENT_ID,
       agents.value,
     )
 
@@ -281,7 +357,7 @@ export function createSocketDomain({
       JSON.stringify({
         type: 'message',
         content: sendContent || normalizedContent,
-        agent_id: currentConversationId.value ? undefined : nextAgentId,
+        agent_id: currentConversationId.value ? undefined : CHAT_ENTRY_AGENT_ID,
         attachment_ids: attachmentIds,
       }),
     )

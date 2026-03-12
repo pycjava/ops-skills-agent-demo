@@ -43,14 +43,17 @@ describe('createAttachmentDomain', () => {
     }
     const fetchConversations = vi.fn(async () => {})
     const fetchSkills = vi.fn(async () => {})
+    let capturedBody: BodyInit | null | undefined
 
-    global.fetch = vi.fn(async () =>
-      createFetchResponse({
+    global.fetch = vi.fn(async (_input, init) => {
+      capturedBody = init?.body
+
+      return createFetchResponse({
         conversation: {
           id: 'conv-1',
           title: '新对话',
           source: 'web',
-          agent_id: 'dba',
+          agent_id: 'orchestrator',
           created_at: null,
           updated_at: null,
         },
@@ -64,8 +67,8 @@ describe('createAttachmentDomain', () => {
           size_bytes: 12,
           created_at: '2026-03-10T10:00:00.000',
         },
-      }),
-    ) as typeof fetch
+      })
+    }) as typeof fetch
 
     const domain = createAttachmentDomain({
       backendUrl: '',
@@ -90,13 +93,15 @@ describe('createAttachmentDomain', () => {
     expect(currentConversationId.value).toBe('conv-1')
     expect(conversationAttachments.value).toHaveLength(1)
     expect(conversationAttachments.value[0]?.id).toBe('att-1')
+    expect(capturedBody).toBeInstanceOf(FormData)
+    expect((capturedBody as FormData).get('agent_id')).toBe('orchestrator')
     expect(fetchConversations).toHaveBeenCalledTimes(1)
-    expect(fetchSkills).toHaveBeenCalledWith('dba')
+    expect(fetchSkills).toHaveBeenCalledWith('orchestrator')
     expect(wsState.current.send).toHaveBeenCalledWith(
       JSON.stringify({
         type: 'init',
         conversation_id: 'conv-1',
-        agent_id: 'dba',
+        agent_id: 'orchestrator',
       }),
     )
   })

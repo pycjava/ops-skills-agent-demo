@@ -147,17 +147,8 @@ const {
   showSidebar,
   isDark,
   showInspector,
-  showAgentOverflowMenu,
   rightPanelTab,
   heroTitle,
-  agentSelector,
-  agentSelectorWrap,
-  moreMeasureRef,
-  visibleAgents,
-  overflowAgents,
-  setAgentMeasureRef,
-  toggleAgentOverflowMenu,
-  selectAgent,
   openInspector,
   closeInspector,
   handleOpenMemory,
@@ -177,9 +168,6 @@ const {
 })
 
 void composerInput
-void agentSelector
-void agentSelectorWrap
-void moreMeasureRef
 
 const scrollTrigger = computed(() => {
   const length = chatStore.messages.length
@@ -593,10 +581,7 @@ async function handleComposerSend(displayContent: string, sendContent?: string) 
     }
   }
 
-  if (
-    chatStore.activeAgentId !== 'dba' ||
-    !isMysqlInspectionIntent(normalizedDisplayContent)
-  ) {
+  if (!isMysqlInspectionIntent(normalizedDisplayContent)) {
     sendWithPendingAttachments(normalizedDisplayContent, normalizedSendContent)
     return true
   }
@@ -783,6 +768,9 @@ async function handleConversationTitleSave(title: string) {
       <section v-if="!hasMessages" class="empty-state">
         <div class="hero-panel">
           <h1 class="hero-title">{{ heroTitle }}</h1>
+          <div class="auto-routing-hint" data-testid="auto-routing-hint">
+            智能编排助手会自动路由到合适的专家处理
+          </div>
 
           <div class="composer composer-home">
             <div v-if="showMentions && filteredSkills.length > 0" class="mentions-popup">
@@ -857,66 +845,6 @@ async function handleConversationTitleSave(title: string) {
                   ▶
                 </button>
               </div>
-            </div>
-          </div>
-
-          <div v-if="chatStore.agents.length > 0" ref="agentSelectorWrap" class="agent-selector">
-            <div ref="agentSelector" class="agent-selector-list">
-              <button
-                v-for="agent in visibleAgents"
-                :key="agent.id"
-                class="agent-selector-item"
-                :class="{ active: agent.id === chatStore.draftAgentId }"
-                @click="selectAgent(agent.id)"
-              >
-                <span class="agent-selector-name">{{ agent.label }}</span>
-                <span class="agent-selector-id">{{ agent.id }}</span>
-              </button>
-
-              <div v-if="overflowAgents.length > 0" class="agent-overflow">
-                <button
-                  class="agent-selector-item agent-selector-more"
-                  :class="{ active: showAgentOverflowMenu }"
-                  @click.stop="toggleAgentOverflowMenu"
-                >
-                  <span class="agent-selector-name">更多</span>
-                  <span class="agent-selector-arrow">▼</span>
-                </button>
-
-                <div v-if="showAgentOverflowMenu" class="agent-overflow-menu">
-                  <button
-                    v-for="agent in overflowAgents"
-                    :key="agent.id"
-                    class="agent-overflow-item"
-                    :class="{ active: agent.id === chatStore.draftAgentId }"
-                    @click="selectAgent(agent.id)"
-                  >
-                    <span class="agent-selector-name">{{ agent.label }}</span>
-                    <span class="agent-selector-id">{{ agent.id }}</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="agent-measure" aria-hidden="true">
-              <button
-                v-for="(agent, index) in chatStore.agents"
-                :key="`${agent.id}-measure`"
-                :ref="(element) => setAgentMeasureRef(element, index)"
-                class="agent-selector-item agent-selector-measure"
-                tabindex="-1"
-              >
-                <span class="agent-selector-name">{{ agent.label }}</span>
-                <span class="agent-selector-id">{{ agent.id }}</span>
-              </button>
-              <button
-                ref="moreMeasureRef"
-                class="agent-selector-item agent-selector-more agent-selector-measure"
-                tabindex="-1"
-              >
-                <span class="agent-selector-name">更多</span>
-                <span class="agent-selector-arrow">▼</span>
-              </button>
             </div>
           </div>
 
@@ -1460,6 +1388,17 @@ input {
   flex-direction: column;
   gap: 12px;
   position: relative;
+}
+
+.auto-routing-hint {
+  width: 100%;
+  text-align: center;
+  padding: 12px 16px;
+  border-radius: 999px;
+  background: rgba(139, 115, 255, 0.12);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .agent-selector-list {

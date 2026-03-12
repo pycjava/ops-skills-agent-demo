@@ -3,6 +3,11 @@ import MessageBubble from './MessageBubble.vue'
 
 const chatStoreMock = {
   isLoading: false,
+  agents: [
+    { id: 'orchestrator', label: '智能编排助手' },
+    { id: 'dba', label: '数据库助手' },
+    { id: 'ops', label: '运维助手' },
+  ],
   conversationAttachments: [
     {
       id: 'att-1',
@@ -22,6 +27,44 @@ vi.mock('../stores/chat', () => ({
 }))
 
 describe('MessageBubble', () => {
+  test('shows the executing agent for assistant messages', () => {
+    const wrapper = mount(MessageBubble, {
+      props: {
+        message: {
+          id: 'msg-assistant-1',
+          role: 'assistant',
+          content: '检查完成，发现 2 条慢查询。',
+          type: 'text',
+          agentId: 'dba',
+          timestamp: Date.now(),
+        },
+      },
+    })
+
+    expect(wrapper.get('.assistant-agent').text()).toBe('数据库助手')
+  })
+
+  test('shows the actual executing agent for routed task messages', () => {
+    const wrapper = mount(MessageBubble, {
+      props: {
+        message: {
+          id: 'msg-task-1',
+          role: 'system',
+          content: '正在调用 数据库助手...',
+          type: 'tool_call',
+          toolName: 'task',
+          toolInput: {
+            subagent_type: 'dba',
+          },
+          agentId: 'orchestrator',
+          timestamp: Date.now(),
+        },
+      },
+    })
+
+    expect(wrapper.get('.system-agent').text()).toBe('数据库助手')
+  })
+
   test('renders user attachment cards above the bubble and exposes delete only for active attachments', async () => {
     const wrapper = mount(MessageBubble, {
       props: {

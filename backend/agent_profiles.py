@@ -3,7 +3,7 @@ from typing import Literal
 
 
 RiskLevel = Literal["low", "medium", "high"]
-ExecutionMode = Literal["direct", "router", "supervisor"]
+ExecutionMode = Literal["direct", "router", "supervisor", "orchestrator"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +17,7 @@ class AgentProfile:
     risk_level: RiskLevel
     execution_mode: ExecutionMode = "direct"
     allowed_handoffs: tuple[str, ...] = ()
+    subagent_configs: tuple[str, ...] = ()
 
     def to_dict(self, *, is_default: bool = False) -> dict[str, object]:
         return {
@@ -29,14 +30,27 @@ class AgentProfile:
             "risk_level": self.risk_level,
             "execution_mode": self.execution_mode,
             "allowed_handoffs": list(self.allowed_handoffs),
+            "subagent_configs": list(self.subagent_configs),
             "is_default": is_default,
         }
 
 
-DEFAULT_AGENT_ID = "general"
+DEFAULT_AGENT_ID = "orchestrator"
 
 
 AGENT_PROFILES: dict[str, AgentProfile] = {
+    "orchestrator": AgentProfile(
+        id="orchestrator",
+        label="智能编排助手",
+        description="自动识别意图，智能路由到专业 Agent，支持并行任务协调。",
+        prompt_paths=("prompts/base.md", "prompts/orchestrator.md"),
+        skills=("using-superpowers",),
+        capabilities=("意图识别", "智能路由", "并行调度", "结果整合"),
+        risk_level="low",
+        execution_mode="orchestrator",
+        allowed_handoffs=("dba", "ops"),
+        subagent_configs=("dba", "ops"),
+    ),
     "general": AgentProfile(
         id="general",
         label="通用助手",
@@ -82,4 +96,3 @@ def get_agent_profile(agent_id: str) -> AgentProfile:
     if profile is None:
         raise ValueError(f"未知 agent_id: {agent_id}")
     return profile
-

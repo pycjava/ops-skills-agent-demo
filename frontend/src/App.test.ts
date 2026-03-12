@@ -72,19 +72,24 @@ function createTaskNotification(
 const chatStoreMock = {
   messages: [] as AppTestMessage[],
   agents: [
+    { id: 'orchestrator', label: '智能编排助手', execution_mode: 'orchestrator' },
     { id: 'general', label: '通用助手' },
     { id: 'dba', label: '数据库助手' },
     { id: 'ops', label: '运维助手' },
     { id: 'extra', label: '额外助手' },
   ],
-  activeAgentId: 'dba',
-  activeAgent: { id: 'dba', label: '数据库助手' },
+  activeAgentId: 'orchestrator',
+  activeAgent: {
+    id: 'orchestrator',
+    label: '智能编排助手',
+    execution_mode: 'orchestrator',
+  },
   conversations: [] as ConversationItem[],
   inspectionTasks: [] as InspectionTask[],
   inspectionTaskRuns: [] as InspectionTaskRun[],
   taskNotifications: [] as TaskNotification[],
   currentConversationId: null as string | null,
-  draftAgentId: 'dba',
+  draftAgentId: 'orchestrator',
   isConnected: true,
   isLoading: false,
   skills: [],
@@ -209,8 +214,8 @@ vi.mock('./composables/useAppChrome', () => ({
     agentSelector: ref<HTMLElement | null>(null),
     agentSelectorWrap: ref<HTMLElement | null>(null),
     moreMeasureRef: ref<HTMLElement | null>(null),
-    visibleAgents: computed(() => chatStoreMock.agents.slice(0, 3)),
-    overflowAgents: computed(() => chatStoreMock.agents.slice(3)),
+    visibleAgents: computed(() => chatStoreMock.agents),
+    overflowAgents: computed(() => []),
     setAgentMeasureRef: vi.fn(),
     toggleAgentOverflowMenu: vi.fn(),
     selectAgent: vi.fn(),
@@ -240,8 +245,14 @@ describe('App', () => {
     chatStoreMock.deleteInspectionTask.mockReset()
     chatStoreMock.deleteInspectionTask.mockResolvedValue(true)
     composerHarness.sendMessage = null
-    chatStoreMock.activeAgentId = 'dba'
+    chatStoreMock.activeAgentId = 'orchestrator'
+    chatStoreMock.activeAgent = {
+      id: 'orchestrator',
+      label: '智能编排助手',
+      execution_mode: 'orchestrator',
+    }
     chatStoreMock.currentConversationId = null
+    chatStoreMock.draftAgentId = 'orchestrator'
     chatStoreMock.messages = []
     chatStoreMock.conversations = []
     chatStoreMock.inspectionTasks = []
@@ -272,7 +283,8 @@ describe('App', () => {
     expect(toolbarButtons[3]?.attributes('title')).toBe('打开右侧面板')
 
     expect(wrapper.text()).toContain('Shift + Enter 换行')
-    expect(wrapper.text()).toContain('更多')
+    expect(wrapper.text()).toContain('智能编排助手')
+    expect(wrapper.find('.agent-selector').exists()).toBe(false)
   })
 
   test('wires task notification center props and actions through the store', async () => {

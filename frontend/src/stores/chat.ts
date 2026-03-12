@@ -2,12 +2,17 @@ import { defineStore } from 'pinia'
 import { computed, reactive, ref, watch } from 'vue'
 import { createAttachmentDomain } from './chat/attachments'
 import { createConversationDomain } from './chat/conversations'
-import { getDefaultAgentId, resolveAgentId } from './chat/helpers'
+import {
+  CHAT_ENTRY_AGENT_ID,
+  getDefaultAgentId,
+  resolveAgentId,
+} from './chat/helpers'
 import { createMcpDomain } from './chat/mcp'
 import { createMemoryDomain } from './chat/memory'
 import { createTaskNotificationDomain } from './chat/notifications'
 import { createSocketDomain } from './chat/socket'
 import { createTaskDomain } from './chat/tasks'
+import { isMysqlInspectionIntent } from '../utils/mysqlInspection'
 import type {
   AgentInfo,
   ChatMessage,
@@ -43,7 +48,7 @@ export const useChatStore = defineStore('chat', () => {
   const inspectionTaskRuns = ref<InspectionTaskRun[]>([])
   const taskNotifications = ref<TaskNotification[]>([])
   const currentConversationId = ref<string | null>(null)
-  const draftAgentId = ref('general')
+  const draftAgentId = ref(CHAT_ENTRY_AGENT_ID)
   const memoryTree = ref<MemoryNode[]>([])
   const selectedMemoryPath = ref<string | null>(null)
   const memoryContent = ref<MemoryDocument | null>(null)
@@ -80,7 +85,7 @@ export const useChatStore = defineStore('chat', () => {
   )
 
   const activeAgentId = computed(
-    () => currentConversation.value?.agent_id || draftAgentId.value || 'general',
+    () => currentConversation.value?.agent_id || draftAgentId.value || CHAT_ENTRY_AGENT_ID,
   )
 
   const activeAgent = computed(
@@ -153,7 +158,7 @@ export const useChatStore = defineStore('chat', () => {
       },
       body: JSON.stringify({
         message,
-        agent_id: activeAgentId.value,
+        agent_id: isMysqlInspectionIntent(message) ? 'dba' : CHAT_ENTRY_AGENT_ID,
         credential_ref: credentialRef ?? null,
       }),
     })
@@ -166,7 +171,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function setDraftAgent(agentId: string) {
-    draftAgentId.value = resolveAgentId(agentId, agents.value)
+    void agentId
+    draftAgentId.value = resolveAgentId(CHAT_ENTRY_AGENT_ID, agents.value)
     void fetchSkills(draftAgentId.value)
 
     if (!currentConversationId.value && wsState.current?.readyState === WebSocket.OPEN) {
@@ -174,7 +180,7 @@ export const useChatStore = defineStore('chat', () => {
         JSON.stringify({
           type: 'init',
           conversation_id: null,
-          agent_id: draftAgentId.value,
+          agent_id: CHAT_ENTRY_AGENT_ID,
         }),
       )
     }

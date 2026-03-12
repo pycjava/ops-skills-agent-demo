@@ -6,6 +6,8 @@ import type {
   ConversationItem,
 } from './types'
 
+export const CHAT_ENTRY_AGENT_ID = 'orchestrator'
+
 export async function readErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
     const contentType = res.headers.get('content-type') || ''
@@ -31,7 +33,7 @@ export async function readErrorMessage(res: Response, fallback: string): Promise
 }
 
 export function getDefaultAgentId(agents: AgentInfo[]): string {
-  return agents.find((agent) => agent.is_default)?.id || 'general'
+  return agents.find((agent) => agent.is_default)?.id || CHAT_ENTRY_AGENT_ID
 }
 
 export function resolveAgentId(agentId: string | null | undefined, agents: AgentInfo[]): string {

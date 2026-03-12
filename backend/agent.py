@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage
 
 from agent_manager import AgentManager
 from config import MAX_TURNS
+from services.agent_event_identity import resolve_event_agent_id
 from utils.logger import logger
 
 
@@ -302,9 +303,11 @@ async def run_agent(
             "configurable": {"thread_id": conv_id},
             "recursion_limit": MAX_TURNS * 20,
         }
+        event_agent_id = resolved_agent_id
         async for event in runtime.astream_events(inputs, config=config, version="v2"):
             kind = event["event"]
             name = event.get("name", "")
+            event_agent_id = resolve_event_agent_id(event, resolved_agent_id)
 
             if kind == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
@@ -328,7 +331,7 @@ async def run_agent(
                                             {
                                                 "type": EVENT_THINKING_DELTA,
                                                 "content": thinking_text,
-                                                "agent_id": resolved_agent_id,
+                                                "agent_id": event_agent_id,
                                             }
                                         )
                             elif isinstance(block, str):
@@ -339,7 +342,7 @@ async def run_agent(
                             {
                                 "type": EVENT_TEXT_DELTA,
                                 "content": text_delta,
-                                "agent_id": resolved_agent_id,
+                                "agent_id": event_agent_id,
                             }
                         )
 
@@ -374,7 +377,7 @@ async def run_agent(
                         "tool_name": name,
                         "tool_desc": tool_desc,
                         "tool_input": tool_input,
-                        "agent_id": resolved_agent_id,
+                        "agent_id": event_agent_id,
                     }
                 )
 
@@ -403,11 +406,11 @@ async def run_agent(
                         + ("\n...[截断]" if len(result_text) > 2000 else ""),
                         "tool_input": tool_input,
                         "artifact_kind": artifact_kind,
-                        "agent_id": resolved_agent_id,
+                        "agent_id": event_agent_id,
                     }
                 )
 
-        await on_event({"type": EVENT_DONE, "agent_id": resolved_agent_id})
+        await on_event({"type": EVENT_DONE, "agent_id": event_agent_id})
 
     except Exception as exc:
         logger.exception(f"Agent 执行异常: {exc}")

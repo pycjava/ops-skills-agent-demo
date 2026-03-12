@@ -4,13 +4,14 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
-from deepagents import create_deep_agent
+from deepagents import SubAgent, create_deep_agent
 from deepagents.backends import CompositeBackend, StoreBackend
 from langchain_anthropic import ChatAnthropic
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 from agent_profiles import (
+    AGENT_PROFILES,
     DEFAULT_AGENT_ID,
     AgentProfile,
     get_agent_profile,
@@ -132,7 +133,7 @@ class AgentManager:
             self._runtimes[profile.id] = runtime
             logger.info(
                 "Deep Agent initialized: "
-                f"agent_id={profile.id}, skills={list(profile.skills)}"
+                f"agent_id={profile.id}, mode={profile.execution_mode}"
             )
             return runtime
 
@@ -141,6 +142,11 @@ class AgentManager:
             raise RuntimeError("AgentManager is not initialized")
 
         mcp_tools = await self._load_mcp_tools(profile.id)
+
+        subagents = None
+        if profile.execution_mode == "orchestrator":
+            subagents = self._build_subagents_for_orchestrator(profile)
+
         return create_deep_agent(
             model=self._llm,
             system_prompt=self._compose_system_prompt(profile),
@@ -150,7 +156,34 @@ class AgentManager:
             backend=self._make_backend,
             checkpointer=self._sqlite_saver,
             name=profile.id,
+            subagents=subagents,
         )
+
+    def _build_subagents_for_orchestrator(
+        self, orchestrator_profile: AgentProfile
+    ) -> list[SubAgent]:
+        """为 Orchestrator Agent 构建专业子 Agent 列表"""
+        subagents: list[SubAgent] = []
+
+        for subagent_id in orchestrator_profile.subagent_configs:
+            if subagent_id not in AGENT_PROFILES:
+                logger.warning(f"Unknown subagent config: {subagent_id}")
+                continue
+
+            profile = AGENT_PROFILES[subagent_id]
+
+            subagent: SubAgent = {
+                "name": profile.id,
+                "description": f"{profile.label}：{profile.description}",
+                "system_prompt": self._compose_system_prompt(profile),
+                "model": self._llm,
+                "tools": [],
+                "skills": resolve_skill_paths(profile.skills),
+            }
+            subagents.append(subagent)
+            logger.info(f"Registered subagent: {profile.id} for orchestrator")
+
+        return subagents
 
     async def _load_mcp_tools(self, agent_id: str) -> list[Any]:
         try:
@@ -210,17 +243,26 @@ class AgentManager:
         capabilities = "、".join(profile.capabilities)
         memory_root = f"/memories/agents/{profile.id}/"
 
-        return (
+        hint = (
             "## 当前 Agent 运行时\n"
             f"- 你的 agent_id 是 `{profile.id}`，显示名称是“{profile.label}”。\n"
+            f"- 你的执行模式是：{profile.execution_mode}。\n"
             f"- 你的能力边界是：{capabilities}。\n"
             f"- 你的风险等级是：{profile.risk_level}。\n"
-            f"- 当前执行模式是：{profile.execution_mode}。\n"
-            f"- 当前允许的 handoff 目标：{allowed_handoffs}。\n"
-            f"- 需要写入新的长期记忆时，优先写入 `{memory_root}`。\n"
-            "- 当前会话固定绑定到你这个 Agent；如果问题明显超出职责范围，应明确说明并建议切换 Agent。\n"
-            "- 你只能使用当前 runtime 已注入的 Skills 和工具，不要假装能够调用未授权能力。"
         )
+
+        if profile.execution_mode == "orchestrator":
+            hint += (
+                f"- 你可以调用的专业子 Agent：{allowed_handoffs}。\n"
+                "- 使用 task 工具调用子 Agent，支持并行调用多个。\n"
+            )
+
+        hint += (
+            f"- 需要写入新的长期记忆时，优先写入 `{memory_root}`。\n"
+            "- 你只能使用当前 runtime 已注入的 Skills 和工具。\n"
+        )
+
+        return hint
 
     def _make_backend(self, runtime):
         return CompositeBackend(
