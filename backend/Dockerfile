@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-RUN python -m pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+RUN python -m pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ 
 
 COPY . .
 
