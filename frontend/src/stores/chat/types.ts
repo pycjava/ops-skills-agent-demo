@@ -117,6 +117,20 @@ export interface InspectionTaskRun {
   error_message: string | null
 }
 
+export interface TaskNotification {
+  id: string
+  task_id: string
+  task_run_id: string
+  conversation_id: string | null
+  status: 'succeeded' | 'failed'
+  title: string
+  summary: string
+  report_name: string | null
+  report_path: string | null
+  read_at: string | null
+  created_at: string | null
+}
+
 export interface ConversationAttachment {
   id: string
   conversation_id: string

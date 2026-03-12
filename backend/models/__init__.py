@@ -5,6 +5,7 @@ from models.inspection_task import InspectionTask
 from models.inspection_task_run import InspectionTaskRun
 from models.mcp_server import McpServer
 from models.message import Message
+from models.task_notification import TaskNotification
 
 __all__ = [
     "Base",
@@ -14,4 +15,5 @@ __all__ = [
     "InspectionTaskRun",
     "Message",
     "McpServer",
+    "TaskNotification",
 ]

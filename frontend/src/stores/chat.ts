@@ -5,6 +5,7 @@ import { createConversationDomain } from './chat/conversations'
 import { getDefaultAgentId, resolveAgentId } from './chat/helpers'
 import { createMcpDomain } from './chat/mcp'
 import { createMemoryDomain } from './chat/memory'
+import { createTaskNotificationDomain } from './chat/notifications'
 import { createSocketDomain } from './chat/socket'
 import { createTaskDomain } from './chat/tasks'
 import type {
@@ -19,6 +20,7 @@ import type {
   MemoryDocument,
   MemoryNode,
   Skill,
+  TaskNotification,
 } from './chat/types'
 
 export * from './chat/types'
@@ -39,6 +41,7 @@ export const useChatStore = defineStore('chat', () => {
   const conversationAttachments = ref<ConversationAttachment[]>([])
   const inspectionTasks = ref<InspectionTask[]>([])
   const inspectionTaskRuns = ref<InspectionTaskRun[]>([])
+  const taskNotifications = ref<TaskNotification[]>([])
   const currentConversationId = ref<string | null>(null)
   const draftAgentId = ref('general')
   const memoryTree = ref<MemoryNode[]>([])
@@ -57,6 +60,10 @@ export const useChatStore = defineStore('chat', () => {
   const testingServerIds = ref<string[]>([])
   const deletingAttachmentIds = ref<string[]>([])
   const isInspectionTaskLoading = ref(false)
+  const unreadTaskNotificationCount = ref(0)
+  const taskNotificationToast = ref<TaskNotification | null>(null)
+  const taskNotificationError = ref<string | null>(null)
+  const isTaskNotificationLoading = ref(false)
 
   const isMemoryLoading = computed(
     () =>
@@ -210,6 +217,15 @@ export const useChatStore = defineStore('chat', () => {
     isInspectionTaskLoading,
   })
 
+  const taskNotificationDomain = createTaskNotificationDomain({
+    backendUrl,
+    taskNotifications,
+    unreadTaskNotificationCount,
+    taskNotificationToast,
+    taskNotificationError,
+    isTaskNotificationLoading,
+  })
+
   watch(
     currentConversationId,
     (conversationId) => {
@@ -237,6 +253,7 @@ export const useChatStore = defineStore('chat', () => {
     genId,
     fetchConversations: conversationDomain.fetchConversations,
     handleMemoryArtifact: memoryDomain.handleMemoryArtifact,
+    handleTaskNotificationEvent: taskNotificationDomain.handleTaskNotificationEvent,
   })
 
   return {
@@ -250,6 +267,7 @@ export const useChatStore = defineStore('chat', () => {
     conversationAttachments,
     inspectionTasks,
     inspectionTaskRuns,
+    taskNotifications,
     currentConversationId,
     draftAgentId,
     activeAgentId,
@@ -264,9 +282,13 @@ export const useChatStore = defineStore('chat', () => {
     isMcpLoading,
     mcpError,
     inspectionTaskError,
+    unreadTaskNotificationCount,
+    taskNotificationToast,
+    taskNotificationError,
     testingServerIds,
     deletingAttachmentIds,
     isInspectionTaskLoading,
+    isTaskNotificationLoading,
     connect: socketDomain.connect,
     sendMessage: socketDomain.sendMessage,
     clearChat: socketDomain.clearChat,
@@ -292,6 +314,11 @@ export const useChatStore = defineStore('chat', () => {
     updateInspectionTask: taskDomain.updateInspectionTask,
     deleteInspectionTask: taskDomain.deleteInspectionTask,
     triggerInspectionTask: taskDomain.triggerInspectionTask,
+    fetchTaskNotifications: taskNotificationDomain.fetchTaskNotifications,
+    markTaskNotificationRead: taskNotificationDomain.markTaskNotificationRead,
+    markAllTaskNotificationsRead: taskNotificationDomain.markAllTaskNotificationsRead,
+    dismissTaskNotificationToast: taskNotificationDomain.dismissTaskNotificationToast,
+    downloadTaskNotificationReport: taskNotificationDomain.downloadTaskNotificationReport,
     fetchSkills,
     resolveCloudRequestContext,
     fetchMcpServers: mcpDomain.fetchMcpServers,

@@ -15,6 +15,7 @@ from services.conversation_messages import (
     is_default_conversation_title,
     save_message,
 )
+from services.realtime_events import realtime_event_manager
 from services.conversation_state import (
     create_conversation,
     get_conversation,
@@ -34,6 +35,7 @@ router = APIRouter(prefix="/ws", tags=["websocket"])
 @router.websocket("/chat")
 async def websocket_chat(ws: WebSocket):
     await ws.accept()
+    await realtime_event_manager.register(ws)
     logger.info("WebSocket 客户端已连接")
     current_conv_id: str | None = None
     current_agent_id = resolve_default_agent()
@@ -173,6 +175,7 @@ async def websocket_chat(ws: WebSocket):
             )
         except Exception:
             pass
+        await realtime_event_manager.unregister(ws)
 
         agent_task = None
         logger.info(f"对话 {current_conv_id} 已被用户中断")
@@ -410,6 +413,7 @@ async def websocket_chat(ws: WebSocket):
         logger.info("WebSocket 客户端已正常断开连接")
         if agent_task and not agent_task.done():
             agent_task.cancel()
+        await realtime_event_manager.unregister(ws)
     except Exception as exc:
         logger.exception(f"WebSocket 异常错误: {exc}")
         if agent_task and not agent_task.done():

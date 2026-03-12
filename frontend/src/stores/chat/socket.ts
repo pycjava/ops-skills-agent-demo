@@ -10,6 +10,7 @@ import type {
   ChatMessage,
   ConversationItem,
   SendMessageOptions,
+  TaskNotification,
 } from './types'
 
 interface SocketDomainDeps {
@@ -26,6 +27,10 @@ interface SocketDomainDeps {
   genId: () => string
   fetchConversations: () => Promise<void>
   handleMemoryArtifact: (toolInput?: Record<string, unknown>) => void
+  handleTaskNotificationEvent: (
+    notification: TaskNotification,
+    unreadCount?: number,
+  ) => void
 }
 
 function finishStreamingAssistantMessage(messages: ChatMessage[]) {
@@ -51,6 +56,7 @@ export function createSocketDomain({
   genId,
   fetchConversations,
   handleMemoryArtifact,
+  handleTaskNotificationEvent,
 }: SocketDomainDeps) {
   function connect() {
     if (
@@ -194,6 +200,15 @@ export function createSocketDomain({
               ? { ...conversation, title: data.title }
               : conversation,
           )
+          break
+
+        case 'task_notification':
+          if (data.notification) {
+            handleTaskNotificationEvent(
+              data.notification as TaskNotification,
+              typeof data.unread_count === 'number' ? data.unread_count : undefined,
+            )
+          }
           break
       }
     }

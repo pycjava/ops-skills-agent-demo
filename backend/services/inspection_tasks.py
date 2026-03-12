@@ -18,12 +18,19 @@ from services.inspection_task_llm import (
     analyze_task_creation_intent,
     summarize_task_template_from_conversation,
 )
+from services.realtime_events import broadcast_event
+from services.task_notifications import (
+    build_task_notification_event,
+    create_task_notification_for_run,
+)
 from db.session import AsyncSessionLocal
 from models import Conversation, InspectionTask, InspectionTaskRun, Message
+from utils.logger import logger
 
 
 SessionFactory = async_sessionmaker[AsyncSession]
 AgentRunner = Callable[..., Awaitable[None]]
+NotificationPublisher = Callable[[dict[str, Any]], Awaitable[None]]
 TaskIntentAnalyzer = Callable[[str], Awaitable[TaskCreationIntentResult]]
 ConversationSummarizer = Callable[
     [Conversation, list[Message]],
@@ -555,6 +562,7 @@ async def execute_inspection_task(
     session_factory: SessionFactory = AsyncSessionLocal,
     now: datetime | None = None,
     agent_runner: AgentRunner = run_agent,
+    notification_publisher: NotificationPublisher | None = None,
 ) -> InspectionTaskRun:
     current_time = now or datetime.now()
 
@@ -673,6 +681,13 @@ async def execute_inspection_task(
             await session.commit()
             if db_run is not None:
                 await session.refresh(db_run)
+                await _publish_task_notification(
+                    task.id,
+                    db_run.id,
+                    session_factory=session_factory,
+                    fallback_summary=str(exc),
+                    notification_publisher=notification_publisher,
+                )
                 return db_run
         raise
 
@@ -688,7 +703,34 @@ async def execute_inspection_task(
             db_task.next_run_at = next_cron_run_at(db_task.cron_expr, current_time)
         await session.commit()
         await session.refresh(db_run)
+        await _publish_task_notification(
+            task.id,
+            db_run.id,
+            session_factory=session_factory,
+            notification_publisher=notification_publisher,
+        )
         return db_run
+
+
+async def _publish_task_notification(
+    task_id: str,
+    task_run_id: str,
+    *,
+    session_factory: SessionFactory,
+    fallback_summary: str | None = None,
+    notification_publisher: NotificationPublisher | None = None,
+):
+    try:
+        notification, unread_count = await create_task_notification_for_run(
+            task_id,
+            task_run_id,
+            session_factory=session_factory,
+            fallback_summary=fallback_summary,
+        )
+        publisher = notification_publisher or broadcast_event
+        await publisher(build_task_notification_event(notification, unread_count))
+    except Exception as exc:
+        logger.warning(f"Failed to create or publish task notification: {exc}")
 
 
 async def get_due_inspection_task_ids(

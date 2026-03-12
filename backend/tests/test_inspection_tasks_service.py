@@ -152,8 +152,13 @@ async def test_create_inspection_task_from_conversation_message_creates_task(ses
     analyzer_calls: list[str] = []
     summarizer_calls: list[tuple[str, list[str]]] = []
 
-    async def fake_intent_analyzer(message: str) -> TaskCreationIntentResult:
+    async def fake_intent_analyzer(
+        message: str,
+        *,
+        previous_context=None,
+    ) -> TaskCreationIntentResult:
         analyzer_calls.append(message)
+        assert previous_context is None
         return TaskCreationIntentResult(
             is_task_creation=True,
             cron_expr="0 9 * * *",
@@ -229,7 +234,12 @@ async def test_create_inspection_task_from_conversation_message_returns_not_task
 
     summarizer_called = False
 
-    async def fake_intent_analyzer(_message: str) -> TaskCreationIntentResult:
+    async def fake_intent_analyzer(
+        _message: str,
+        *,
+        previous_context=None,
+    ) -> TaskCreationIntentResult:
+        assert previous_context is None
         return TaskCreationIntentResult(
             is_task_creation=False,
             cron_expr=None,
@@ -272,7 +282,12 @@ async def test_create_inspection_task_from_conversation_message_returns_error_wh
 
     summarizer_called = False
 
-    async def fake_intent_analyzer(_message: str) -> TaskCreationIntentResult:
+    async def fake_intent_analyzer(
+        _message: str,
+        *,
+        previous_context=None,
+    ) -> TaskCreationIntentResult:
+        assert previous_context is None
         return TaskCreationIntentResult(
             is_task_creation=True,
             cron_expr=None,
@@ -295,7 +310,8 @@ async def test_create_inspection_task_from_conversation_message_returns_error_wh
         conversation_summarizer=fake_summarizer,
     )
 
-    assert result["status"] == "error"
+    assert result["status"] == "clarification_needed"
+    assert result["clarification_prompt"]
     assert result["message"] == "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。"
     assert result["intent_analysis"]["intent_matched"] is True
     assert result["intent_analysis"]["outcome"] == "error"

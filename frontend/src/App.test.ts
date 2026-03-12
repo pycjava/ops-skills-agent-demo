@@ -9,7 +9,22 @@ import type {
   InspectionTaskDraft,
   InspectionTaskFromConversationMessageResult,
   InspectionTaskRun,
+  TaskNotification,
 } from './stores/chat'
+import type { TaskStreamEvent } from './stores/chat/tasks'
+
+type AppTestMessage = {
+  id?: string
+  role: string
+  content: string
+  type?: string
+  timestamp?: number
+  attachments?: Array<Record<string, unknown>>
+  toolName?: string
+  toolDesc?: string
+  toolInput?: Record<string, unknown>
+  agentId?: string
+}
 
 const composerHarness = vi.hoisted(() => ({
   sendMessage:
@@ -35,15 +50,27 @@ function createCloudResolution(
   }
 }
 
+function createTaskNotification(
+  overrides: Partial<TaskNotification> = {},
+): TaskNotification {
+  return {
+    id: 'notification-1',
+    task_id: 'task-1',
+    task_run_id: 'run-1',
+    conversation_id: 'conv-1',
+    status: 'succeeded',
+    title: 'Peets Daily Inspection',
+    summary: 'Summary line 1\nSummary line 2',
+    report_name: 'report-a.md',
+    report_path: '/memories/reports/report-a.md',
+    read_at: null,
+    created_at: '2026-03-12T09:00:00.000',
+    ...overrides,
+  }
+}
+
 const chatStoreMock = {
-  messages: [] as Array<{
-    id?: string
-    role: string
-    content: string
-    type?: string
-    timestamp?: number
-    attachments?: Array<Record<string, unknown>>
-  }>,
+  messages: [] as AppTestMessage[],
   agents: [
     { id: 'general', label: '通用助手' },
     { id: 'dba', label: '数据库助手' },
@@ -55,6 +82,7 @@ const chatStoreMock = {
   conversations: [] as ConversationItem[],
   inspectionTasks: [] as InspectionTask[],
   inspectionTaskRuns: [] as InspectionTaskRun[],
+  taskNotifications: [] as TaskNotification[],
   currentConversationId: null as string | null,
   draftAgentId: 'dba',
   isConnected: true,
@@ -68,6 +96,10 @@ const chatStoreMock = {
   memoryError: null as string | null,
   isMemoryLoading: false,
   isInspectionTaskLoading: false,
+  unreadTaskNotificationCount: 0,
+  taskNotificationToast: null as TaskNotification | null,
+  taskNotificationError: null as string | null,
+  isTaskNotificationLoading: false,
   conversationAttachments: [] as Array<{
     id: string
     conversation_id: string
@@ -95,9 +127,23 @@ const chatStoreMock = {
   fetchConversations: vi.fn(async () => {}),
   fetchInspectionTasks: vi.fn(async () => {}),
   fetchInspectionTaskRuns: vi.fn(async () => {}),
+  fetchTaskNotifications: vi.fn(async () => {}),
   buildInspectionTaskDraft: vi.fn(async (): Promise<InspectionTaskDraft | null> => null),
   createInspectionTaskFromConversationMessage: vi.fn(
-    async (): Promise<InspectionTaskFromConversationMessageResult> => ({
+    async (
+      _conversationId: string,
+      _message: string,
+    ): Promise<InspectionTaskFromConversationMessageResult> => ({
+      status: 'not_task_creation',
+    }),
+  ),
+  createInspectionTaskFromConversationMessageStream: vi.fn(
+    async (
+      _conversationId: string,
+      _message: string,
+      _onEvent: (event: TaskStreamEvent) => void,
+      _options?: { original_message?: string },
+    ): Promise<InspectionTaskFromConversationMessageResult> => ({
       status: 'not_task_creation',
     }),
   ),
@@ -112,6 +158,10 @@ const chatStoreMock = {
   openMemoryContent: vi.fn(async () => {}),
   fetchMemoryContent: vi.fn(async () => {}),
   deleteMemoryFile: vi.fn(async () => {}),
+  markTaskNotificationRead: vi.fn(async () => null),
+  markAllTaskNotificationsRead: vi.fn(async () => true),
+  dismissTaskNotificationToast: vi.fn(),
+  downloadTaskNotificationReport: vi.fn(async () => true),
   switchConversation: vi.fn(),
   createConversation: vi.fn(),
   deleteConversation: vi.fn(),
@@ -182,6 +232,10 @@ describe('App', () => {
     chatStoreMock.createInspectionTaskFromConversationMessage.mockResolvedValue({
       status: 'not_task_creation',
     })
+    chatStoreMock.createInspectionTaskFromConversationMessageStream.mockReset()
+    chatStoreMock.createInspectionTaskFromConversationMessageStream.mockResolvedValue({
+      status: 'not_task_creation',
+    })
     chatStoreMock.deleteInspectionTask.mockReset()
     chatStoreMock.deleteInspectionTask.mockResolvedValue(true)
     composerHarness.sendMessage = null
@@ -191,9 +245,13 @@ describe('App', () => {
     chatStoreMock.conversations = []
     chatStoreMock.inspectionTasks = []
     chatStoreMock.inspectionTaskRuns = []
+    chatStoreMock.taskNotifications = []
     chatStoreMock.conversationAttachments = []
     chatStoreMock.attachmentError = null
     chatStoreMock.inspectionTaskError = null
+    chatStoreMock.unreadTaskNotificationCount = 0
+    chatStoreMock.taskNotificationToast = null
+    chatStoreMock.taskNotificationError = null
     chatStoreMock.resolveCloudRequestContext.mockResolvedValue(createCloudResolution())
   })
 
@@ -214,6 +272,45 @@ describe('App', () => {
 
     expect(wrapper.text()).toContain('Shift + Enter 换行')
     expect(wrapper.text()).toContain('更多')
+  })
+
+  test('wires task notification center props and actions through the store', async () => {
+    const notification = createTaskNotification()
+    chatStoreMock.taskNotifications = [notification]
+    chatStoreMock.unreadTaskNotificationCount = 1
+    chatStoreMock.taskNotificationToast = notification
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    const notificationCenter = wrapper.findComponent({ name: 'TaskNotificationCenter' })
+    expect(notificationCenter.exists()).toBe(true)
+    expect(notificationCenter.props('notifications')).toEqual([notification])
+    expect(notificationCenter.props('unreadCount')).toBe(1)
+    expect(notificationCenter.props('toast')).toEqual(notification)
+
+    notificationCenter.vm.$emit('read', notification.id)
+    await flushPromises()
+    expect(chatStoreMock.markTaskNotificationRead).toHaveBeenCalledWith(notification.id)
+
+    notificationCenter.vm.$emit('read-all')
+    await flushPromises()
+    expect(chatStoreMock.markAllTaskNotificationsRead).toHaveBeenCalled()
+
+    notificationCenter.vm.$emit('open-conversation', 'conv-1')
+    await flushPromises()
+    expect(chatStoreMock.switchConversation).toHaveBeenCalledWith('conv-1')
+
+    notificationCenter.vm.$emit('download-report', notification)
+    await flushPromises()
+    expect(chatStoreMock.downloadTaskNotificationReport).toHaveBeenCalledWith(
+      '/memories/reports/report-a.md',
+      'report-a.md',
+    )
+
+    notificationCenter.vm.$emit('dismiss-toast')
+    expect(chatStoreMock.dismissTaskNotificationToast).toHaveBeenCalled()
   })
 
   test('renders upload trigger beside send button in the composer footer', () => {
@@ -302,7 +399,7 @@ describe('App', () => {
     ).toBe(true)
   })
 
-  test('creates an inspection task directly from a conversation message', async () => {
+  test.skip('creates an inspection task directly from a conversation message', async () => {
     chatStoreMock.currentConversationId = 'conv-1'
     chatStoreMock.createInspectionTaskFromConversationMessage.mockResolvedValueOnce({
       status: 'created',
@@ -372,7 +469,7 @@ describe('App', () => {
     expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('activeTab')).toBe('tasks')
   })
 
-  test('continues normal chat when the backend says the message is not task creation', async () => {
+  test.skip('continues normal chat when the backend says the message is not task creation', async () => {
     chatStoreMock.currentConversationId = 'conv-1'
     chatStoreMock.createInspectionTaskFromConversationMessage.mockResolvedValueOnce({
       status: 'not_task_creation',
@@ -402,7 +499,7 @@ describe('App', () => {
     expect(chatStoreMock.messages).toHaveLength(0)
   })
 
-  test('opens task draft with notice when task intent is missing a complete schedule', async () => {
+  test.skip('opens task draft with notice when task intent is missing a complete schedule', async () => {
     chatStoreMock.currentConversationId = 'conv-1'
     chatStoreMock.buildInspectionTaskDraft.mockResolvedValueOnce({
       source_conversation_id: 'conv-1',
@@ -469,6 +566,192 @@ describe('App', () => {
     expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('draftNotice')).toBe(
       '未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。',
     )
+  })
+
+  test('streams task creation events and opens the task drawer on success', async () => {
+    chatStoreMock.currentConversationId = 'conv-1'
+    chatStoreMock.createInspectionTaskFromConversationMessageStream.mockImplementationOnce(
+      async (
+        _conversationId: string,
+        _message: string,
+        onEvent: (event: TaskStreamEvent) => void,
+      ): Promise<InspectionTaskFromConversationMessageResult> => {
+        onEvent({
+          type: 'tool_call',
+          tool_name: 'inspection_task_intent',
+          tool_desc: 'Running inspection_task_intent',
+        })
+        onEvent({
+          type: 'tool_result',
+          tool_name: 'inspection_task_intent',
+          result: 'Recognized cron 0 9 * * *',
+        })
+
+        return {
+          status: 'created',
+          intent_analysis: {
+            intent_matched: true,
+            outcome: 'created',
+            cron_expr: '0 9 * * *',
+            summary: 'Created task Peets Daily Inspection',
+            reason: null,
+          },
+          task: {
+            id: 'task-1',
+            name: 'Peets Daily Inspection',
+            source_conversation_id: 'conv-1',
+            agent_id: 'dba',
+            skill_id: 'volcengine-rds-health-analyzer',
+            prompt_template: 'Inspect peets-prod-pos-mysql for slow queries',
+            target_payload: { instance_name: 'peets-prod-pos-mysql' },
+            schedule_type: 'cron',
+            cron_expr: '0 9 * * *',
+            enabled: true,
+            last_run_at: null,
+            next_run_at: '2026-03-11T09:00:00.000',
+            last_status: 'idle',
+            created_at: '2026-03-11T08:00:00.000',
+            updated_at: '2026-03-11T08:00:00.000',
+          },
+        }
+      },
+    )
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    const sendMessage = composerHarness.sendMessage
+    if (!sendMessage) {
+      throw new Error('composer sendMessage was not captured')
+    }
+
+    const result = await sendMessage(
+      'Create scheduled task every day at 09:00',
+      'Create scheduled task every day at 09:00',
+    )
+    await flushPromises()
+
+    expect(result).toBe(false)
+    expect(chatStoreMock.createInspectionTaskFromConversationMessageStream).toHaveBeenCalledWith(
+      'conv-1',
+      'Create scheduled task every day at 09:00',
+      expect.any(Function),
+    )
+    expect(chatStoreMock.sendMessage).not.toHaveBeenCalled()
+    expect(
+      chatStoreMock.messages.some(
+        (message) =>
+          message.type === 'tool_call' && message.toolName === 'inspection_task_intent',
+      ),
+    ).toBe(true)
+    expect(
+      chatStoreMock.messages.some(
+        (message) =>
+          message.type === 'tool_result' && message.toolName === 'inspection_task_intent',
+      ),
+    ).toBe(true)
+    expect(chatStoreMock.fetchInspectionTasks).toHaveBeenCalled()
+    expect(chatStoreMock.fetchInspectionTaskRuns).toHaveBeenCalled()
+    expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('activeTab')).toBe('tasks')
+  })
+
+  test('falls back to normal chat when the task stream reports not_task_creation', async () => {
+    chatStoreMock.currentConversationId = 'conv-1'
+    chatStoreMock.createInspectionTaskFromConversationMessageStream.mockResolvedValueOnce({
+      status: 'not_task_creation',
+    })
+
+    mount(App, {
+      shallow: true,
+    })
+
+    const sendMessage = composerHarness.sendMessage
+    if (!sendMessage) {
+      throw new Error('composer sendMessage was not captured')
+    }
+
+    const result = await sendMessage(
+      'Create scheduled task but just explain the process',
+      'Create scheduled task but just explain the process',
+    )
+    await flushPromises()
+
+    expect(result).toBe(true)
+    expect(chatStoreMock.createInspectionTaskFromConversationMessageStream).toHaveBeenCalledWith(
+      'conv-1',
+      'Create scheduled task but just explain the process',
+      expect.any(Function),
+    )
+    expect(chatStoreMock.sendMessage).toHaveBeenCalledWith(
+      'Create scheduled task but just explain the process',
+      'Create scheduled task but just explain the process',
+    )
+    expect(chatStoreMock.messages[0]).toMatchObject({
+      role: 'user',
+      content: 'Create scheduled task but just explain the process',
+    })
+  })
+
+  test('shows clarification feedback when the task stream needs schedule details', async () => {
+    chatStoreMock.currentConversationId = 'conv-1'
+    chatStoreMock.createInspectionTaskFromConversationMessageStream.mockImplementationOnce(
+      async (
+        _conversationId: string,
+        _message: string,
+        onEvent: (event: TaskStreamEvent) => void,
+      ): Promise<InspectionTaskFromConversationMessageResult> => {
+        onEvent({
+          type: 'clarification_needed',
+          content: 'Please provide a recurring schedule.',
+          original_message: 'Create scheduled task for this conversation',
+        })
+
+        return {
+          status: 'clarification_needed',
+          message: 'Schedule is incomplete.',
+          clarification_prompt: 'Please provide a recurring schedule.',
+          intent_analysis: {
+            intent_matched: true,
+            outcome: 'error',
+            cron_expr: null,
+            summary: 'Schedule is incomplete.',
+            reason: 'Schedule is incomplete.',
+          },
+        }
+      },
+    )
+
+    mount(App, {
+      shallow: true,
+    })
+
+    const sendMessage = composerHarness.sendMessage
+    if (!sendMessage) {
+      throw new Error('composer sendMessage was not captured')
+    }
+
+    const result = await sendMessage(
+      'Create scheduled task sometime next month',
+      'Create scheduled task sometime next month',
+    )
+    await flushPromises()
+
+    expect(result).toBe(false)
+    expect(chatStoreMock.sendMessage).not.toHaveBeenCalled()
+    expect(
+      chatStoreMock.messages.some(
+        (message) => message.role === 'assistant' && message.content.includes('Please provide'),
+      ),
+    ).toBe(true)
+    expect(
+      chatStoreMock.messages.some(
+        (message) =>
+          message.type === 'tool_result' && message.toolName === 'inspection_task_intent',
+      ),
+    ).toBe(true)
+    expect(chatStoreMock.buildInspectionTaskDraft).not.toHaveBeenCalled()
+    expect(composerHarness.clearInput).toHaveBeenCalled()
   })
 
   test('opens the draft tab from the task drawer header create button', async () => {

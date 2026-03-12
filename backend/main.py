@@ -20,6 +20,7 @@ from api.routers import (
     mcp,
     memories,
     skills,
+    task_notifications,
 )
 from api.ws import chat
 from config import ANTHROPIC_API_KEY, BASE_DIR, SKILLS_DIR
@@ -93,6 +94,7 @@ async def shutdown():
 app.include_router(conversations.router)
 app.include_router(conversation_attachments.router)
 app.include_router(inspection_tasks.router)
+app.include_router(task_notifications.router)
 app.include_router(agents.router)
 app.include_router(skills.router)
 app.include_router(mcp.router)
