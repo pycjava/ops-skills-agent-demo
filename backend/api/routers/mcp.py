@@ -2,7 +2,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from agent import invalidate_runtime_cache
 from services.mcp_registry import McpRegistryService
@@ -14,17 +14,20 @@ service = McpRegistryService()
 
 class McpServerCreateRequest(BaseModel):
     name: str = Field(..., description="MCP server name")
-    transport: Literal["http", "sse"] = Field(..., description="MCP transport")
-    url: str = Field(..., description="MCP server URL")
+    transport: Literal["http", "sse", "stdio"] = Field(..., description="MCP transport")
+    url: str | None = Field(None, description="MCP server URL (required for http/sse)")
+    command: str | None = Field(None, description="Command to start MCP server (required for stdio)")
+    args: list[str] = Field(default_factory=list, description="Command arguments (for stdio)")
+    env: dict[str, str] | None = Field(None, description="Environment variables (for stdio)")
     enabled: bool = Field(True, description="Whether the server is enabled")
     agent_ids: list[str] = Field(default_factory=list, description="Bound agent ids")
     headers: dict[str, str] | None = Field(
-        default=None, description="Optional request headers"
+        default=None, description="Optional request headers (for http/sse)"
     )
 
-    @field_validator("name", "url")
+    @field_validator("name")
     @classmethod
-    def _strip_required(cls, value: str) -> str:
+    def _strip_name(cls, value: str) -> str:
         normalized = str(value or "").strip()
         if not normalized:
             raise ValueError("Field is required")
@@ -44,10 +47,32 @@ class McpServerCreateRequest(BaseModel):
             return None
         return {str(key): str(item) for key, item in value.items()}
 
+    @field_validator("env")
+    @classmethod
+    def _normalize_env(
+        cls, value: dict[str, str] | None
+    ) -> dict[str, str] | None:
+        if value is None:
+            return None
+        return {str(key): str(item) for key, item in value.items()}
+
+    @model_validator(mode="after")
+    def _validate_transport_fields(self):
+        if self.transport == "stdio":
+            if not self.command or not self.command.strip():
+                raise ValueError("command is required for stdio transport")
+        else:
+            if not self.url or not self.url.strip():
+                raise ValueError("url is required for http/sse transport")
+        return self
+
 
 class McpServerUpdateRequest(McpServerCreateRequest):
     replace_headers: bool = Field(
         False, description="Whether to replace stored headers"
+    )
+    replace_env: bool = Field(
+        False, description="Whether to replace stored env variables"
     )
 
 
@@ -64,6 +89,9 @@ async def create_mcp_server(body: McpServerCreateRequest):
             name=body.name,
             transport=body.transport,
             url=body.url,
+            command=body.command,
+            args=body.args,
+            env=body.env,
             enabled=body.enabled,
             agent_ids=body.agent_ids,
             headers=body.headers,
@@ -83,9 +111,13 @@ async def update_mcp_server(server_id: str, body: McpServerUpdateRequest):
             name=body.name,
             transport=body.transport,
             url=body.url,
+            command=body.command,
+            args=body.args,
+            env=body.env,
             enabled=body.enabled,
             agent_ids=body.agent_ids,
             replace_headers=body.replace_headers,
+            replace_env=body.replace_env,
             headers=body.headers,
         )
     except LookupError as exc:

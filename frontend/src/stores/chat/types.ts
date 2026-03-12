@@ -237,7 +237,7 @@ export interface CloudContextResolution {
   candidates: CloudContextCandidate[]
 }
 
-export type McpTransport = 'http' | 'sse'
+export type McpTransport = 'http' | 'sse' | 'stdio'
 export type McpTestStatus = 'untested' | 'ok' | 'error'
 
 export interface McpToolPreview {
@@ -249,7 +249,12 @@ export interface McpServer {
   id: string
   name: string
   transport: McpTransport
-  url: string
+  url: string | null
+  command: string | null
+  args: string[]
+  env: Record<string, string> | null
+  has_env: boolean
+  env_keys: string[]
   enabled: boolean
   agent_ids: string[]
   has_headers: boolean
@@ -265,7 +270,10 @@ export interface McpServer {
 export interface McpServerPayload {
   name: string
   transport: McpTransport
-  url: string
+  url?: string | null
+  command?: string | null
+  args?: string[]
+  env?: Record<string, string> | null
   enabled: boolean
   agent_ids: string[]
   headers?: Record<string, string>
@@ -273,6 +281,7 @@ export interface McpServerPayload {
 
 export interface McpServerUpdatePayload extends McpServerPayload {
   replace_headers?: boolean
+  replace_env?: boolean
 }
 
 export interface SendMessageOptions {

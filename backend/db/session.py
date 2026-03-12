@@ -93,6 +93,15 @@ def _bootstrap_sqlite_compat_columns(sync_conn):
         )
     )
 
+    if not _has_column(sync_conn, "mcp_servers", "command"):
+        sync_conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN command TEXT"))
+
+    if not _has_column(sync_conn, "mcp_servers", "args"):
+        sync_conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN args JSON DEFAULT '[]'"))
+
+    if not _has_column(sync_conn, "mcp_servers", "env"):
+        sync_conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN env JSON"))
+
 
 async def init_db():
     """Create tables and backfill compatibility columns."""

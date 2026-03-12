@@ -11,7 +11,10 @@ import type {
 type EditableMcpConfig = {
   name: string
   transport: McpTransport
-  url: string
+  url?: string | null
+  command?: string | null
+  args?: string[]
+  env?: Record<string, string> | null
   agent_ids: string[]
   headers?: Record<string, string>
 }
@@ -52,6 +55,13 @@ const storedHeadersHint = computed(() => {
   return `Stored headers: ${keys}. Omit "headers" to keep them, or provide a new "headers" object to replace them.`
 })
 
+const storedEnvHint = computed(() => {
+  const server = editingServer.value
+  if (!server?.has_env) return ''
+  const keys = server.env_keys.length ? server.env_keys.join(', ') : 'masked env vars'
+  return `Stored env vars: ${keys}. Omit "env" to keep them, or provide a new "env" object to replace them.`
+})
+
 function createTemplate(agentId: string): string {
   const payload: EditableMcpConfig = {
     name: 'weather',
@@ -62,12 +72,32 @@ function createTemplate(agentId: string): string {
   return JSON.stringify(payload, null, 2)
 }
 
+function createStdioTemplate(agentId: string): string {
+  const payload: EditableMcpConfig = {
+    name: 'my-mcp-server',
+    transport: 'stdio',
+    command: 'uvx',
+    args: ['my-mcp-package'],
+    env: { API_KEY: 'your-api-key' },
+    agent_ids: [agentId],
+  }
+  return JSON.stringify(payload, null, 2)
+}
+
 function serializeServer(server: McpServer): string {
   const payload: EditableMcpConfig = {
     name: server.name,
     transport: server.transport,
-    url: server.url,
     agent_ids: [...server.agent_ids],
+  }
+  if (server.transport === 'stdio') {
+    payload.command = server.command
+    payload.args = server.args
+    if (server.has_env && server.env_keys.length > 0) {
+      payload.env = Object.fromEntries(server.env_keys.map((k) => [k, '***']))
+    }
+  } else {
+    payload.url = server.url
   }
   return JSON.stringify(payload, null, 2)
 }
@@ -124,9 +154,37 @@ function normalizeHeaders(value: unknown): Record<string, string> {
   return normalized
 }
 
+function normalizeEnv(value: unknown): Record<string, string> {
+  if (value === undefined) {
+    return {}
+  }
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    throw new Error('"env" must be a JSON object.')
+  }
+
+  const normalized: Record<string, string> = {}
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = String(rawKey || '').trim()
+    if (!key) continue
+    normalized[key] = String(rawValue ?? '')
+  }
+  return normalized
+}
+
+function normalizeArgs(value: unknown): string[] {
+  if (value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    throw new Error('"args" must be an array of strings.')
+  }
+  return value.map((arg) => String(arg || '').trim()).filter(Boolean)
+}
+
 function parseEditorConfig(): {
   payload: EditableMcpConfig
   replaceHeaders: boolean
+  replaceEnv: boolean
 } | null {
   let parsed: unknown
 
@@ -146,6 +204,7 @@ function parseEditorConfig(): {
   const name = typeof data.name === 'string' ? data.name.trim() : ''
   const transport = data.transport
   const url = typeof data.url === 'string' ? data.url.trim() : ''
+  const command = typeof data.command === 'string' ? data.command.trim() : ''
   const rawAgentIds = Array.isArray(data.agent_ids) ? data.agent_ids : []
   const agent_ids = [...new Set(rawAgentIds.map((value) => String(value || '').trim()).filter(Boolean))]
 
@@ -153,36 +212,44 @@ function parseEditorConfig(): {
     formError.value = '"name" is required.'
     return null
   }
-  if (transport !== 'http' && transport !== 'sse') {
-    formError.value = '"transport" must be "http" or "sse".'
+  if (transport !== 'http' && transport !== 'sse' && transport !== 'stdio') {
+    formError.value = '"transport" must be "http", "sse", or "stdio".'
     return null
   }
-  if (!url) {
-    formError.value = '"url" is required.'
-    return null
+  if (transport === 'stdio') {
+    if (!command) {
+      formError.value = '"command" is required for stdio transport.'
+      return null
+    }
+  } else {
+    if (!url) {
+      formError.value = '"url" is required for http/sse transport.'
+      return null
+    }
   }
-  if (agent_ids.length === 0) {
-    formError.value = '"agent_ids" must contain at least one agent id.'
-    return null
-  }
-
   try {
     const replaceHeaders = Object.prototype.hasOwnProperty.call(data, 'headers')
     const headers = normalizeHeaders(data.headers)
+    const replaceEnv = Object.prototype.hasOwnProperty.call(data, 'env')
+    const env = normalizeEnv(data.env)
+    const args = normalizeArgs(data.args)
 
     formError.value = ''
+    const payload: EditableMcpConfig = {
+      name,
+      transport,
+      agent_ids,
+      ...(transport === 'stdio' ? { command, args } : { url }),
+      ...(replaceHeaders ? { headers } : {}),
+      ...(replaceEnv && transport === 'stdio' ? { env } : {}),
+    }
     return {
-      payload: {
-        name,
-        transport,
-        url,
-        agent_ids,
-        ...(replaceHeaders ? { headers } : {}),
-      },
+      payload,
       replaceHeaders,
+      replaceEnv,
     }
   } catch (error) {
-    formError.value = error instanceof Error ? error.message : 'Invalid headers config.'
+    formError.value = error instanceof Error ? error.message : 'Invalid config.'
     return null
   }
 }
@@ -197,21 +264,38 @@ async function submitConfig() {
     const payload: McpServerUpdatePayload = {
       name: parsed.payload.name,
       transport: parsed.payload.transport,
-      url: parsed.payload.url,
       enabled: editingServer.value.enabled,
       agent_ids: parsed.payload.agent_ids,
       replace_headers: parsed.replaceHeaders,
-      ...(parsed.replaceHeaders ? { headers: parsed.payload.headers ?? {} } : {}),
+      replace_env: parsed.replaceEnv,
+      ...(parsed.payload.transport === 'stdio'
+        ? {
+            command: parsed.payload.command,
+            args: parsed.payload.args,
+            ...(parsed.replaceEnv ? { env: parsed.payload.env ?? {} } : {}),
+          }
+        : {
+            url: parsed.payload.url,
+            ...(parsed.replaceHeaders ? { headers: parsed.payload.headers ?? {} } : {}),
+          }),
     }
     ok = await chatStore.updateMcpServer(editingServer.value.id, payload)
   } else {
     const payload: McpServerPayload = {
       name: parsed.payload.name,
       transport: parsed.payload.transport,
-      url: parsed.payload.url,
       enabled: true,
       agent_ids: parsed.payload.agent_ids,
-      ...(parsed.replaceHeaders ? { headers: parsed.payload.headers ?? {} } : {}),
+      ...(parsed.payload.transport === 'stdio'
+        ? {
+            command: parsed.payload.command,
+            args: parsed.payload.args,
+            env: parsed.payload.env,
+          }
+        : {
+            url: parsed.payload.url,
+            headers: parsed.payload.headers,
+          }),
     }
     ok = await chatStore.createMcpServer(payload)
   }
@@ -225,10 +309,11 @@ async function toggleEnabled(server: McpServer, enabled: boolean) {
   await chatStore.updateMcpServer(server.id, {
     name: server.name,
     transport: server.transport,
-    url: server.url,
     enabled,
     agent_ids: server.agent_ids,
-    replace_headers: false,
+    ...(server.transport === 'stdio'
+      ? { command: server.command, args: server.args, replace_env: false }
+      : { url: server.url, replace_headers: false }),
   })
 }
 
@@ -237,18 +322,14 @@ async function toggleAgent(server: McpServer, agentId: string, checked: boolean)
     ? [...new Set([...server.agent_ids, agentId])]
     : server.agent_ids.filter((id) => id !== agentId)
 
-  if (nextAgentIds.length === 0) {
-    window.alert('Select at least one agent')
-    return
-  }
-
   await chatStore.updateMcpServer(server.id, {
     name: server.name,
     transport: server.transport,
-    url: server.url,
     enabled: server.enabled,
     agent_ids: nextAgentIds,
-    replace_headers: false,
+    ...(server.transport === 'stdio'
+      ? { command: server.command, args: server.args, replace_env: false }
+      : { url: server.url, replace_headers: false }),
   })
 }
 
@@ -299,6 +380,24 @@ function headerSummary(server: McpServer) {
   if (!server.header_keys.length) return 'Stored and masked'
   return server.header_keys.join(', ')
 }
+
+function hasStoredEnv(server: McpServer) {
+  return server.has_env && server.env_keys.length > 0
+}
+
+function envSummary(server: McpServer) {
+  if (!server.env_keys.length) return 'Stored and masked'
+  return server.env_keys.join(', ')
+}
+
+function serverTransportInfo(server: McpServer): string {
+  if (server.transport === 'stdio') {
+    const cmd = server.command || 'unknown'
+    const args = server.args?.length ? ` ${server.args.join(' ')}` : ''
+    return `${cmd}${args}`
+  }
+  return server.url || 'unknown'
+}
 </script>
 
 <template>
@@ -344,7 +443,7 @@ function headerSummary(server: McpServer) {
                 Active Agent
               </span>
             </div>
-            <div class="server-url">{{ server.transport.toUpperCase() }} · {{ server.url }}</div>
+            <div class="server-url">{{ server.transport.toUpperCase() }} · {{ serverTransportInfo(server) }}</div>
           </div>
 
           <label class="toggle toggle-inline">
@@ -384,6 +483,13 @@ function headerSummary(server: McpServer) {
             <div class="meta-label">Headers</div>
             <div class="meta-text">
               {{ hasStoredHeaders(server) ? headerSummary(server) : 'No custom headers' }}
+            </div>
+          </div>
+
+          <div v-if="server.transport === 'stdio'" class="meta-block">
+            <div class="meta-label">Environment</div>
+            <div class="meta-text">
+              {{ hasStoredEnv(server) ? envSummary(server) : 'No env vars' }}
             </div>
           </div>
 
@@ -453,7 +559,7 @@ function headerSummary(server: McpServer) {
           <div class="editor-info">
             <div class="meta-label">Raw Config</div>
             <div class="section-subtitle">
-              Required keys: `name`, `transport`, `url`, `agent_ids`. Optional: `headers`.
+              Required: `name`, `transport`, `agent_ids`. For http/sse: `url`. For stdio: `command`. Optional: `headers`, `args`, `env`.
             </div>
           </div>
           <button class="mini-btn" @click="formatRawConfig">Format JSON</button>
@@ -461,6 +567,10 @@ function headerSummary(server: McpServer) {
 
         <div v-if="storedHeadersHint" class="masked-box">
           {{ storedHeadersHint }}
+        </div>
+
+        <div v-if="storedEnvHint" class="masked-box">
+          {{ storedEnvHint }}
         </div>
 
         <textarea

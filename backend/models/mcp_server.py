@@ -16,7 +16,12 @@ class McpServer(Base):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     transport: Mapped[str] = mapped_column(String(20), nullable=False)
-    url: Mapped[str] = mapped_column(Text, nullable=False)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    command: Mapped[str | None] = mapped_column(Text, nullable=True)
+    args: Mapped[list[str]] = mapped_column(
+        JSON, default=list, nullable=False, server_default="[]"
+    )
+    env: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
     enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="1", nullable=False
     )
@@ -43,6 +48,11 @@ class McpServer(Base):
             for key in (self.headers or {}).keys()
             if isinstance(key, str) and key.strip()
         )
+        env_keys = sorted(
+            key
+            for key in (self.env or {}).keys()
+            if isinstance(key, str) and key.strip()
+        )
         tools = []
         for item in self.last_tools or []:
             if not isinstance(item, dict):
@@ -58,6 +68,11 @@ class McpServer(Base):
             "name": self.name,
             "transport": self.transport,
             "url": self.url,
+            "command": self.command,
+            "args": list(self.args or []),
+            "env": self.env,
+            "has_env": bool(env_keys),
+            "env_keys": env_keys,
             "enabled": self.enabled,
             "agent_ids": list(self.agent_ids or []),
             "has_headers": bool(header_keys),
@@ -83,15 +98,29 @@ class McpServer(Base):
         }
 
     def to_connection_dict(self, *, timeout: float) -> dict[str, object]:
-        payload: dict[str, object] = {
-            "transport": self.transport,
-            "url": self.url,
-            "timeout": timeout,
-        }
-        if self.headers:
-            payload["headers"] = {
-                str(key): str(value)
-                for key, value in self.headers.items()
-                if str(key).strip()
+        if self.transport == "stdio":
+            payload: dict[str, object] = {
+                "transport": "stdio",
+                "command": self.command,
+                "args": list(self.args or []),
             }
-        return payload
+            if self.env:
+                payload["env"] = {
+                    str(key): str(value)
+                    for key, value in self.env.items()
+                    if str(key).strip()
+                }
+            return payload
+        else:
+            payload: dict[str, object] = {
+                "transport": self.transport,
+                "url": self.url,
+                "timeout": timeout,
+            }
+            if self.headers:
+                payload["headers"] = {
+                    str(key): str(value)
+                    for key, value in self.headers.items()
+                    if str(key).strip()
+                }
+            return payload

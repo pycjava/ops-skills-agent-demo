@@ -12,7 +12,7 @@ from models import McpServer
 from utils.logger import logger
 
 
-McpTransport = Literal["http", "sse"]
+McpTransport = Literal["http", "sse", "stdio"]
 McpTestStatus = Literal["untested", "ok", "error"]
 
 
@@ -36,18 +36,33 @@ class McpRegistryService:
         *,
         name: str,
         transport: McpTransport,
-        url: str,
+        url: str | None,
+        command: str | None,
+        args: list[str] | None,
+        env: dict[str, str] | None,
         enabled: bool,
         agent_ids: Iterable[str],
         headers: dict[str, str] | None,
     ) -> McpServer:
         normalized_agent_ids = self._normalize_agent_ids(agent_ids)
         normalized_headers = self._normalize_headers(headers)
+        normalized_args = self._normalize_args(args)
+        normalized_env = self._normalize_env(env)
+
+        if transport == "stdio":
+            normalized_command = self._normalize_command(command)
+            normalized_url = None
+        else:
+            normalized_url = self._normalize_url(url)
+            normalized_command = None
 
         record = McpServer(
             name=self._normalize_name(name),
             transport=transport,
-            url=self._normalize_url(url),
+            url=normalized_url,
+            command=normalized_command,
+            args=normalized_args,
+            env=normalized_env or None,
             enabled=bool(enabled),
             agent_ids=normalized_agent_ids,
             headers=normalized_headers or None,
@@ -75,10 +90,14 @@ class McpRegistryService:
         *,
         name: str,
         transport: McpTransport,
-        url: str,
+        url: str | None,
+        command: str | None,
+        args: list[str] | None,
+        env: dict[str, str] | None,
         enabled: bool,
         agent_ids: Iterable[str],
         replace_headers: bool,
+        replace_env: bool,
         headers: dict[str, str] | None,
     ) -> McpServer:
         async with AsyncSessionLocal() as session:
@@ -88,12 +107,25 @@ class McpRegistryService:
 
             record.name = self._normalize_name(name)
             record.transport = transport
-            record.url = self._normalize_url(url)
+            
+            if transport == "stdio":
+                record.command = self._normalize_command(command)
+                record.url = None
+            else:
+                record.url = self._normalize_url(url)
+                record.command = None
+            
+            record.args = self._normalize_args(args)
             record.enabled = bool(enabled)
             record.agent_ids = self._normalize_agent_ids(agent_ids)
+            
             if replace_headers:
                 normalized_headers = self._normalize_headers(headers)
                 record.headers = normalized_headers or None
+            
+            if replace_env:
+                normalized_env = self._normalize_env(env)
+                record.env = normalized_env or None
 
             record.last_test_status = "untested"
             record.last_tested_at = None
@@ -135,11 +167,15 @@ class McpRegistryService:
 
         connections: dict[str, dict[str, object]] = {}
         for server in servers:
-            if agent_id not in (server.agent_ids or []):
-                continue
-            connections[server.name] = server.to_connection_dict(
-                timeout=self._timeout_seconds
-            )
+            server_agent_ids = server.agent_ids or []
+            if not server_agent_ids:
+                connections[server.name] = server.to_connection_dict(
+                    timeout=self._timeout_seconds
+                )
+            elif agent_id in server_agent_ids:
+                connections[server.name] = server.to_connection_dict(
+                    timeout=self._timeout_seconds
+                )
         return connections
 
     async def test_server(self, server_id: str) -> dict[str, Any]:
@@ -200,14 +236,44 @@ class McpRegistryService:
         return normalized
 
     @staticmethod
-    def _normalize_url(value: str) -> str:
+    def _normalize_url(value: str | None) -> str:
+        if value is None:
+            raise ValueError("MCP server url is required for http/sse transport")
         normalized = str(value or "").strip()
         if not normalized:
-            raise ValueError("MCP server url is required")
+            raise ValueError("MCP server url is required for http/sse transport")
         if not (
             normalized.startswith("http://") or normalized.startswith("https://")
         ):
             raise ValueError("MCP server url must start with http:// or https://")
+        return normalized
+
+    @staticmethod
+    def _normalize_command(value: str | None) -> str:
+        if value is None:
+            raise ValueError("MCP server command is required for stdio transport")
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("MCP server command is required for stdio transport")
+        return normalized
+
+    @staticmethod
+    def _normalize_args(args: list[str] | None) -> list[str]:
+        if not args:
+            return []
+        return [str(arg or "").strip() for arg in args if str(arg or "").strip()]
+
+    @staticmethod
+    def _normalize_env(env: dict[str, str] | None) -> dict[str, str]:
+        if not env:
+            return {}
+        normalized: dict[str, str] = {}
+        for raw_key, raw_value in env.items():
+            key = str(raw_key or "").strip()
+            value = str(raw_value or "").strip()
+            if not key:
+                continue
+            normalized[key] = value
         return normalized
 
     @staticmethod
@@ -222,8 +288,6 @@ class McpRegistryService:
             normalized.append(agent_id)
             seen.add(agent_id)
 
-        if not normalized:
-            raise ValueError("At least one agent_id is required")
         return normalized
 
     @staticmethod
