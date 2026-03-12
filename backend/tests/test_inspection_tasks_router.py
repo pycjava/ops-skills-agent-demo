@@ -93,6 +93,13 @@ def test_create_from_conversation_message_route_returns_created_task(
         assert now == datetime(2026, 3, 11, 8, 0)
         return {
             "status": "created",
+            "intent_analysis": {
+                "intent_matched": True,
+                "outcome": "created",
+                "cron_expr": "0 9 * * *",
+                "summary": "已命中定时任务创建意图，识别到调度表达式 0 9 * * *，并已创建任务「Peets Daily Inspection」。",
+                "reason": None,
+            },
             "task": {
                 "id": "task-1",
                 "name": "Peets Daily Inspection",
@@ -130,6 +137,8 @@ def test_create_from_conversation_message_route_returns_created_task(
     assert response.status_code == 200
     assert response.json()["status"] == "created"
     assert response.json()["task"]["id"] == "task-1"
+    assert response.json()["intent_analysis"]["intent_matched"] is True
+    assert response.json()["intent_analysis"]["outcome"] == "created"
 
 
 def test_create_from_conversation_message_route_returns_not_task_creation(
@@ -160,6 +169,7 @@ def test_create_from_conversation_message_route_returns_not_task_creation(
 
     assert response.status_code == 200
     assert response.json() == {"status": "not_task_creation"}
+    assert "intent_analysis" not in response.json()
 
 
 def test_create_from_conversation_message_route_returns_error_status(
@@ -175,6 +185,13 @@ def test_create_from_conversation_message_route_returns_error_status(
         return {
             "status": "error",
             "message": "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+            "intent_analysis": {
+                "intent_matched": True,
+                "outcome": "error",
+                "cron_expr": None,
+                "summary": "已命中定时任务创建意图，未完成创建。调度表达式：未识别。 原因：未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+                "reason": "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+            },
         }
 
     monkeypatch.setattr(
@@ -192,9 +209,17 @@ def test_create_from_conversation_message_route_returns_error_status(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert payload == {
         "status": "error",
         "message": "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+        "intent_analysis": {
+            "intent_matched": True,
+            "outcome": "error",
+            "cron_expr": None,
+            "summary": "已命中定时任务创建意图，未完成创建。调度表达式：未识别。 原因：未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+            "reason": "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+        },
     }
 
 

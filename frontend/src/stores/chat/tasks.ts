@@ -8,6 +8,17 @@ import type {
   InspectionTaskRun,
 } from './types'
 
+// SSE 事件类型
+export type TaskStreamEvent =
+  | { type: 'tool_call'; tool_name: string; tool_desc: string; tool_input?: Record<string, unknown> }
+  | { type: 'tool_result'; tool_name: string; result: string; tool_input?: Record<string, unknown> }
+  | { type: 'clarification_needed'; content: string; original_message?: string }
+  | { type: 'done'; status: 'created'; task: InspectionTask; intent_analysis?: unknown }
+  | { type: 'done'; status: 'error'; message: string; intent_analysis?: unknown }
+  | { type: 'done'; status: 'clarification_needed'; message: string; clarification_prompt: string; intent_analysis?: unknown }
+  | { type: 'done'; status: 'not_task_creation' }
+  | { type: 'error'; content: string }
+
 interface TaskDomainDeps {
   backendUrl: string
   inspectionTasks: Ref<InspectionTask[]>
@@ -157,6 +168,105 @@ export function createTaskDomain({
     return result
   }
 
+  /**
+   * 以 SSE 流式方式生成定时任务。
+   * 每收到一个 SSE 事件就调用 onEvent 回调，调用方可实时将事件注入消息列表。
+   * 最终返回 done 事件中的结果（status/task/intent_analysis）。
+   */
+  async function createInspectionTaskFromConversationMessageStream(
+    conversationId: string,
+    message: string,
+    onEvent: (event: TaskStreamEvent) => void,
+    previousContext?: { original_message: string },
+  ): Promise<InspectionTaskFromConversationMessageResult | null> {
+    inspectionTaskError.value = null
+
+    let res: Response
+    try {
+      res = await fetch(`${backendUrl}/api/inspection-tasks/from-conversation-message/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          message,
+          previous_context: previousContext,
+        }),
+      })
+    } catch (err) {
+      inspectionTaskError.value = err instanceof Error ? err.message : '网络错误'
+      return null
+    }
+
+    if (!res.ok || !res.body) {
+      const errMsg = await readErrorMessage(res, `HTTP ${res.status}`)
+      inspectionTaskError.value = errMsg
+      return null
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finalResult: InspectionTaskFromConversationMessageResult | null = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const jsonStr = line.slice(6).trim()
+        if (!jsonStr) continue
+
+        let event: TaskStreamEvent
+        try {
+          event = JSON.parse(jsonStr) as TaskStreamEvent
+        } catch {
+          continue
+        }
+
+        onEvent(event)
+
+        if (event.type === 'done') {
+          if (event.status === 'created') {
+            replaceTask(inspectionTasks, event.task)
+            finalResult = {
+              status: 'created',
+              task: event.task,
+              intent_analysis: event.intent_analysis as never,
+            }
+          } else if (event.status === 'error') {
+            inspectionTaskError.value = event.message
+            finalResult = {
+              status: 'error',
+              message: event.message,
+              intent_analysis: event.intent_analysis as never,
+            }
+          } else if (event.status === 'clarification_needed') {
+            finalResult = {
+              status: 'clarification_needed',
+              message: event.message,
+              clarification_prompt: event.clarification_prompt,
+              intent_analysis: event.intent_analysis as never,
+            }
+          } else {
+            finalResult = { status: 'not_task_creation' }
+          }
+        }
+
+        if (event.type === 'error') {
+          inspectionTaskError.value = event.content
+          finalResult = { status: 'error', message: event.content }
+        }
+      }
+    }
+
+    return finalResult
+  }
+
   async function updateInspectionTask(
     taskId: string,
     payload: Partial<InspectionTaskDraft>,
@@ -224,6 +334,7 @@ export function createTaskDomain({
     fetchInspectionTaskRuns,
     buildInspectionTaskDraft,
     createInspectionTaskFromConversationMessage,
+    createInspectionTaskFromConversationMessageStream,
     createInspectionTask,
     updateInspectionTask,
     deleteInspectionTask,

@@ -77,10 +77,19 @@ export interface InspectionTask extends InspectionTaskDraft {
   updated_at: string | null
 }
 
+export interface InspectionTaskIntentAnalysis {
+  intent_matched: boolean
+  outcome: 'created' | 'error'
+  cron_expr: string | null
+  summary: string
+  reason: string | null
+}
+
 export type InspectionTaskFromConversationMessageResult =
   | {
       status: 'created'
       task: InspectionTask
+      intent_analysis?: InspectionTaskIntentAnalysis
     }
   | {
       status: 'not_task_creation'
@@ -88,6 +97,13 @@ export type InspectionTaskFromConversationMessageResult =
   | {
       status: 'error'
       message: string
+      intent_analysis?: InspectionTaskIntentAnalysis
+    }
+  | {
+      status: 'clarification_needed'
+      message: string
+      clarification_prompt: string
+      intent_analysis?: InspectionTaskIntentAnalysis
     }
 
 export interface InspectionTaskRun {

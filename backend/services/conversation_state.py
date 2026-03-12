@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_profiles import DEFAULT_AGENT_ID, get_agent_profile
 from models import Conversation
+from services.conversation_messages import DEFAULT_CONVERSATION_TITLE
 
 
 def resolve_agent_id(agent_id: str | None) -> str:
@@ -36,7 +37,7 @@ async def create_conversation(
 ) -> Conversation:
     resolved_agent_id = resolve_agent_id(agent_id)
     conversation = Conversation(
-        title=(title or "").strip() or "鏂板璇?",
+        title=(title or "").strip() or DEFAULT_CONVERSATION_TITLE,
         source=source,
         agent_id=resolved_agent_id,
         source_task_id=source_task_id,

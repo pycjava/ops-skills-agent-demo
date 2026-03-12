@@ -306,6 +306,13 @@ describe('App', () => {
     chatStoreMock.currentConversationId = 'conv-1'
     chatStoreMock.createInspectionTaskFromConversationMessage.mockResolvedValueOnce({
       status: 'created',
+      intent_analysis: {
+        intent_matched: true,
+        outcome: 'created',
+        cron_expr: '0 9 * * *',
+        summary: '已命中定时任务创建意图，识别到调度表达式 0 9 * * *，并已创建任务「Peets Daily Inspection」。',
+        reason: null,
+      },
       task: {
         id: 'task-1',
         name: 'Peets Daily Inspection',
@@ -346,6 +353,19 @@ describe('App', () => {
       '生成定时任务，每天 9 点执行',
     )
     expect(chatStoreMock.sendMessage).not.toHaveBeenCalled()
+    expect(chatStoreMock.messages).toHaveLength(2)
+    expect(chatStoreMock.messages[0]).toMatchObject({
+      role: 'system',
+      type: 'tool_call',
+      toolName: 'inspection_task_intent',
+    })
+    expect(chatStoreMock.messages[1]).toMatchObject({
+      role: 'system',
+      type: 'tool_result',
+      content:
+        '已命中定时任务创建意图，识别到调度表达式 0 9 * * *，并已创建任务「Peets Daily Inspection」。',
+      toolName: 'inspection_task_intent',
+    })
     expect(composerHarness.clearInput).toHaveBeenCalled()
     expect(chatStoreMock.fetchInspectionTasks).toHaveBeenCalled()
     expect(chatStoreMock.fetchInspectionTaskRuns).toHaveBeenCalled()
@@ -379,6 +399,7 @@ describe('App', () => {
       'Inspect peets mysql now',
       'Inspect peets mysql now',
     )
+    expect(chatStoreMock.messages).toHaveLength(0)
   })
 
   test('opens task draft with notice when task intent is missing a complete schedule', async () => {
@@ -400,6 +421,14 @@ describe('App', () => {
       return {
         status: 'error' as const,
         message: chatStoreMock.inspectionTaskError,
+        intent_analysis: {
+          intent_matched: true,
+          outcome: 'error',
+          cron_expr: null,
+          summary:
+            '已命中定时任务创建意图，未完成创建。调度表达式：未识别。 原因：未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。',
+          reason: chatStoreMock.inspectionTaskError,
+        },
       }
     })
 
@@ -417,6 +446,19 @@ describe('App', () => {
 
     expect(result).toBe(false)
     expect(chatStoreMock.sendMessage).not.toHaveBeenCalled()
+    expect(chatStoreMock.messages).toHaveLength(2)
+    expect(chatStoreMock.messages[0]).toMatchObject({
+      role: 'system',
+      type: 'tool_call',
+      toolName: 'inspection_task_intent',
+    })
+    expect(chatStoreMock.messages[1]).toMatchObject({
+      role: 'system',
+      type: 'tool_result',
+      content:
+        '已命中定时任务创建意图，未完成创建。调度表达式：未识别。 原因：未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。',
+      toolName: 'inspection_task_intent',
+    })
     expect(chatStoreMock.buildInspectionTaskDraft).toHaveBeenCalledWith('conv-1')
     expect(composerHarness.clearInput).toHaveBeenCalled()
     expect(wrapper.findComponent({ name: 'TaskDrawer' }).props('activeTab')).toBe('draft')

@@ -25,6 +25,10 @@ class TaskCreationIntentResult(BaseModel):
         default=None,
         description="A direct Chinese error message when this is task creation but the schedule is missing or unsupported.",
     )
+    clarification_prompt: str | None = Field(
+        default=None,
+        description="A friendly Chinese follow-up question to ask the user for missing schedule information.",
+    )
 
 
 class TaskConversationSummary(BaseModel):
@@ -67,21 +71,82 @@ async def _ainvoke_structured_output(
     return schema.model_validate(result)
 
 
-async def analyze_task_creation_intent(message: str) -> TaskCreationIntentResult:
+async def analyze_task_creation_intent(
+    message: str,
+    *,
+    recent_messages: list[tuple[str, str]] | None = None,
+    previous_context: dict[str, Any] | None = None,
+) -> TaskCreationIntentResult:
+    """
+    Analyze whether the message is asking to create a scheduled inspection task.
+
+    Args:
+        message: The current user message to analyze
+        recent_messages: Optional list of (role, content) tuples for conversation context.
+                        Used to understand follow-up responses like "每月1号9点"
+                        that reference a previous task creation attempt.
+        previous_context: Optional context from a previous clarification-needed state.
+                         Contains 'original_message' and optionally 'intent_analysis'.
+    """
     today = datetime.now().strftime("%Y-%m-%d")
-    system_prompt = f"""
+
+    context_hint = ""
+    if previous_context:
+        original_msg = previous_context.get("original_message", "")
+        if original_msg:
+            context_hint = f"\n\nPrevious task creation request: {original_msg}"
+
+    if recent_messages or previous_context:
+        system_prompt = f"""
+You classify whether a user's latest sentence is asking to create a recurring inspection task.
+
+Rules:
+- Consider the conversation context to understand if this is a follow-up response providing missing information.
+- If the current message is brief (e.g., "每月1号9点") and a previous message mentioned task creation, combine them contextually.
+- Return a 5-field cron expression: minute hour day month weekday.
+- If the sentence is not asking to create a scheduled task, set is_task_creation=false and leave cron_expr/error_message/clarification_prompt null.
+- If it is asking to create a scheduled task but the recurring schedule is missing, ambiguous, one-time only, or unsupported by cron:
+  - Set is_task_creation=true, cron_expr=null
+  - Provide a short Chinese error_message explaining what's missing
+  - Provide a friendly Chinese clarification_prompt asking the user for the missing information with examples
+- Do not fabricate a schedule.
+- Today is {today}. Relative one-time phrases like "tomorrow at 9" are not valid recurring cron schedules.
+
+Examples of good clarification_prompt:
+- "您希望这个定时任务在什么时间执行？例如：每天早上9点、每周一上午10点、每月1号凌晨2点等。"
+- "请告诉我执行频率和具体时间，比如：每天、每周几、每月几号，以及几点几分。"
+""".strip()
+
+        context_lines = []
+        if recent_messages:
+            context_lines.append("Recent conversation:")
+            for role, content in recent_messages:
+                context_lines.append(f"[{role}] {content}")
+        if context_hint:
+            context_lines.append(context_hint)
+        context_lines.append(f"\nCurrent message to analyze:\n{message.strip()}")
+        user_prompt = "\n".join(context_lines)
+    else:
+        system_prompt = f"""
 You classify whether a user's latest sentence is asking to create a recurring inspection task.
 
 Rules:
 - Use only the current sentence. Do not rely on conversation history for schedule inference.
 - Return a 5-field cron expression: minute hour day month weekday.
-- If the sentence is not asking to create a scheduled task, set is_task_creation=false and leave cron_expr/error_message null.
-- If it is asking to create a scheduled task but the recurring schedule is missing, ambiguous, one-time only, or unsupported by cron, set is_task_creation=true, cron_expr=null, and provide a short Chinese error message asking the user to补充执行频率或具体时间.
+- If the sentence is not asking to create a scheduled task, set is_task_creation=false and leave cron_expr/error_message/clarification_prompt null.
+- If it is asking to create a scheduled task but the recurring schedule is missing, ambiguous, one-time only, or unsupported by cron:
+  - Set is_task_creation=true, cron_expr=null
+  - Provide a short Chinese error_message explaining what's missing
+  - Provide a friendly Chinese clarification_prompt asking the user for the missing information with examples
 - Do not fabricate a schedule.
 - Today is {today}. Relative one-time phrases like "tomorrow at 9" are not valid recurring cron schedules.
-""".strip()
 
-    user_prompt = f"Current sentence:\n{message.strip()}"
+Examples of good clarification_prompt:
+- "您希望这个定时任务在什么时间执行？例如：每天早上9点、每周一上午10点、每月1号凌晨2点等。"
+- "请告诉我执行频率和具体时间，比如：每天、每周几、每月几号，以及几点几分。"
+""".strip()
+        user_prompt = f"Current sentence:\n{message.strip()}"
+
     return await _ainvoke_structured_output(
         TaskCreationIntentResult,
         system_prompt=system_prompt,

@@ -55,6 +55,13 @@ def _bootstrap_sqlite_compat_columns(sync_conn):
             "WHERE agent_id IS NULL OR TRIM(agent_id) = ''"
         )
     )
+    sync_conn.execute(
+        text(
+            "UPDATE conversations "
+            "SET title = '新对话' "
+            "WHERE title = '鏂板璇?'"
+        )
+    )
 
     if not _has_column(sync_conn, "conversations", "source_task_id"):
         sync_conn.execute(text("ALTER TABLE conversations ADD COLUMN source_task_id VARCHAR(36)"))

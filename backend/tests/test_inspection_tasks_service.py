@@ -190,6 +190,11 @@ async def test_create_inspection_task_from_conversation_message_creates_task(ses
     assert result["task"]["name"] == "Peets Daily Inspection"
     assert result["task"]["source_conversation_id"] == conversation.id
     assert result["task"]["cron_expr"] == "0 9 * * *"
+    assert result["intent_analysis"]["intent_matched"] is True
+    assert result["intent_analysis"]["outcome"] == "created"
+    assert result["intent_analysis"]["cron_expr"] == "0 9 * * *"
+    assert "Peets Daily Inspection" in result["intent_analysis"]["summary"]
+    assert result["intent_analysis"]["reason"] is None
     assert analyzer_calls == ["Generate a scheduled task and run it every day at 09:00"]
     assert summarizer_calls == [
         (
@@ -290,10 +295,13 @@ async def test_create_inspection_task_from_conversation_message_returns_error_wh
         conversation_summarizer=fake_summarizer,
     )
 
-    assert result == {
-        "status": "error",
-        "message": "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
-    }
+    assert result["status"] == "error"
+    assert result["message"] == "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。"
+    assert result["intent_analysis"]["intent_matched"] is True
+    assert result["intent_analysis"]["outcome"] == "error"
+    assert result["intent_analysis"]["cron_expr"] is None
+    assert result["intent_analysis"]["reason"] == result["message"]
+    assert "未完成创建" in result["intent_analysis"]["summary"]
     assert summarizer_called is False
 
 

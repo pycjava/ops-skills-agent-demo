@@ -10,7 +10,11 @@ from db.session import AsyncSessionLocal
 from models import Message
 from services.agent_event_state import AgentEventState
 from services.conversation_attachments import build_attachment_snapshot
-from services.conversation_messages import auto_title, save_message
+from services.conversation_messages import (
+    auto_title,
+    is_default_conversation_title,
+    save_message,
+)
 from services.conversation_state import (
     create_conversation,
     get_conversation,
@@ -372,7 +376,7 @@ async def websocket_chat(ws: WebSocket):
 
                 async with AsyncSessionLocal() as session:
                     conversation = await get_conversation(session, current_conv_id)
-                    if conversation and conversation.title == "新对话":
+                    if conversation and is_default_conversation_title(conversation.title):
                         title = await auto_title(current_conv_id, content)
                         await ws.send_text(
                             json.dumps(

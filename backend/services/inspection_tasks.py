@@ -63,6 +63,34 @@ CONVERSATION_REFERENCE_KEYWORDS = (
 QUESTION_HINT_KEYWORDS = ("怎么", "如何", "为何", "为什么", "是什么", "介绍", "解释")
 
 
+def _build_task_intent_analysis(
+    *,
+    outcome: str,
+    cron_expr: str | None,
+    reason: str | None = None,
+    task_name: str | None = None,
+) -> dict[str, Any]:
+    normalized_reason = (reason or "").strip() or None
+    normalized_task_name = (task_name or "").strip() or None
+    cron_text = cron_expr or "未识别"
+
+    if outcome == "created":
+        task_title = normalized_task_name or "巡检任务"
+        summary = f"已命中定时任务创建意图，识别到调度表达式 {cron_text}，并已创建任务「{task_title}」。"
+    else:
+        summary = f"已命中定时任务创建意图，未完成创建。调度表达式：{cron_text}。"
+        if normalized_reason:
+            summary = f"{summary} 原因：{normalized_reason}"
+
+    return {
+        "intent_matched": True,
+        "outcome": outcome,
+        "cron_expr": cron_expr,
+        "summary": summary,
+        "reason": normalized_reason,
+    }
+
+
 def _normalize_task_name(name: str) -> str:
     normalized = str(name or "").strip()
     if not normalized:
@@ -322,20 +350,34 @@ async def create_inspection_task_from_conversation_message(
     intent_analyzer: TaskIntentAnalyzer = analyze_task_creation_intent,
     conversation_summarizer: ConversationSummarizer = summarize_task_template_from_conversation,
     now: datetime | None = None,
+    previous_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_message = str(message or "").strip()
     if not normalized_message:
         raise ValueError("message is required")
 
-    intent = await intent_analyzer(normalized_message)
+    intent = await intent_analyzer(normalized_message, previous_context=previous_context)
     if not intent.is_task_creation:
         return {"status": "not_task_creation"}
 
     if not intent.cron_expr:
+        error_message = (
+            intent.error_message
+            or "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。"
+        )
+        clarification_prompt = (
+            intent.clarification_prompt
+            or "您希望这个定时任务在什么时间执行？例如：每天早上9点、每周一上午10点、每月1号凌晨2点等。"
+        )
         return {
-            "status": "error",
-            "message": intent.error_message
-            or "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。",
+            "status": "clarification_needed",
+            "message": error_message,
+            "clarification_prompt": clarification_prompt,
+            "intent_analysis": _build_task_intent_analysis(
+                outcome="error",
+                cron_expr=None,
+                reason=error_message,
+            ),
         }
 
     conversation, messages = await _load_conversation_messages(
@@ -362,6 +404,11 @@ async def create_inspection_task_from_conversation_message(
     return {
         "status": "created",
         "task": task.to_dict(),
+        "intent_analysis": _build_task_intent_analysis(
+            outcome="created",
+            cron_expr=intent.cron_expr,
+            task_name=task.name,
+        ),
     }
 
 

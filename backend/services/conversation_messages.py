@@ -12,6 +12,8 @@ from utils.logger import logger
 
 TITLE_MAX_LENGTH = 200
 AUTO_TITLE_PREVIEW_LENGTH = 30
+DEFAULT_CONVERSATION_TITLE = "新对话"
+LEGACY_MOJIBAKE_CONVERSATION_TITLE = "鏂板璇?"
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
@@ -25,10 +27,18 @@ def normalize_conversation_title(title: str) -> str:
     return normalized
 
 
+def is_default_conversation_title(title: str | None) -> bool:
+    normalized = str(title or "").strip()
+    return normalized in {
+        DEFAULT_CONVERSATION_TITLE,
+        LEGACY_MOJIBAKE_CONVERSATION_TITLE,
+    }
+
+
 def build_auto_title(first_message: str) -> str:
     normalized = str(first_message or "").replace("\n", " ").strip()
     if not normalized:
-        return "新对话"
+        return DEFAULT_CONVERSATION_TITLE
     preview = normalized[:AUTO_TITLE_PREVIEW_LENGTH]
     if len(normalized) > AUTO_TITLE_PREVIEW_LENGTH:
         preview += "..."

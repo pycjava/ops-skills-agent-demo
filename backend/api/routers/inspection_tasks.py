@@ -1,12 +1,21 @@
+import json
 from datetime import datetime
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from db.session import AsyncSessionLocal
+from services.inspection_task_llm import (
+    analyze_task_creation_intent,
+    summarize_task_template_from_conversation,
+)
 from services.inspection_tasks import (
+    _build_task_intent_analysis,
+    _filter_task_summary_messages,
+    _is_task_configuration_message_any_language,
+    _load_conversation_messages,
     build_inspection_task_draft,
     create_inspection_task,
     create_inspection_task_from_conversation_message,
@@ -20,6 +29,11 @@ from services.inspection_tasks import (
 
 
 router = APIRouter(prefix="/api/inspection-tasks", tags=["inspection-tasks"])
+
+
+def _sse_event(data: dict) -> str:
+    """将字典编码为 SSE data 行。"""
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 class DraftRequest(BaseModel):
@@ -52,6 +66,7 @@ class CreateInspectionTaskFromConversationMessageRequest(BaseModel):
     conversation_id: str
     message: str
     now: datetime | None = None
+    previous_context: dict[str, Any] | None = None
 
 
 @router.post("/draft")
@@ -104,6 +119,7 @@ async def create_inspection_task_from_conversation_message_route(
             body.message,
             session_factory=AsyncSessionLocal,
             now=body.now,
+            previous_context=body.previous_context,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -111,6 +127,230 @@ async def create_inspection_task_from_conversation_message_route(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return JSONResponse(result)
+
+
+@router.post("/from-conversation-message/stream")
+async def create_inspection_task_from_conversation_message_stream_route(
+    body: CreateInspectionTaskFromConversationMessageRequest,
+):
+    """
+    以 SSE 流式方式生成定时任务。
+    推送 tool_call / tool_result / done / error 事件，和 DeepAgent 对话流风格一致。
+    直接创建任务，不需要用户在草稿页确认。
+    """
+
+    async def generate() -> AsyncGenerator[str, None]:
+        now = body.now
+        normalized_message = str(body.message or "").strip()
+        if not normalized_message:
+            yield _sse_event({"type": "error", "content": "message 不能为空"})
+            return
+
+        # Load recent conversation messages for context
+        recent_messages: list[tuple[str, str]] = []
+        try:
+            conversation, messages = await _load_conversation_messages(
+                body.conversation_id,
+                session_factory=AsyncSessionLocal,
+            )
+            # Get last 5 messages for context (excluding task configuration messages)
+            filtered_for_context = [
+                (msg.role, msg.content)
+                for msg in messages[-5:]
+                if msg.content and msg.role in ("user", "assistant")
+                and not _is_task_configuration_message_any_language(msg.content)
+            ]
+            recent_messages = filtered_for_context
+        except Exception:
+            # If we can't load conversation, proceed without context
+            pass
+
+        # ── Step 1: 意图分析 ──────────────────────────────────────────────
+        yield _sse_event({
+            "type": "tool_call",
+            "tool_name": "inspection_task_intent",
+            "tool_desc": "正在执行 Tool: **inspection_task_intent**（定时任务意图分析）",
+            "tool_input": {"message": normalized_message},
+        })
+
+        try:
+            intent = await analyze_task_creation_intent(
+                normalized_message,
+                recent_messages=recent_messages if recent_messages else None,
+                previous_context=body.previous_context,
+            )
+        except Exception as exc:
+            yield _sse_event({"type": "error", "content": f"意图分析失败: {exc}"})
+            return
+
+        # 不是任务创建意图，直接结束
+        if not intent.is_task_creation:
+            yield _sse_event({
+                "type": "tool_result",
+                "tool_name": "inspection_task_intent",
+                "result": "未识别到定时任务创建意图，将作为普通消息处理。",
+            })
+            yield _sse_event({"type": "done", "status": "not_task_creation"})
+            return
+
+        # 识别到意图但无法解析 cron 表达式
+        if not intent.cron_expr:
+            error_message = (
+                intent.error_message
+                or "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。"
+            )
+            clarification_prompt = (
+                intent.clarification_prompt
+                or "您希望这个定时任务在什么时间执行？例如：每天早上9点、每周一上午10点、每月1号凌晨2点等。"
+            )
+            intent_analysis = _build_task_intent_analysis(
+                outcome="error",
+                cron_expr=None,
+                reason=error_message,
+            )
+            yield _sse_event({
+                "type": "tool_result",
+                "tool_name": "inspection_task_intent",
+                "result": intent_analysis["summary"],
+                "tool_input": {
+                    "outcome": "error",
+                    "cron_expr": None,
+                    "reason": error_message,
+                },
+            })
+
+            yield _sse_event({
+                "type": "clarification_needed",
+                "content": clarification_prompt,
+                "original_message": normalized_message,
+            })
+
+            yield _sse_event({
+                "type": "done",
+                "status": "clarification_needed",
+                "message": error_message,
+                "clarification_prompt": clarification_prompt,
+                "intent_analysis": intent_analysis,
+            })
+            return
+
+        # 意图分析成功，有 cron 表达式
+        intent_analysis_success = _build_task_intent_analysis(
+            outcome="creating",
+            cron_expr=intent.cron_expr,
+        )
+        yield _sse_event({
+            "type": "tool_result",
+            "tool_name": "inspection_task_intent",
+            "result": f"已识别调度表达式：{intent.cron_expr}，正在生成任务模板…",
+            "tool_input": {
+                "outcome": "creating",
+                "cron_expr": intent.cron_expr,
+            },
+        })
+
+        # ── Step 2: 加载对话消息，生成任务摘要 ─────────────────────────────
+        yield _sse_event({
+            "type": "tool_call",
+            "tool_name": "create_inspection_task",
+            "tool_desc": "正在执行 Tool: **create_inspection_task**（生成定时任务）",
+            "tool_input": {"cron_expr": intent.cron_expr},
+        })
+
+        try:
+            conversation, messages = await _load_conversation_messages(
+                body.conversation_id,
+                session_factory=AsyncSessionLocal,
+            )
+        except LookupError as exc:
+            yield _sse_event({
+                "type": "tool_result",
+                "tool_name": "create_inspection_task",
+                "result": f"加载对话失败: {exc}",
+            })
+            yield _sse_event({"type": "error", "content": str(exc)})
+            return
+
+        filtered_messages = _filter_task_summary_messages(messages)
+        if not filtered_messages:
+            error_msg = "对话中没有可用于生成任务的巡检消息"
+            yield _sse_event({
+                "type": "tool_result",
+                "tool_name": "create_inspection_task",
+                "result": error_msg,
+            })
+            yield _sse_event({"type": "error", "content": error_msg})
+            return
+
+        try:
+            summary = await summarize_task_template_from_conversation(
+                conversation, filtered_messages
+            )
+        except Exception as exc:
+            yield _sse_event({
+                "type": "tool_result",
+                "tool_name": "create_inspection_task",
+                "result": f"任务摘要生成失败: {exc}",
+            })
+            yield _sse_event({"type": "error", "content": str(exc)})
+            return
+
+        # ── Step 3: 创建任务（使用对话的 agent_id 确保正确绑定）─────────────
+        try:
+            task = await create_inspection_task(
+                name=(summary.name or "").strip() or conversation.title,
+                source_conversation_id=conversation.id,
+                agent_id=conversation.agent_id,   # ← 使用对话的 agent_id
+                skill_id=summary.skill_id,
+                prompt_template=summary.prompt_template,
+                target_payload=summary.target_payload,
+                cron_expr=intent.cron_expr,
+                enabled=True,
+                now=now,
+                session_factory=AsyncSessionLocal,
+            )
+        except ValueError as exc:
+            yield _sse_event({
+                "type": "tool_result",
+                "tool_name": "create_inspection_task",
+                "result": f"任务创建失败: {exc}",
+            })
+            yield _sse_event({"type": "error", "content": str(exc)})
+            return
+
+        final_intent_analysis = _build_task_intent_analysis(
+            outcome="created",
+            cron_expr=intent.cron_expr,
+            task_name=task.name,
+        )
+
+        yield _sse_event({
+            "type": "tool_result",
+            "tool_name": "create_inspection_task",
+            "result": final_intent_analysis["summary"],
+            "tool_input": {
+                "task_id": task.id,
+                "task_name": task.name,
+                "agent_id": task.agent_id,
+                "cron_expr": task.cron_expr,
+            },
+        })
+
+        yield _sse_event({
+            "type": "done",
+            "status": "created",
+            "task": task.to_dict(),
+            "intent_analysis": final_intent_analysis,
+        })
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{task_id}")

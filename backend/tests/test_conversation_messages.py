@@ -4,7 +4,11 @@ from sqlalchemy import select, update
 
 from models import Conversation, Message
 from services.conversation_messages import (
+    DEFAULT_CONVERSATION_TITLE,
+    LEGACY_MOJIBAKE_CONVERSATION_TITLE,
     TITLE_MAX_LENGTH,
+    build_auto_title,
+    is_default_conversation_title,
     save_message,
     update_conversation_title,
 )
@@ -111,3 +115,13 @@ async def test_save_message_persists_attachment_snapshots(
 
     message = message_result.scalar_one()
     assert message.attachments_snapshot == attachments_snapshot
+
+
+def test_is_default_conversation_title_supports_legacy_mojibake_title():
+    assert is_default_conversation_title(DEFAULT_CONVERSATION_TITLE) is True
+    assert is_default_conversation_title(LEGACY_MOJIBAKE_CONVERSATION_TITLE) is True
+    assert is_default_conversation_title("巡检会话") is False
+
+
+def test_build_auto_title_returns_default_for_empty_content():
+    assert build_auto_title("   ") == DEFAULT_CONVERSATION_TITLE

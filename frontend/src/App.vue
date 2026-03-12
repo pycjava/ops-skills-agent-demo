@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useAppChrome } from './composables/useAppChrome'
 import { useChatComposer } from './composables/useChatComposer'
@@ -16,13 +16,15 @@ import {
   useChatStore,
   type CloudContextCandidate,
   type InspectionTaskDraft,
+  type InspectionTaskIntentAnalysis,
 } from './stores/chat'
+import type { TaskStreamEvent } from './stores/chat/tasks'
 import { toAttachmentSnapshot } from './stores/chat/helpers'
 import {
   buildMysqlSelectionSystemHint,
   isMysqlInspectionIntent,
 } from './utils/mysqlInspection'
-import { suggestCronFromTaskIntent } from './utils/taskIntent'
+
 
 const chatStore = useChatStore()
 const chatContainer = ref<HTMLElement | null>(null)
@@ -41,6 +43,9 @@ const taskDrawerTab = ref<'tasks' | 'runs' | 'draft'>('tasks')
 const inspectionTaskDraft = ref<InspectionTaskDraft | null>(null)
 const inspectionTaskDraftNotice = ref('')
 const isTaskDraftSaving = ref(false)
+const pendingTaskCreation = ref<{
+  originalMessage: string
+} | null>(null)
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
 const agentLabels = computed(() =>
@@ -207,6 +212,38 @@ function sendWithPendingAttachments(displayContent: string, sendContent?: string
   chatStore.sendMessage(displayContent, sendContent)
 }
 
+function appendTaskIntentAnalysisMessages(intentAnalysis?: InspectionTaskIntentAnalysis) {
+  if (!intentAnalysis?.intent_matched) return
+
+  const now = Date.now()
+  const baseId = `task-intent-${now}`
+
+  chatStore.messages.push(
+    {
+      id: `${baseId}-call`,
+      role: 'system',
+      content: '正在执行 Tool: **inspection_task_intent**',
+      type: 'tool_call',
+      toolName: 'inspection_task_intent',
+      toolDesc: '定时任务意图分析',
+      timestamp: now,
+    },
+    {
+      id: `${baseId}-result`,
+      role: 'system',
+      content: intentAnalysis.summary,
+      type: 'tool_result',
+      toolName: 'inspection_task_intent',
+      toolInput: {
+        outcome: intentAnalysis.outcome,
+        cron_expr: intentAnalysis.cron_expr,
+        reason: intentAnalysis.reason,
+      },
+      timestamp: now + 1,
+    },
+  )
+}
+
 async function refreshTaskDrawer() {
   await Promise.all([
     chatStore.fetchInspectionTasks(),
@@ -305,41 +342,217 @@ async function handleComposerSend(displayContent: string, sendContent?: string) 
   const normalizedSendContent = (sendContent || displayContent).trim()
 
   if (chatStore.currentConversationId) {
-    const taskResult = await chatStore.createInspectionTaskFromConversationMessage(
-      chatStore.currentConversationId,
-      normalizedDisplayContent,
-    )
+    if (pendingTaskCreation.value) {
+      const now = Date.now()
+      let baseId = `task-stream-${now}`
+      let idCounter = 0
+      const nextId = () => `${baseId}-${idCounter++}`
 
-    if (taskResult?.status === 'created') {
-      inspectionTaskDraft.value = null
-      inspectionTaskDraftNotice.value = ''
-      closeInspector()
-      showTaskDrawer.value = true
-      taskDrawerTab.value = 'tasks'
-      clearInput()
-      await refreshTaskDrawer()
-      return false
-    }
-
-    if (taskResult?.status === 'error' || (!taskResult && chatStore.inspectionTaskError)) {
-      const openedDraft = await openTaskDraftFromConversation({
-        suggestedCron: suggestCronFromTaskIntent(normalizedDisplayContent),
-        notice:
-          taskResult?.message ||
-          chatStore.inspectionTaskError ||
-          '未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。',
+      chatStore.messages.push({
+        id: nextId(),
+        role: 'user',
+        content: normalizedDisplayContent,
+        type: 'text',
+        agentId: chatStore.activeAgentId,
+        timestamp: now,
       })
 
-      if (openedDraft) {
-        clearInput()
+      clearInput()
+
+      const taskResult = await chatStore.createInspectionTaskFromConversationMessageStream(
+        chatStore.currentConversationId,
+        normalizedDisplayContent,
+        (event: TaskStreamEvent) => {
+          const ts = Date.now()
+          if (event.type === 'tool_call') {
+            chatStore.messages.push({
+              id: nextId(),
+              role: 'system',
+              content: event.tool_desc || `正在执行 Tool: **${event.tool_name}**`,
+              type: 'tool_call',
+              toolName: event.tool_name,
+              toolDesc: event.tool_desc,
+              toolInput: event.tool_input,
+              agentId: chatStore.activeAgentId,
+              timestamp: ts,
+            })
+          } else if (event.type === 'tool_result') {
+            chatStore.messages.push({
+              id: nextId(),
+              role: 'system',
+              content: event.result,
+              type: 'tool_result',
+              toolName: event.tool_name,
+              toolInput: event.tool_input,
+              agentId: chatStore.activeAgentId,
+              timestamp: ts,
+            })
+          } else if (event.type === 'clarification_needed') {
+            chatStore.messages.push({
+              id: nextId(),
+              role: 'assistant',
+              content: event.content,
+              type: 'text',
+              agentId: chatStore.activeAgentId,
+              timestamp: ts,
+            })
+            if (event.original_message) {
+              pendingTaskCreation.value = {
+                originalMessage: event.original_message,
+              }
+            }
+          } else if (event.type === 'error') {
+            chatStore.messages.push({
+              id: nextId(),
+              role: 'system',
+              content: event.content,
+              type: 'error',
+              agentId: chatStore.activeAgentId,
+              timestamp: ts,
+            })
+          }
+        },
+        { original_message: pendingTaskCreation.value.originalMessage },
+      )
+
+      if (taskResult?.status === 'created') {
+        appendTaskIntentAnalysisMessages(taskResult.intent_analysis)
+        inspectionTaskDraft.value = null
+        inspectionTaskDraftNotice.value = ''
+        pendingTaskCreation.value = null
+        closeInspector()
+        showTaskDrawer.value = true
+        taskDrawerTab.value = 'tasks'
+        await refreshTaskDrawer()
         return false
       }
 
-      closeInspector()
-      showTaskDrawer.value = true
-      taskDrawerTab.value = 'tasks'
-      await refreshTaskDrawer()
+      if (taskResult?.status === 'clarification_needed') {
+        appendTaskIntentAnalysisMessages((taskResult as { intent_analysis?: InspectionTaskIntentAnalysis }).intent_analysis)
+        return false
+      }
+
+      if (taskResult?.status === 'error') {
+        appendTaskIntentAnalysisMessages((taskResult as { intent_analysis?: InspectionTaskIntentAnalysis }).intent_analysis)
+        pendingTaskCreation.value = null
+        return false
+      }
+
+      pendingTaskCreation.value = null
       return false
+    }
+
+    // 先用关键词做快速预判，避免每条消息都走流式接口
+    const isTaskIntent = (() => {
+      const normalized = normalizedDisplayContent.replace(/\s+/g, '').toLowerCase()
+      const hasTaskKeyword = ['定时任务', '定时巡检', '定时执行', 'scheduledtask', 'scheduleinspection'].some(k => normalized.includes(k))
+      return hasTaskKeyword
+    })()
+
+    if (isTaskIntent) {
+      // 将用户消息先加入消息列表（作为用户 bubble 展示）
+      const now = Date.now()
+      let baseId = `task-stream-${now}`
+      let idCounter = 0
+      const nextId = () => `${baseId}-${idCounter++}`
+
+      // 展示用户消息
+      chatStore.messages.push({
+        id: nextId(),
+        role: 'user',
+        content: normalizedDisplayContent,
+        type: 'text',
+        agentId: chatStore.activeAgentId,
+        timestamp: now,
+      })
+
+      clearInput()
+
+      const taskResult = await chatStore.createInspectionTaskFromConversationMessageStream(
+        chatStore.currentConversationId,
+        normalizedDisplayContent,
+        (event: TaskStreamEvent) => {
+          const ts = Date.now()
+          if (event.type === 'tool_call') {
+            chatStore.messages.push({
+              id: nextId(),
+              role: 'system',
+              content: event.tool_desc || `正在执行 Tool: **${event.tool_name}**`,
+              type: 'tool_call',
+              toolName: event.tool_name,
+              toolDesc: event.tool_desc,
+              toolInput: event.tool_input,
+              agentId: chatStore.activeAgentId,
+              timestamp: ts,
+            })
+          } else if (event.type === 'tool_result') {
+            chatStore.messages.push({
+              id: nextId(),
+              role: 'system',
+              content: event.result,
+              type: 'tool_result',
+              toolName: event.tool_name,
+              toolInput: event.tool_input,
+              agentId: chatStore.activeAgentId,
+              timestamp: ts,
+            })
+          } else if (event.type === 'clarification_needed') {
+            chatStore.messages.push({
+              id: nextId(),
+              role: 'assistant',
+              content: event.content,
+              type: 'text',
+              agentId: chatStore.activeAgentId,
+              timestamp: ts,
+            })
+            if (event.original_message) {
+              pendingTaskCreation.value = {
+                originalMessage: event.original_message,
+              }
+            }
+          } else if (event.type === 'error') {
+            chatStore.messages.push({
+              id: nextId(),
+              role: 'system',
+              content: event.content,
+              type: 'error',
+              agentId: chatStore.activeAgentId,
+              timestamp: ts,
+            })
+          }
+        },
+      )
+
+      if (taskResult?.status === 'created') {
+        appendTaskIntentAnalysisMessages(taskResult.intent_analysis)
+        inspectionTaskDraft.value = null
+        inspectionTaskDraftNotice.value = ''
+        pendingTaskCreation.value = null
+        closeInspector()
+        showTaskDrawer.value = true
+        taskDrawerTab.value = 'tasks'
+        await refreshTaskDrawer()
+        return false
+      }
+
+      if (taskResult?.status === 'clarification_needed') {
+        appendTaskIntentAnalysisMessages((taskResult as { intent_analysis?: InspectionTaskIntentAnalysis }).intent_analysis)
+        if (!pendingTaskCreation.value) {
+          pendingTaskCreation.value = {
+            originalMessage: normalizedDisplayContent,
+          }
+        }
+        return false
+      }
+
+      if (taskResult?.status === 'error') {
+        appendTaskIntentAnalysisMessages((taskResult as { intent_analysis?: InspectionTaskIntentAnalysis }).intent_analysis)
+        pendingTaskCreation.value = null
+        return false
+      }
+
+      // not_task_creation：继续走普通消息流程（不 return，继续向下）
+      // 但消息已经 push 过了，不需要再次      return false
     }
   }
 
@@ -375,7 +588,7 @@ async function handleComposerSend(displayContent: string, sendContent?: string) 
     )
     return true
   } catch (error) {
-    console.warn('解析 MySQL 巡检候选失败，回退为直接发送:', error)
+    console.warn('解析 MySQL 巡检候选失败，回退为直接发送', error)
     sendWithPendingAttachments(normalizedDisplayContent, normalizedSendContent)
     return true
   }
@@ -462,7 +675,7 @@ async function handleConversationTitleSave(title: string) {
           <span class="brand-subtitle">智能对话工作台</span>
         </div>
         <button class="icon-btn subtle" title="收起侧栏" @click="showSidebar = false">
-          ‹
+          ×
         </button>
       </div>
 
@@ -497,7 +710,7 @@ async function handleConversationTitleSave(title: string) {
             title="清空当前对话"
             @click="chatStore.clearChat"
           >
-            ⌫
+            🗑
           </button>
           <button
             class="icon-btn"
@@ -512,10 +725,10 @@ async function handleConversationTitleSave(title: string) {
             title="打开定时任务"
             @click="openTaskDrawer('tasks')"
           >
-            时
+            📅
           </button>
           <button class="icon-btn" title="打开右侧面板" @click="handleOpenInspectorDrawer">
-            ☷
+            ⚙
           </button>
         </div>
       </div>
@@ -594,7 +807,7 @@ async function handleConversationTitleSave(title: string) {
                   :disabled="!inputText.trim() || !chatStore.isConnected"
                   @click="handleSend"
                 >
-                  →
+                  ▶
                 </button>
               </div>
             </div>
@@ -620,7 +833,7 @@ async function handleConversationTitleSave(title: string) {
                   @click.stop="toggleAgentOverflowMenu"
                 >
                   <span class="agent-selector-name">更多</span>
-                  <span class="agent-selector-arrow">▾</span>
+                  <span class="agent-selector-arrow">▼</span>
                 </button>
 
                 <div v-if="showAgentOverflowMenu" class="agent-overflow-menu">
@@ -655,7 +868,7 @@ async function handleConversationTitleSave(title: string) {
                 tabindex="-1"
               >
                 <span class="agent-selector-name">更多</span>
-                <span class="agent-selector-arrow">▾</span>
+                <span class="agent-selector-arrow">▼</span>
               </button>
             </div>
           </div>
@@ -791,7 +1004,7 @@ async function handleConversationTitleSave(title: string) {
                   :disabled="!inputText.trim() || !chatStore.isConnected"
                   @click="handleSend"
                 >
-                  →
+                  ▶
                 </button>
               </div>
             </div>
@@ -864,7 +1077,7 @@ async function handleConversationTitleSave(title: string) {
               </div>
 
               <button class="icon-btn subtle" title="关闭面板" @click="closeInspector">
-                ✕
+                ×
               </button>
             </div>
 

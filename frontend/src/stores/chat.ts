@@ -286,6 +286,8 @@ export const useChatStore = defineStore('chat', () => {
     buildInspectionTaskDraft: taskDomain.buildInspectionTaskDraft,
     createInspectionTaskFromConversationMessage:
       taskDomain.createInspectionTaskFromConversationMessage,
+    createInspectionTaskFromConversationMessageStream:
+      taskDomain.createInspectionTaskFromConversationMessageStream,
     createInspectionTask: taskDomain.createInspectionTask,
     updateInspectionTask: taskDomain.updateInspectionTask,
     deleteInspectionTask: taskDomain.deleteInspectionTask,
