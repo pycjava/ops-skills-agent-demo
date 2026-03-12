@@ -88,7 +88,7 @@ description: Use when users need Volcengine RDS MySQL 单实例健康巡检、CP
    - 两个窗口必须分别采集、分别落盘，避免覆盖主窗口文件
 
 ```bash
-py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
+python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --instance-id <instance_id> \
   --region <region> \
   --credential-ref <credential_ref> \
@@ -101,7 +101,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 当主窗口 `time_range >= 7d` 时，再额外执行一次最近 `3d` 辅助采集：
 
 ```bash
-py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
+python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --instance-id <instance_id> \
   --region <region> \
   --credential-ref <credential_ref> \
@@ -114,7 +114,7 @@ py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 如果用户提供的是明确的起止时间，则改用：
 
 ```bash
-py ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
+python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   --instance-id <instance_id> \
   --region <region> \
   --credential-ref <credential_ref> \

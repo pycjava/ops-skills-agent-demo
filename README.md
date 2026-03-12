@@ -114,12 +114,12 @@ npm run dev
 
 如果不设置环境变量，前端会默认使用“同域 REST + 当前 Host 的 `/ws/chat`”。
 
-### 3. 使用 Docker Compose
+### 3. 使用 Docker Compose（部署 / 演示模式）
 
-仓库根目录的 [docker-compose.yml](docker-compose.yml) 会同时启动前后端：
+仓库根目录的 [docker-compose.yml](docker-compose.yml) 用于一键启动前后端的部署 / 演示环境：
 
 ```powershell
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 默认暴露：
@@ -127,11 +127,20 @@ docker-compose up -d --build
 - 前端：`http://127.0.0.1`
 - 后端：`http://127.0.0.1:8000`
 
-同时会挂载这些目录，方便本地调试：
+健康检查与依赖关系：
 
-- `./backend/skills -> /app/skills`
-- `./backend/prompts -> /app/prompts`
+- `backend` 会通过 `GET /api/health` 做容器内健康检查
+- `frontend` 会等待 `backend` 进入 healthy 后再启动
+
+持久化目录：
+
 - `./backend/data -> /app/data`
+
+说明：
+
+- 这套 Compose 面向部署 / 演示，不承担本地开发热更新职责
+- `skills`、`prompts` 等内容会随镜像一起构建；修改后需要重新执行 `docker compose up -d --build`
+- 本地开发仍推荐使用上面的 `python main.py` + `npm run dev` 启动方式
 
 ### 4. 运行测试
 

@@ -49,7 +49,7 @@ description: "基于 MySQL 与 SQLAlchemy 的 SQL 执行过程分析技能。用
 2. 运行分析脚本（默认不执行 `EXPLAIN ANALYZE`）：
 
 ```bash
-python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
+python ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
   --host "<db_host>" \
   --port 3306 \
   --database "<db_name>" \
@@ -60,7 +60,7 @@ python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
 或：
 
 ```bash
-python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
+python ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
   --host "<db_host>" \
   --port 3306 \
   --database "<db_name>" \
@@ -72,7 +72,7 @@ python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
 3. 仅在用户明确要求并可接受额外开销时，增加真实执行信息：
 
 ```bash
-python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
+python ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
   --host "<db_host>" \
   --port 3306 \
   --database "<db_name>" \
