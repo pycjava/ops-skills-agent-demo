@@ -14,12 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-COPY bin/ /usr/local/bin/
-RUN chmod +x /usr/local/bin/*
-
 COPY . .
-
-RUN rm -rf bin
 
 EXPOSE 8000
 
