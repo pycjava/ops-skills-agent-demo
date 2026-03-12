@@ -1,4 +1,4 @@
-"""Claude Agent 核心模块 (Multi-Agent 版)."""
+"""AgentWeave 核心模块 (Multi-Agent 版)."""
 
 from collections import defaultdict, deque
 import re

@@ -693,7 +693,7 @@ async function handleConversationTitleSave(title: string) {
       <div class="sidebar-brand">
         <div class="brand-mark">C</div>
         <div class="brand-copy">
-          <span class="brand-name">Claude Agent</span>
+          <span class="brand-name">AgentWeave</span>
           <span class="brand-subtitle">智能对话工作台</span>
         </div>
         <button class="icon-btn subtle" title="收起侧栏" @click="showSidebar = false">

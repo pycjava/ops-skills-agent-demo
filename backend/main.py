@@ -28,7 +28,7 @@ from db.session import close_db, init_db
 from services.inspection_scheduler import InspectionSchedulerRuntime
 from utils.logger import logger
 
-app = FastAPI(title="Claude Agent Demo", version="0.2.0")
+app = FastAPI(title="AgentWeave Demo", version="0.2.0")
 inspection_scheduler = InspectionSchedulerRuntime()
 
 app.add_middleware(
