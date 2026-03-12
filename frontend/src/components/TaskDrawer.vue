@@ -26,7 +26,7 @@ const emit = defineEmits<{
   (e: 'trigger', taskId: string): void
   (e: 'toggle', taskId: string, enabled: boolean): void
   (e: 'delete-task', taskId: string): void
-  (e: 'open-conversation', conversationId: string): void
+  (e: 'open-conversation', run: InspectionTaskRun): void
   (e: 'save-draft', draft: InspectionTaskDraft): void
 }>()
 
@@ -44,6 +44,9 @@ const draftForm = reactive<InspectionTaskDraft>({
 
 const isDraftValid = computed(
   () => draftForm.name.trim() && draftForm.prompt_template.trim() && draftForm.cron_expr.trim(),
+)
+const taskNameById = computed(() =>
+  Object.fromEntries(props.tasks.map((task) => [task.id, task.name])),
 )
 
 watch(
@@ -205,13 +208,17 @@ function handleSaveDraft() {
             <span class="task-run-time">{{ formatDateTime(run.started_at) }}</span>
           </div>
 
+          <div v-if="taskNameById[run.task_id]" class="task-run-task-name">
+            {{ taskNameById[run.task_id] }}
+          </div>
+
           <div v-if="run.error_message" class="task-run-error">{{ run.error_message }}</div>
 
           <button
             v-if="run.conversation_id"
             class="task-action-btn ui-pill-btn"
             type="button"
-            @click="emit('open-conversation', run.conversation_id)"
+            @click="emit('open-conversation', run)"
           >
             打开会话
           </button>
@@ -355,6 +362,13 @@ function handleSaveDraft() {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.task-run-task-name {
+  margin-top: 10px;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .task-card-title {

@@ -110,6 +110,84 @@ describe('TaskDrawer', () => {
     expect(wrapper.emitted('open-draft')).toEqual([[]])
   })
 
+  test('emits the selected run when opening a run conversation', async () => {
+    const run = {
+      id: 'run-1',
+      task_id: 'task-1',
+      trigger_type: 'manual' as const,
+      status: 'succeeded' as const,
+      conversation_id: 'conv-run-1',
+      started_at: '2026-03-11T08:30:00.000',
+      finished_at: '2026-03-11T08:31:00.000',
+      error_message: null,
+    }
+
+    const wrapper = mount(TaskDrawer, {
+      props: {
+        visible: true,
+        tasks: [],
+        runs: [run],
+        draft: null,
+        activeTab: 'runs',
+        isLoading: false,
+        isSaving: false,
+        error: null,
+        canCreateDraft: true,
+      },
+    })
+
+    await wrapper.get('.task-run-card .task-action-btn').trigger('click')
+
+    expect(wrapper.emitted('open-conversation')).toEqual([[run]])
+  })
+
+  test('shows the task name for each run by matching task_id', () => {
+    const wrapper = mount(TaskDrawer, {
+      props: {
+        visible: true,
+        tasks: [
+          {
+            id: 'task-1',
+            name: 'Peets Daily Inspection',
+            source_conversation_id: 'conv-1',
+            agent_id: 'dba',
+            skill_id: 'volcengine-rds-health-analyzer',
+            prompt_template: 'Inspect peets-prod-pos-mysql for the last 7 days',
+            target_payload: { instance_name: 'peets-prod-pos-mysql' },
+            schedule_type: 'cron',
+            cron_expr: '0 9 * * *',
+            enabled: true,
+            last_run_at: '2026-03-11T08:30:00.000',
+            next_run_at: '2026-03-11T09:00:00.000',
+            last_status: 'succeeded',
+            created_at: '2026-03-11T08:00:00.000',
+            updated_at: '2026-03-11T08:30:00.000',
+          },
+        ],
+        runs: [
+          {
+            id: 'run-1',
+            task_id: 'task-1',
+            trigger_type: 'manual',
+            status: 'succeeded',
+            conversation_id: 'conv-run-1',
+            started_at: '2026-03-11T08:30:00.000',
+            finished_at: '2026-03-11T08:31:00.000',
+            error_message: null,
+          },
+        ],
+        draft: null,
+        activeTab: 'runs',
+        isLoading: false,
+        isSaving: false,
+        error: null,
+        canCreateDraft: true,
+      },
+    })
+
+    expect(wrapper.text()).toContain('Peets Daily Inspection')
+  })
+
   test('uses shared classes for header buttons and segmented tabs', () => {
     const wrapper = mount(TaskDrawer, {
       props: {

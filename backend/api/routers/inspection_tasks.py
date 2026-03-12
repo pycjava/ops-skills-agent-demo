@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import datetime
 from typing import Any, AsyncGenerator
@@ -5,8 +6,10 @@ from typing import Any, AsyncGenerator
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from db.session import AsyncSessionLocal
+from models import Conversation, InspectionTaskRun, Message
 from services.inspection_task_llm import (
     analyze_task_creation_intent,
     summarize_task_template_from_conversation,
@@ -29,11 +32,126 @@ from services.inspection_tasks import (
 
 
 router = APIRouter(prefix="/api/inspection-tasks", tags=["inspection-tasks"])
+_RUN_CONVERSATION_STREAM_POLL_INTERVAL_SECONDS = 0.25
 
 
 def _sse_event(data: dict) -> str:
     """将字典编码为 SSE data 行。"""
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _load_inspection_task_run_stream_state(
+    run_id: str,
+    *,
+    session_factory=AsyncSessionLocal,
+) -> tuple[InspectionTaskRun, Conversation, list[Message]]:
+    async with session_factory() as session:
+        run = await session.get(InspectionTaskRun, run_id)
+        if run is None:
+            raise LookupError("inspection task run not found")
+        if not run.conversation_id:
+            raise ValueError("inspection task run has no conversation")
+
+        conversation = await session.get(Conversation, run.conversation_id)
+        if conversation is None:
+            raise LookupError("conversation not found")
+
+        result = await session.execute(
+            select(Message)
+            .where(Message.conversation_id == run.conversation_id)
+            .order_by(Message.created_at.asc())
+        )
+        messages = list(result.scalars().all())
+
+    return run, conversation, messages
+
+
+def _build_run_status_event(
+    run: InspectionTaskRun,
+    *,
+    conversation_id: str,
+) -> dict[str, Any]:
+    return {
+        "type": "run_status",
+        "run_id": run.id,
+        "conversation_id": conversation_id,
+        "status": run.status,
+        "finished_at": (
+            run.finished_at.isoformat(timespec="milliseconds")
+            if run.finished_at
+            else None
+        ),
+        "error_message": run.error_message,
+    }
+
+
+async def _stream_inspection_task_run_conversation(
+    run_id: str,
+    *,
+    session_factory=AsyncSessionLocal,
+    initial_state: tuple[InspectionTaskRun, Conversation, list[Message]] | None = None,
+) -> AsyncGenerator[str, None]:
+    run, conversation, messages = initial_state or await _load_inspection_task_run_stream_state(
+        run_id,
+        session_factory=session_factory,
+    )
+    emitted_message_ids: set[str] = set()
+    last_reported_status: str | None = None
+
+    yield _sse_event(
+        {
+            "type": "history_start",
+            "run_id": run.id,
+            "conversation_id": conversation.id,
+            "agent_id": conversation.agent_id,
+            "title": conversation.title,
+            "status": run.status,
+        }
+    )
+
+    for message in messages:
+        emitted_message_ids.add(message.id)
+        yield _sse_event({"type": "message", "message": message.to_dict()})
+
+    yield _sse_event(
+        {
+            "type": "history_done",
+            "run_id": run.id,
+            "conversation_id": conversation.id,
+        }
+    )
+
+    yield _sse_event(_build_run_status_event(run, conversation_id=conversation.id))
+    last_reported_status = run.status
+
+    while run.status == "running":
+        await asyncio.sleep(_RUN_CONVERSATION_STREAM_POLL_INTERVAL_SECONDS)
+        run, conversation, messages = await _load_inspection_task_run_stream_state(
+            run_id,
+            session_factory=session_factory,
+        )
+
+        for message in messages:
+            if message.id in emitted_message_ids:
+                continue
+            emitted_message_ids.add(message.id)
+            yield _sse_event({"type": "message", "message": message.to_dict()})
+
+        if run.status != last_reported_status:
+            last_reported_status = run.status
+            yield _sse_event(
+                _build_run_status_event(run, conversation_id=conversation.id)
+            )
+
+    yield _sse_event(
+        {
+            "type": "done",
+            "run_id": run.id,
+            "conversation_id": conversation.id,
+            "status": run.status,
+            "error_message": run.error_message,
+        }
+    )
 
 
 class DraftRequest(BaseModel):
@@ -345,6 +463,32 @@ async def create_inspection_task_from_conversation_message_stream_route(
 
     return StreamingResponse(
         generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/runs/{run_id}/conversation/stream")
+async def stream_inspection_task_run_conversation_route(run_id: str):
+    try:
+        initial_state = await _load_inspection_task_run_stream_state(
+            run_id,
+            session_factory=AsyncSessionLocal,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return StreamingResponse(
+        _stream_inspection_task_run_conversation(
+            run_id,
+            session_factory=AsyncSessionLocal,
+            initial_state=initial_state,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -32,7 +32,13 @@ class TaskCreationIntentResult(BaseModel):
 
 
 class TaskConversationSummary(BaseModel):
-    name: str = Field(description="A concise task title.")
+    name: str = Field(
+        description=(
+            "A concise task title that states the primary action and specific object, "
+            'preferably in an "action + object" form, while preserving explicit object '
+            "identifiers such as instance, service, cluster, topic, or host names."
+        )
+    )
     prompt_template: str = Field(
         description="The inspection prompt that should be executed each time the task runs."
     )
@@ -184,7 +190,11 @@ Rules:
 - Use only the supplied conversation history.
 - Ignore any meta discussion about creating tasks or scheduling.
 - Extract the stable inspection goal, key targets, and important constraints.
-- `name` should be concise and usable as a task title.
+- `name` must describe the task's primary action and specific object.
+- Prefer an "action + object" form for `name`.
+- Preserve explicit object identifiers from the history, such as instance names, service names, cluster names, topic names, and hostnames, when they are central to the task.
+- Exclude schedule information, generic labels, and secondary details from `name`.
+- Prefer titles like `巡检 prod-kafka 集群消费堆积`; avoid generic titles like `Kafka 巡检任务` or `检查系统状态`.
 - `prompt_template` must be a standalone inspection instruction that can be executed in a fresh conversation.
 - `skill_id` should only be set when the history clearly implies a stable skill choice.
 - `target_payload` should only contain stable structured fields that are explicit in the history.

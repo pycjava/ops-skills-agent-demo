@@ -107,6 +107,11 @@ def _normalize_task_name(name: str) -> str:
     return normalized
 
 
+def _normalize_generated_task_name(name: str | None) -> str | None:
+    normalized = re.sub(r"\s+", " ", str(name or "")).strip()
+    return normalized or None
+
+
 def _normalize_task_intent_text(value: str) -> str:
     return re.sub(r"\s+", "", str(value or "")).strip().lower()
 
@@ -396,8 +401,10 @@ async def create_inspection_task_from_conversation_message(
         raise LookupError("conversation has no inspection message to template")
 
     summary = await conversation_summarizer(conversation, filtered_messages)
+    generated_task_name = _normalize_generated_task_name(summary.name)
+    fallback_task_name = _normalize_generated_task_name(conversation.title) or conversation.title
     task = await create_inspection_task(
-        name=(summary.name or "").strip() or conversation.title,
+        name=generated_task_name or fallback_task_name,
         source_conversation_id=conversation.id,
         agent_id=conversation.agent_id,
         skill_id=summary.skill_id,
