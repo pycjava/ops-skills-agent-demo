@@ -431,3 +431,4 @@ async def websocket_chat(ws: WebSocket):
             )
         except Exception:
             pass
+        await realtime_event_manager.unregister(ws)

@@ -298,6 +298,8 @@ export const useChatStore = defineStore('chat', () => {
     setDraftAgent,
     createConversation: conversationDomain.createConversation,
     switchConversation: conversationDomain.switchConversation,
+    streamInspectionTaskRunConversation:
+      conversationDomain.streamInspectionTaskRunConversation,
     deleteConversation: conversationDomain.deleteConversation,
     updateConversationTitle: conversationDomain.updateConversationTitle,
     fetchConversationAttachments: attachmentDomain.fetchConversationAttachments,

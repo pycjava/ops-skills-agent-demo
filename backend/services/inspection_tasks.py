@@ -279,7 +279,7 @@ async def build_inspection_task_draft(
                 Message.role == "user",
                 Message.type == "text",
             )
-            .order_by(Message.created_at.desc())
+            .order_by(Message.created_at.asc())
         )
         user_messages = list(result.scalars().all())
 
@@ -289,7 +289,7 @@ async def build_inspection_task_draft(
     latest_user_message = next(
         (
             message
-            for message in user_messages
+            for message in reversed(user_messages)
             if not _is_task_configuration_message_any_language(message.content)
         ),
         None,

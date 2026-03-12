@@ -18,6 +18,7 @@ import {
   type CloudContextCandidate,
   type InspectionTaskDraft,
   type InspectionTaskIntentAnalysis,
+  type InspectionTaskRun,
   type TaskNotification,
 } from './stores/chat'
 import type { TaskStreamEvent } from './stores/chat/tasks'
@@ -330,8 +331,10 @@ async function handleTaskDelete(taskId: string) {
   await refreshTaskDrawer()
 }
 
-async function handleTaskConversationOpen(conversationId: string) {
-  await chatStore.switchConversation(conversationId)
+async function handleTaskConversationOpen(run: InspectionTaskRun) {
+  if (!run.conversation_id) return
+
+  await chatStore.streamInspectionTaskRunConversation(run.id, run.conversation_id)
   closeTaskDrawer()
 }
 

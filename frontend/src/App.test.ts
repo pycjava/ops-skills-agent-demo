@@ -163,6 +163,7 @@ const chatStoreMock = {
   dismissTaskNotificationToast: vi.fn(),
   downloadTaskNotificationReport: vi.fn(async () => true),
   switchConversation: vi.fn(),
+  streamInspectionTaskRunConversation: vi.fn(async () => {}),
   createConversation: vi.fn(),
   deleteConversation: vi.fn(),
   updateConversationTitle: vi.fn(async () => {}),
@@ -821,6 +822,40 @@ describe('App', () => {
     expect(chatStoreMock.deleteInspectionTask).toHaveBeenCalledWith('task-1')
     expect(chatStoreMock.fetchInspectionTasks).toHaveBeenCalled()
     expect(chatStoreMock.fetchInspectionTaskRuns).toHaveBeenCalled()
+  })
+
+  test('opens a task run from the drawer via streamed playback instead of plain history switch', async () => {
+    chatStoreMock.inspectionTaskRuns = [
+      {
+        id: 'run-1',
+        task_id: 'task-1',
+        trigger_type: 'manual',
+        status: 'succeeded',
+        conversation_id: 'conv-run-1',
+        started_at: '2026-03-11T08:30:00.000',
+        finished_at: '2026-03-11T08:31:00.000',
+        error_message: null,
+      },
+    ]
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    await wrapper.get('[data-testid="open-task-drawer-btn"]').trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'TaskDrawer' }).vm.$emit(
+      'open-conversation',
+      chatStoreMock.inspectionTaskRuns[0],
+    )
+    await flushPromises()
+
+    expect(chatStoreMock.streamInspectionTaskRunConversation).toHaveBeenCalledWith(
+      'run-1',
+      'conv-run-1',
+    )
+    expect(chatStoreMock.switchConversation).not.toHaveBeenCalled()
   })
 
   test('keeps the title row on stable layout classes for long conversation titles', () => {

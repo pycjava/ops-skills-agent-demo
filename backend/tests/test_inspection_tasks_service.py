@@ -219,6 +219,72 @@ async def test_create_inspection_task_from_conversation_message_creates_task(ses
 
 
 @pytest.mark.asyncio
+async def test_create_inspection_task_from_conversation_message_normalizes_summary_name_whitespace(
+    session_factory,
+):
+    async with session_factory() as session:
+        conversation = Conversation(
+            title="Kafka backlog troubleshooting",
+            source="web",
+            agent_id="ops",
+        )
+        session.add(conversation)
+        await session.flush()
+        session.add(
+            Message(
+                conversation_id=conversation.id,
+                role="user",
+                content="请检查 prod-kafka 集群的消费堆积，重点看 payment-events topic。",
+                type="text",
+                agent_id="ops",
+            )
+        )
+        await session.commit()
+        await session.refresh(conversation)
+
+    async def fake_intent_analyzer(
+        _message: str,
+        *,
+        previous_context=None,
+    ) -> TaskCreationIntentResult:
+        assert previous_context is None
+        return TaskCreationIntentResult(
+            is_task_creation=True,
+            cron_expr="0 9 * * *",
+            error_message=None,
+        )
+
+    async def fake_summarizer(
+        _conversation: Conversation,
+        _messages: list[Message],
+    ) -> TaskConversationSummary:
+        return TaskConversationSummary(
+            name="  巡检   prod-kafka   集群消费堆积  ",
+            prompt_template="巡检 prod-kafka 集群消费堆积",
+            skill_id=None,
+            target_payload={"cluster_name": "prod-kafka"},
+        )
+
+    result = await create_inspection_task_from_conversation_message(
+        conversation.id,
+        "请为这段会话创建一个每天 9 点执行的定时任务",
+        session_factory=session_factory,
+        intent_analyzer=fake_intent_analyzer,
+        conversation_summarizer=fake_summarizer,
+        now=datetime(2026, 3, 12, 8, 0),
+    )
+
+    assert result["status"] == "created"
+    assert result["task"]["name"] == "巡检 prod-kafka 集群消费堆积"
+
+    async with session_factory() as session:
+        stored_tasks = (await session.execute(select(InspectionTask))).scalars().all()
+
+    assert len(stored_tasks) == 1
+    assert stored_tasks[0].name == "巡检 prod-kafka 集群消费堆积"
+
+
+@pytest.mark.asyncio
 async def test_create_inspection_task_from_conversation_message_returns_not_task_creation(
     session_factory,
 ):
@@ -311,8 +377,8 @@ async def test_create_inspection_task_from_conversation_message_returns_error_wh
     )
 
     assert result["status"] == "clarification_needed"
-    assert result["clarification_prompt"]
     assert result["message"] == "未能从当前这句话中识别完整调度时间，请补充执行频率或具体时间。"
+    assert result["clarification_prompt"]
     assert result["intent_analysis"]["intent_matched"] is True
     assert result["intent_analysis"]["outcome"] == "error"
     assert result["intent_analysis"]["cron_expr"] is None

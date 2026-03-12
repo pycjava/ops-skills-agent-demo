@@ -155,6 +155,44 @@ export interface ConversationHistoryMessage {
   created_at: string | null
 }
 
+export type InspectionTaskRunConversationStreamEvent =
+  | {
+      type: 'history_start'
+      run_id: string
+      conversation_id: string
+      agent_id: string
+      title: string
+      status: InspectionTaskRun['status']
+    }
+  | {
+      type: 'message'
+      message: ConversationHistoryMessage
+    }
+  | {
+      type: 'history_done'
+      run_id: string
+      conversation_id: string
+    }
+  | {
+      type: 'run_status'
+      run_id: string
+      conversation_id: string
+      status: InspectionTaskRun['status']
+      finished_at: string | null
+      error_message: string | null
+    }
+  | {
+      type: 'done'
+      run_id: string
+      conversation_id: string
+      status: InspectionTaskRun['status']
+      error_message?: string | null
+    }
+  | {
+      type: 'error'
+      content: string
+    }
+
 export interface MemoryNode {
   path: string
   name: string
