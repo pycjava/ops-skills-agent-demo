@@ -148,6 +148,8 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - `evidence.distribution`
    - `evidence.variability`
    - `evidence.spikes.sliding_mad`
+   - `evidence.spikes.risk_tier`
+   - `evidence.spikes.risk_reason`
    - `evidence.trend`
    - `node_summaries[*].node`
    - `node_summaries[*].avg`
@@ -169,9 +171,14 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - 顺序分析异常指标，不要并行读取一批大文件
    - 正常指标直接基于 `summary` 给出结论
    - `summary` 负责轻量统计概览；`evidence` 负责分析证据，不要把 `nodes[].data_points` 当作默认入口
-   - 用 `summary.range` / `node_summaries[*].range` 解释波动幅度，用 `evidence.distribution` / `evidence.variability` 解释分布与波动，用 `evidence.spikes.sliding_mad` 判断是否存在瞬时尖峰
+   - 用 `summary.range` / `node_summaries[*].range` 解释波动幅度，用 `evidence.distribution` / `evidence.variability` 解释分布与波动，用 `evidence.spikes.sliding_mad` 判断是否存在统计学瞬时尖峰，再用 `evidence.spikes.risk_tier` 判断是否属于高风险尖峰
    - `evidence.spikes.sliding_mad.method` 固定为 `sliding_mad`，阈值固定为 `6 x MAD`
-   - `evidence.spikes.sliding_mad.spike_count > 0` 且 `avg` / `median` 正常时，仍需明确写出“存在瞬时尖峰，不能仅因均值正常而判定为低风险”
+   - `evidence.spikes.risk_tier` 取值固定为 `none` / `low` / `high`
+   - `evidence.spikes.risk_reason` 用于解释为什么该尖峰被判为 `low` 或 `high`
+   - `cpu` / `memory` / `disk_util` 中，`evidence.spikes.sliding_mad.spike_count > 0` 且绝对值达到 `70%` 时，才升级为 `risk_tier = high`
+   - `qps` / `tps` / `IOPSRate` / `network_in` / `network_out` / `replication_delay` 第一版只有统计学尖峰分层，没有 capacity model；即使出现 `spike_count > 0`，默认也只写为 `risk_tier = low`
+   - `evidence.spikes.sliding_mad.spike_count > 0` 且 `risk_tier = low` 时，要明确写出“存在相对尖峰，但绝对值较低或暂未建立 capacity model，暂不按高风险尖峰处理”
+   - `evidence.spikes.sliding_mad.spike_count > 0` 且 `risk_tier = high` 时，仍需明确写出“存在高风险瞬时尖峰，不能仅因均值正常而判定为低风险”
    - `evidence.coverage.coverage_ratio` 偏低时，要明确说明证据不完整，不要脑补高置信结论
    - 多节点结论必须同时写“实例整体结论”和“节点拆分结论”
    - 不猜测主节点 / 从节点 / 只读节点角色，只使用 `Node ID` 叙述
@@ -267,8 +274,9 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
   - `cpu` / `memory` / `disk_util` 等节点级指标，先按 `summary.weighted` 计算实例级得分，再按每个适用节点的 `node.weighted` 计算节点得分，最终取更差者：`final_score = min(score(summary.weighted), min(score(node.weighted) for node in node_summaries if node.weighted is not None))`
   - `replication_delay` 仍按延迟上界判断，但仅比较 `all_zero != true` 的节点；最终取实例级与最差适用节点中更差者
   - `qps` / `tps` 继续按实例级 `summary` 评分 / 分析，不做节点排名
-  - `range = max - min`，用于描述波动幅度；瞬时尖峰统一以 `evidence.spikes.sliding_mad` / `node_summaries[*].evidence.spikes.sliding_mad` 为准
+  - `range = max - min`，用于描述波动幅度；统计学瞬时尖峰统一以 `evidence.spikes.sliding_mad` / `node_summaries[*].evidence.spikes.sliding_mad` 为准，风险等级再看 `evidence.spikes.risk_tier`
   - `sliding_mad` 的阈值固定为 `6 x MAD`
+  - `evidence.spikes.risk_tier = high` 表示“统计学尖峰 + 绝对值/容量占比达到高风险门槛”；`risk_tier = low` 表示“识别到统计学尖峰，但暂不按高风险负载尖峰处理”
   - `evidence.distribution.p95` / `evidence.distribution.p99` 用于识别高位压力
   - `evidence.variability.stddev` / `evidence.variability.cv` 用于识别波动强度
 
@@ -292,7 +300,7 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 
 4. 稳定性（15 分）
    - 初始 `15`
-   - `qps`、`tps`、`IOPSRate`、`network_in`、`network_out` 中每出现一个 `evidence.spikes.sliding_mad.spike_count > 0` 的指标，扣 `5`
+   - `qps`、`tps`、`IOPSRate`、`network_in`、`network_out` 中每出现一个 `evidence.spikes.risk_tier = high` 的指标，扣 `5`
    - 最低 `0`
 
 5. 主从延迟（15 分）
@@ -302,9 +310,9 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - `max >= 10` → `0`
 
 6. 综合健康（10 分）
-   - 没有核心指标出现 `evidence.spikes.sliding_mad.spike_count > 0` → `10`
-   - `1-2` 个核心指标出现 `evidence.spikes.sliding_mad.spike_count > 0` → `5`
-   - 超过 `2` 个核心指标出现 `evidence.spikes.sliding_mad.spike_count > 0` → `0`
+   - 没有核心指标出现 `evidence.spikes.risk_tier = high` → `10`
+   - `1-2` 个核心指标出现 `evidence.spikes.risk_tier = high` → `5`
+   - 超过 `2` 个核心指标出现 `evidence.spikes.risk_tier = high` → `0`
 
 ## 报告输出要求
 
@@ -349,8 +357,12 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - `evidence.distribution` 用于汇总 `min` / `max` / `range` / `avg` / `median` / `p95` / `p99`
 - `evidence.variability` 用于输出 `stddev` 与 `cv`
 - `evidence.spikes.sliding_mad` 用于输出滑动窗口 MAD 尖峰判断结果，其中 `method` 固定为 `sliding_mad`
+- `evidence.spikes.risk_tier` 用于输出尖峰风险分层结果：`none` / `low` / `high`
+- `evidence.spikes.risk_reason` 用于输出尖峰分层原因，便于在结论中直接引用
 - `node_summaries[*].evidence` 用于节点级证据摘要；优先用它定位热点节点，而不是默认读原始点位
 - `evidence.spikes.sliding_mad.spike_count > 0` 时，应在结论、异常发现和行动建议里显式说明“瞬时尖峰已被识别”
+- `evidence.spikes.risk_tier = low` 时，应写“存在相对尖峰，但绝对值较低”或“暂未建立 capacity model”
+- `evidence.spikes.risk_tier = high` 时，才按高风险尖峰参与扣分、排序和行动建议升级
 - `weighted = 0.5 * avg + 0.5 * median`
 - 节点拆分表格固定表头：`Node | Avg | Median | Max | 风险级别 | 说明`
 - `3` 节点及以上时，热点节点、次热点节点和低负载节点均按加权值排序与描述

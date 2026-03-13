@@ -216,3 +216,20 @@ def test_volcengine_rds_health_analyzer_documents_median_and_weighted_analysis()
     assert "{{iops_range}}" in template_text
     assert "{{network_in_range}}" in template_text
     assert "{{network_out_range}}" in template_text
+
+
+def test_volcengine_rds_health_analyzer_documents_spike_risk_tiers():
+    skill_text = read_backend_text(
+        "skills", "volcengine-rds-health-analyzer", "SKILL.md"
+    )
+
+    assert "`evidence.spikes.risk_tier`" in skill_text
+    assert "`evidence.spikes.risk_reason`" in skill_text
+    assert "`none`" in skill_text
+    assert "`low`" in skill_text
+    assert "`high`" in skill_text
+    assert "CPU" in skill_text
+    assert "70%" in skill_text
+    assert "qps" in skill_text
+    assert "capacity model" in skill_text
+    assert "`risk_tier = high`" in skill_text
