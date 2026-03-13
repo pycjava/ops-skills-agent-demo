@@ -7,6 +7,15 @@ description: Use when users need Volcengine RDS MySQL 单实例健康巡检、CP
 
 使用此技能对火山引擎 RDS MySQL 实例做只读巡检：先采集实例详情和监控指标，再由大模型基于采集结果完成分析、评分和报告输出。
 
+## 平衡版分析补充
+
+- 保留主窗口和最近 `3d` 辅助窗口，并新增最近 `24h` 辅助窗口 `recent24h`。
+- 最近 `24h` 辅助窗口的采集结果使用 `instance_data_recent24h.json`，批量快照可使用 `instance_data_recent24h_*.json`。
+- 当主窗口正常、最近 `3d` 正常、但最近 `24h` 异常时，应判定为 `最新出现的短时异常`，不要让短窗口结论覆盖主窗口。
+- `qps`、`tps`、`IOPSRate`、`network_in`、`network_out` 这类吞吐指标，不再依赖固定 `capacity model`，而是用 `启发式` 信号做风险升级。
+- 吞吐启发式要联合引用 `p95`、`p99`、`cv`、`spike_ratio` 与滑动 MAD 尖峰结果；只有组合信号足够强时才升级到 ``risk_tier = high``。
+- 资源评分采用 `avg + median + p95` 的平衡视角，避免低均值掩盖持续偏高或高分位压力。
+
 ## 本项目可用工具
 
 本项目中应只使用以下能力，不要引用不存在的工具名：

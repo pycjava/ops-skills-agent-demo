@@ -316,9 +316,13 @@ def test_build_metric_evidence_includes_distribution_coverage_and_trend(
     assert evidence["distribution"]["min"] == 10.0
     assert evidence["distribution"]["p95"] == 50.0
     assert evidence["distribution"]["p99"] == 50.0
+    assert evidence["pressure"]["high_percentile"]["level"] == "low"
+    assert evidence["pressure"]["high_percentile"]["p95_to_median_ratio"] == 1.6667
     assert evidence["variability"]["stddev"] > 0.0
     assert evidence["variability"]["cv"] > 0.0
     assert evidence["trend"]["direction"] == "up"
+    assert evidence["recent_trend"]["direction"] == "up"
+    assert evidence["recent_trend"]["sample_size"] == 5
     assert evidence["spikes"]["sliding_mad"]["spike_count"] == 0
     assert evidence["spikes"]["risk_tier"] == "none"
 
@@ -380,6 +384,68 @@ def test_build_metric_evidence_keeps_qps_spikes_as_low_risk_without_capacity_mod
     assert evidence["spikes"]["sliding_mad"]["spike_count"] == 1
     assert evidence["spikes"]["risk_tier"] == "low"
     assert "capacity" in evidence["spikes"]["risk_reason"]
+
+
+def test_build_metric_evidence_promotes_qps_spikes_to_high_risk_with_heuristics(
+    monkeypatch,
+):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 40, 0)
+    data_points = build_data_points(
+        [10.0, 10.0, 100.0, 10.0, 10.0, 100.0, 10.0, 10.0, 100.0],
+        start_time,
+    )
+
+    evidence = module.build_metric_evidence(
+        data_points,
+        metric_key="qps",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    assert evidence["spikes"]["sliding_mad"]["spike_count"] >= 2
+    assert evidence["pressure"]["high_percentile"]["level"] == "high"
+    assert evidence["spikes"]["risk_tier"] == "high"
+    assert "p95" in evidence["spikes"]["risk_reason"]
+    assert "spike_ratio" in evidence["spikes"]["risk_reason"]
+
+
+def test_summarize_window_alignment_classifies_newly_active_issue(monkeypatch):
+    module = load_get_instance_info_module(monkeypatch)
+
+    summary = module.summarize_window_alignment(
+        {"spikes": {"risk_tier": "none"}},
+        recent3d_evidence={"spikes": {"risk_tier": "none"}},
+        recent24h_evidence={"spikes": {"risk_tier": "high"}},
+    )
+
+    assert summary["current_status"] == "newly_active"
+    assert summary["window_alignment"] == "main_normal_recent3d_normal_recent24h_abnormal"
+
+
+def test_compute_balanced_resource_score_penalizes_high_p95_even_with_low_avg(
+    monkeypatch,
+):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 20, 0)
+    data_points = build_data_points([10.0, 10.0, 10.0, 10.0, 75.0], start_time)
+
+    summary = module.build_value_summary([dp["value"] for dp in data_points], period="5m")
+    evidence = module.build_metric_evidence(
+        data_points,
+        metric_key="cpu",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+    score = module.compute_balanced_resource_score("cpu", summary, evidence)
+
+    assert score["score"] == 15
+    assert "p95" in score["drivers"]
+    assert "risk_tier" in score["drivers"]
 
 
 def test_main_cleans_expired_metric_files_before_writing_output(
