@@ -1,8 +1,6 @@
-from typing import Literal
-
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from agent import invalidate_runtime_cache
 from auth.dependencies import require_permission
@@ -13,67 +11,42 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 service = McpRegistryService()
 
 
-class McpServerCreateRequest(BaseModel):
-    name: str = Field(..., description="MCP server name")
-    transport: Literal["http", "sse", "stdio"] = Field(..., description="MCP transport")
-    url: str | None = Field(None, description="MCP server URL (required for http/sse)")
-    command: str | None = Field(None, description="Command to start MCP server (required for stdio)")
-    args: list[str] = Field(default_factory=list, description="Command arguments (for stdio)")
-    env: dict[str, str] | None = Field(None, description="Environment variables (for stdio)")
-    enabled: bool = Field(True, description="Whether the server is enabled")
-    agent_ids: list[str] = Field(default_factory=list, description="Bound agent ids")
-    headers: dict[str, str] | None = Field(
-        default=None, description="Optional request headers (for http/sse)"
-    )
+class McpConfigUpdateRequest(BaseModel):
+    config_text: str = Field(..., description="Raw mcp.json document")
 
-    @field_validator("name")
+    @field_validator("config_text")
     @classmethod
-    def _strip_name(cls, value: str) -> str:
+    def _validate_config_text(cls, value: str) -> str:
         normalized = str(value or "").strip()
         if not normalized:
-            raise ValueError("Field is required")
-        return normalized
-
-    @field_validator("agent_ids")
-    @classmethod
-    def _normalize_agent_ids(cls, value: list[str]) -> list[str]:
-        return [str(item or "").strip() for item in value]
-
-    @field_validator("headers")
-    @classmethod
-    def _normalize_headers(
-        cls, value: dict[str, str] | None
-    ) -> dict[str, str] | None:
-        if value is None:
-            return None
-        return {str(key): str(item) for key, item in value.items()}
-
-    @field_validator("env")
-    @classmethod
-    def _normalize_env(
-        cls, value: dict[str, str] | None
-    ) -> dict[str, str] | None:
-        if value is None:
-            return None
-        return {str(key): str(item) for key, item in value.items()}
-
-    @model_validator(mode="after")
-    def _validate_transport_fields(self):
-        if self.transport == "stdio":
-            if not self.command or not self.command.strip():
-                raise ValueError("command is required for stdio transport")
-        else:
-            if not self.url or not self.url.strip():
-                raise ValueError("url is required for http/sse transport")
-        return self
+            raise ValueError("config_text is required")
+        return value
 
 
-class McpServerUpdateRequest(McpServerCreateRequest):
-    replace_headers: bool = Field(
-        False, description="Whether to replace stored headers"
+@router.get("/config", dependencies=[Depends(require_permission("mcp_servers:read"))])
+async def get_mcp_config():
+    records = await service.list_servers()
+    return JSONResponse(
+        {
+            "config_text": await service.load_config_text(),
+            "servers": [record.to_public_dict() for record in records],
+        }
     )
-    replace_env: bool = Field(
-        False, description="Whether to replace stored env variables"
+
+
+@router.put("/config", dependencies=[Depends(require_permission("mcp_servers:write"))])
+async def update_mcp_config(body: McpConfigUpdateRequest):
+    try:
+        config_text, records = await service.save_config_text(body.config_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await invalidate_runtime_cache()
+    return JSONResponse(
+        {
+            "config_text": config_text,
+            "servers": [record.to_public_dict() for record in records],
+        }
     )
 
 
@@ -83,77 +56,13 @@ async def list_mcp_servers():
     return JSONResponse([record.to_public_dict() for record in records])
 
 
-@router.post("/servers", dependencies=[Depends(require_permission("mcp_servers:write"))])
-async def create_mcp_server(body: McpServerCreateRequest):
-    try:
-        record = await service.create_server(
-            name=body.name,
-            transport=body.transport,
-            url=body.url,
-            command=body.command,
-            args=body.args,
-            env=body.env,
-            enabled=body.enabled,
-            agent_ids=body.agent_ids,
-            headers=body.headers,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    await invalidate_runtime_cache()
-    return JSONResponse(record.to_public_dict())
-
-
-@router.put(
-    "/servers/{server_id}",
-    dependencies=[Depends(require_permission("mcp_servers:write"))],
-)
-async def update_mcp_server(server_id: str, body: McpServerUpdateRequest):
-    try:
-        record = await service.update_server(
-            server_id,
-            name=body.name,
-            transport=body.transport,
-            url=body.url,
-            command=body.command,
-            args=body.args,
-            env=body.env,
-            enabled=body.enabled,
-            agent_ids=body.agent_ids,
-            replace_headers=body.replace_headers,
-            replace_env=body.replace_env,
-            headers=body.headers,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    await invalidate_runtime_cache()
-    return JSONResponse(record.to_public_dict())
-
-
-@router.delete(
-    "/servers/{server_id}",
-    dependencies=[Depends(require_permission("mcp_servers:delete"))],
-)
-async def delete_mcp_server(server_id: str):
-    try:
-        await service.delete_server(server_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    await invalidate_runtime_cache()
-    return JSONResponse({"ok": True})
-
-
 @router.post(
-    "/servers/{server_id}/test",
+    "/servers/{server_name}/test",
     dependencies=[Depends(require_permission("mcp_servers:test"))],
 )
-async def test_mcp_server(server_id: str):
+async def test_mcp_server(server_name: str):
     try:
-        result = await service.test_server(server_id)
+        result = await service.test_server(server_name)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

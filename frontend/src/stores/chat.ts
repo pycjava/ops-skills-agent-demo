@@ -45,6 +45,7 @@ export const useChatStore = defineStore('chat', () => {
   const agents = ref<AgentInfo[]>([])
   const skills = ref<Skill[]>([])
   const mcpServers = ref<McpServer[]>([])
+  const mcpConfigText = ref('')
   const conversations = ref<ConversationItem[]>([])
   const conversationAttachments = ref<ConversationAttachment[]>([])
   const inspectionTasks = ref<InspectionTask[]>([])
@@ -132,6 +133,7 @@ export const useChatStore = defineStore('chat', () => {
   const mcpDomain = createMcpDomain({
     backendUrl,
     mcpServers,
+    mcpConfigText,
     isMcpLoading,
     mcpError,
     testingServerIds,
@@ -299,6 +301,7 @@ export const useChatStore = defineStore('chat', () => {
     agents,
     skills,
     mcpServers,
+    mcpConfigText,
     conversations,
     conversationAttachments,
     inspectionTasks,
@@ -376,10 +379,9 @@ export const useChatStore = defineStore('chat', () => {
     downloadTaskNotificationReport: taskNotificationDomain.downloadTaskNotificationReport,
     fetchSkills,
     resolveCloudRequestContext,
+    fetchMcpConfig: mcpDomain.fetchMcpConfig,
     fetchMcpServers: mcpDomain.fetchMcpServers,
-    createMcpServer: mcpDomain.createMcpServer,
-    updateMcpServer: mcpDomain.updateMcpServer,
-    deleteMcpServer: mcpDomain.deleteMcpServer,
+    saveMcpConfig: mcpDomain.saveMcpConfig,
     testMcpServer: mcpDomain.testMcpServer,
     fetchMemoryTree: memoryDomain.fetchMemoryTree,
     fetchMemoryContent: memoryDomain.fetchMemoryContent,

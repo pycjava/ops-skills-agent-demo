@@ -13,7 +13,7 @@ AgentWeave 是一个基于 **FastAPI + Vue 3 + DeepAgents/LangGraph** 的多 Age
 - **定时巡检任务**：支持从会话生成定时任务、查看任务列表、执行记录和任务运行会话流式回放。
 - **任务提醒中心**：任务执行成功或失败后生成通知，并可携带巡检报告下载信息。
 - **会话附件**：支持在会话中上传文本类附件，当前支持 `.txt`、`.md`、`.csv`、`.json`、`.sql`、`.log`，单文件最大 1 MB。
-- **MCP Server 管理**：支持在页面注册、测试并按 Agent 绑定 MCP Server。
+- **MCP Server 管理**：支持使用项目根目录 `mcp.json` 进行 Cursor 风格配置、保存、测试并按 Agent 绑定 MCP Server。
 - **云凭证与上下文解析**：支持根据消息内容解析云实例上下文，服务于 MySQL 巡检等场景。
 - **SQLite + LangGraph 持久化**：对话、消息、任务、MCP 配置等业务数据落库，长期记忆通过 `/memories/` 暴露。
 
@@ -368,7 +368,9 @@ flowchart TD
 | `GET /api/skills?agent_id=...` | 获取某个 Agent 可见的 Skills |
 | `GET/POST/... /api/inspection-tasks` | 定时任务、草稿生成、执行记录与流式回放 |
 | `GET/POST /api/task-notifications` | 任务提醒列表和已读状态 |
-| `GET/POST/PUT/DELETE /api/mcp/servers` | MCP Server 管理与测试 |
+| `GET /api/mcp/config` | 读取项目根目录 `mcp.json` 和解析后的 MCP Server 列表 |
+| `PUT /api/mcp/config` | 保存整份 `mcp.json` 配置 |
+| `POST /api/mcp/servers/{server_name}/test` | 按 server 名称测试单个 MCP Server |
 | `GET/PUT/POST /api/cloud-credentials/...` | 云凭证注册表与上下文解析 |
 | `GET/DELETE /api/memories/...` | 记忆树、记忆内容读取与删除 |
 | `WS /ws/chat` | 主对话通道 |

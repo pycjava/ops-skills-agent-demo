@@ -11,8 +11,11 @@ def _install_dependency_stubs() -> None:
     if "deepagents" not in sys.modules:
         deepagents_module = types.ModuleType("deepagents")
         deepagents_module.create_deep_agent = lambda *args, **kwargs: None
+        deepagents_module.SubAgent = dict
         deepagents_module.__path__ = []
         sys.modules["deepagents"] = deepagents_module
+    elif not hasattr(sys.modules["deepagents"], "SubAgent"):
+        sys.modules["deepagents"].SubAgent = dict
 
     if "deepagents.backends" not in sys.modules:
         backends_module = types.ModuleType("deepagents.backends")

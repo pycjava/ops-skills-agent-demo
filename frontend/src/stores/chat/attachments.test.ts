@@ -151,7 +151,7 @@ describe('createAttachmentDomain', () => {
     expect(conversationAttachments.value).toEqual([])
     expect(global.fetch).toHaveBeenCalledWith(
       '/api/conversations/conv-1/attachments/att-1',
-      { method: 'DELETE' },
+      { method: 'DELETE', credentials: 'include' },
     )
   })
 })

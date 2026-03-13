@@ -17,6 +17,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # 项目根目录 (由于是前后端分离，限制只在 backend 内)
 PROJECT_DIR = str(BASE_DIR)
+WORKSPACE_DIR = str(BASE_DIR.parent)
 
 # Skills 目录
 SKILLS_DIR = str(BASE_DIR / "skills")
@@ -25,6 +26,7 @@ SKILLS_DIR = str(BASE_DIR / "skills")
 MODEL_NAME = os.getenv("MODEL_NAME", "claude-sonnet-4-5-20250929")
 MAX_TURNS = int(os.getenv("MAX_TURNS", "10"))
 MCP_DEFAULT_TIMEOUT_SECONDS = 15.0
+MCP_CONFIG_PATH = str((Path(WORKSPACE_DIR) / "mcp.json").resolve())
 
 # ─── SQLite 配置 ──────────────────────────────────────
 DEFAULT_SQLITE_PATH = "data/app.db"

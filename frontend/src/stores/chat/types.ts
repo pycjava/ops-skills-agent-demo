@@ -286,25 +286,11 @@ export interface McpServer {
   last_tested_at: string | null
   last_error: string | null
   last_tools: McpToolPreview[]
-  created_at: string | null
-  updated_at: string | null
 }
 
-export interface McpServerPayload {
-  name: string
-  transport: McpTransport
-  url?: string | null
-  command?: string | null
-  args?: string[]
-  env?: Record<string, string> | null
-  enabled: boolean
-  agent_ids: string[]
-  headers?: Record<string, string>
-}
-
-export interface McpServerUpdatePayload extends McpServerPayload {
-  replace_headers?: boolean
-  replace_env?: boolean
+export interface McpConfigResponse {
+  config_text: string
+  servers: McpServer[]
 }
 
 export interface SendMessageOptions {
