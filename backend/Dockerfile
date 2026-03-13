@@ -9,7 +9,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ssh \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/root/.local/bin:${PATH}"
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ 
