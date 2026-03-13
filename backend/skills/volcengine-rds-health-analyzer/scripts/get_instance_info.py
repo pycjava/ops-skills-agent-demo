@@ -35,6 +35,31 @@ from volcenginesdkcore.rest import ApiException
 DEFAULT_OUTPUT_DIR = r"D:\Study\python\agent\maintenance-agent\metric_data"
 PERCENT_BASED_SPIKE_METRICS = {"cpu", "memory", "disk_util"}
 PERCENT_BASED_HIGH_RISK_THRESHOLD = 70.0
+THROUGHPUT_HEURISTIC_METRICS = {"qps", "tps", "IOPSRate", "network_in", "network_out"}
+REPLICATION_DELAY_HIGH_RISK_THRESHOLD = 5.0
+RECENT_TREND_LOOKBACK_HOURS = 24
+RECENT_TREND_MIN_POINTS = 5
+HIGH_PERCENTILE_MEDIUM_RATIO = 2.0
+HIGH_PERCENTILE_HIGH_RATIO = 3.0
+HIGH_PERCENTILE_P99_HIGH_RATIO = 4.0
+THROUGHPUT_HIGH_SPIKE_RATIO = 0.2
+THROUGHPUT_HIGH_CV = 1.0
+
+RESOURCE_SCORE_BANDS = {
+    "cpu": [(60.0, 20), (70.0, 15), (80.0, 10), (math.inf, 5)],
+    "memory": [(70.0, 20), (80.0, 15), (90.0, 10), (math.inf, 5)],
+    "disk_util": [(70.0, 20), (80.0, 15), (90.0, 10), (math.inf, 5)],
+}
+RESOURCE_MEDIAN_WARNING_THRESHOLDS = {
+    "cpu": 60.0,
+    "memory": 70.0,
+    "disk_util": 70.0,
+}
+RESOURCE_P95_WARNING_THRESHOLDS = {
+    "cpu": 70.0,
+    "memory": 80.0,
+    "disk_util": 80.0,
+}
 
 
 def load_runtime_env() -> None:
@@ -271,6 +296,82 @@ def compute_trend(values: List[float]) -> Dict[str, Any]:
     return {"direction": direction, "slope": rounded_slope}
 
 
+def resolve_recent_trend_sample_size(
+    value_count: int,
+    *,
+    period: str = "5m",
+    lookback_hours: int = RECENT_TREND_LOOKBACK_HOURS,
+) -> int:
+    if value_count <= RECENT_TREND_MIN_POINTS:
+        return value_count
+
+    target_points = max(
+        int((lookback_hours * 3600) / period_to_seconds(period)) + 1,
+        RECENT_TREND_MIN_POINTS,
+    )
+    if value_count < target_points:
+        return max(RECENT_TREND_MIN_POINTS, value_count // 2)
+    return target_points
+
+
+def compute_recent_trend(
+    values: List[float],
+    *,
+    period: str = "5m",
+    lookback_hours: int = RECENT_TREND_LOOKBACK_HOURS,
+) -> Dict[str, Any]:
+    sample_size = resolve_recent_trend_sample_size(
+        len(values),
+        period=period,
+        lookback_hours=lookback_hours,
+    )
+    if sample_size <= 0:
+        return {
+            "direction": "flat",
+            "slope": 0.0,
+            "sample_size": 0,
+            "lookback_hours": lookback_hours,
+        }
+
+    recent_values = values[-sample_size:]
+    return {
+        **compute_trend(recent_values),
+        "sample_size": sample_size,
+        "lookback_hours": lookback_hours,
+    }
+
+
+def build_high_percentile_pressure(distribution: Dict[str, Any]) -> Dict[str, Any]:
+    median = distribution.get("median")
+    p95 = distribution.get("p95")
+    p99 = distribution.get("p99")
+    if median is None or p95 is None or p99 is None:
+        return {
+            "level": "unknown",
+            "p95_to_median_ratio": None,
+            "p99_to_median_ratio": None,
+        }
+
+    safe_median = max(abs(median), 1e-9)
+    p95_ratio = round(p95 / safe_median, 4)
+    p99_ratio = round(p99 / safe_median, 4)
+    if (
+        p95_ratio >= HIGH_PERCENTILE_HIGH_RATIO
+        or p99_ratio >= HIGH_PERCENTILE_P99_HIGH_RATIO
+    ):
+        level = "high"
+    elif p95_ratio >= HIGH_PERCENTILE_MEDIUM_RATIO or p99_ratio >= HIGH_PERCENTILE_HIGH_RATIO:
+        level = "medium"
+    else:
+        level = "low"
+
+    return {
+        "level": level,
+        "p95_to_median_ratio": p95_ratio,
+        "p99_to_median_ratio": p99_ratio,
+    }
+
+
 def detect_sliding_mad_spikes(
     data_points: List[Dict[str, Any]],
     *,
@@ -358,6 +459,8 @@ def classify_spike_risk(
     *,
     metric_key: Optional[str] = None,
     absolute_max: Optional[float] = None,
+    distribution: Optional[Dict[str, Any]] = None,
+    variability: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
     if not spike_evidence.get("has_spike"):
         return {
@@ -385,12 +488,163 @@ def classify_spike_risk(
             ),
         }
 
+    if metric_key == "replication_delay":
+        if (
+            absolute_max is not None
+            and absolute_max >= REPLICATION_DELAY_HIGH_RISK_THRESHOLD
+        ):
+            return {
+                "risk_tier": "high",
+                "risk_reason": (
+                    f"replication delay reaches {round(absolute_max, 4)}s and exceeds "
+                    f"the {REPLICATION_DELAY_HIGH_RISK_THRESHOLD:.0f}s threshold"
+                ),
+            }
+        return {
+            "risk_tier": "low",
+            "risk_reason": "statistical spike detected, but replication delay stays below 5s",
+        }
+
+    if metric_key in THROUGHPUT_HEURISTIC_METRICS:
+        pressure = build_high_percentile_pressure(distribution or {})
+        cv = float((variability or {}).get("cv") or 0.0)
+        spike_ratio = float(spike_evidence.get("spike_ratio") or 0.0)
+        heuristic_signals: list[str] = []
+
+        if pressure["level"] == "high":
+            heuristic_signals.append(
+                f"p95/p99 pressure ({pressure['p95_to_median_ratio']}x median)"
+            )
+        if cv >= THROUGHPUT_HIGH_CV and spike_ratio > THROUGHPUT_HIGH_SPIKE_RATIO:
+            heuristic_signals.append(f"cv={round(cv, 4)}")
+        if spike_ratio > THROUGHPUT_HIGH_SPIKE_RATIO:
+            heuristic_signals.append(f"spike_ratio={round(spike_ratio, 4)}")
+
+        if len(heuristic_signals) >= 2:
+            return {
+                "risk_tier": "high",
+                "risk_reason": (
+                    "heuristic throughput risk promoted by "
+                    + ", ".join(heuristic_signals)
+                ),
+            }
+
+        return {
+            "risk_tier": "low",
+            "risk_reason": (
+                "statistical spike detected, but without a capacity model the "
+                "heuristic throughput signals are not strong enough for high risk"
+            ),
+        }
+
     return {
         "risk_tier": "low",
         "risk_reason": (
             "statistical spike detected, but this metric has no capacity model "
             "for high-risk spike promotion"
         ),
+    }
+
+
+def summarize_window_alignment(
+    primary_evidence: Dict[str, Any],
+    *,
+    recent3d_evidence: Optional[Dict[str, Any]] = None,
+    recent24h_evidence: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    def is_abnormal(evidence: Optional[Dict[str, Any]]) -> Optional[bool]:
+        if evidence is None:
+            return None
+        return evidence.get("spikes", {}).get("risk_tier") == "high"
+
+    main_flag = bool(is_abnormal(primary_evidence))
+    recent3d_flag = is_abnormal(recent3d_evidence)
+    recent24h_flag = is_abnormal(recent24h_evidence)
+
+    if recent3d_flag is None and recent24h_flag is None:
+        return {
+            "current_status": "single_window_only",
+            "window_alignment": "main_only",
+        }
+    if recent24h_flag is None:
+        return {
+            "current_status": "recent24h_unavailable",
+            "window_alignment": (
+                f"main_{'abnormal' if main_flag else 'normal'}_recent3d_"
+                f"{'abnormal' if recent3d_flag else 'normal'}_recent24h_unknown"
+            ),
+        }
+    if main_flag and recent3d_flag and recent24h_flag:
+        return {
+            "current_status": "persistent_active",
+            "window_alignment": "main_abnormal_recent3d_abnormal_recent24h_abnormal",
+        }
+    if main_flag and recent3d_flag and not recent24h_flag:
+        return {
+            "current_status": "persistent_but_easing",
+            "window_alignment": "main_abnormal_recent3d_abnormal_recent24h_normal",
+        }
+    if not main_flag and recent3d_flag and recent24h_flag:
+        return {
+            "current_status": "recently_intensified",
+            "window_alignment": "main_normal_recent3d_abnormal_recent24h_abnormal",
+        }
+    if not main_flag and not recent3d_flag and recent24h_flag:
+        return {
+            "current_status": "newly_active",
+            "window_alignment": "main_normal_recent3d_normal_recent24h_abnormal",
+        }
+    if main_flag and not recent3d_flag and not recent24h_flag:
+        return {
+            "current_status": "historical_only",
+            "window_alignment": "main_abnormal_recent3d_normal_recent24h_normal",
+        }
+    return {
+        "current_status": "inactive",
+        "window_alignment": (
+            f"main_{'abnormal' if main_flag else 'normal'}_recent3d_"
+            f"{'abnormal' if recent3d_flag else 'normal'}_recent24h_"
+            f"{'abnormal' if recent24h_flag else 'normal'}"
+        ),
+    }
+
+
+def compute_balanced_resource_score(
+    metric_key: str,
+    summary: Dict[str, Any],
+    evidence: Dict[str, Any],
+) -> Dict[str, Any]:
+    if metric_key not in RESOURCE_SCORE_BANDS:
+        raise ValueError(f"unsupported resource metric for balanced score: {metric_key}")
+
+    avg = float(summary.get("avg") or 0.0)
+    base_score = 5
+    for threshold, score in RESOURCE_SCORE_BANDS[metric_key]:
+        if avg < threshold:
+            base_score = score
+            break
+
+    drivers: list[str] = []
+    median = summary.get("median")
+    if (
+        median is not None
+        and median >= RESOURCE_MEDIAN_WARNING_THRESHOLDS[metric_key]
+    ):
+        drivers.append("median")
+
+    p95 = evidence.get("distribution", {}).get("p95")
+    if p95 is not None and p95 >= RESOURCE_P95_WARNING_THRESHOLDS[metric_key]:
+        drivers.append("p95")
+
+    if evidence.get("spikes", {}).get("risk_tier") == "high":
+        drivers.append("risk_tier")
+
+    penalty_steps = max(len(drivers) - 1, 0)
+    score = max(base_score - (penalty_steps * 5), 5)
+    return {
+        "score": score,
+        "base_score": base_score,
+        "drivers": drivers,
     }
 
 
@@ -449,10 +703,17 @@ def build_metric_evidence(
             [],
             window_size=window_size,
         )
+        pressure = build_high_percentile_pressure({})
+        variability = {
+            "stddev": 0.0,
+            "cv": 0.0,
+        }
         spike_risk = classify_spike_risk(
             spike_evidence,
             metric_key=metric_key,
             absolute_max=None,
+            distribution=None,
+            variability=variability,
         )
         return {
             "source_point_count": 0,
@@ -477,12 +738,16 @@ def build_metric_evidence(
                 "p95": None,
                 "p99": None,
             },
-            "variability": {
-                "stddev": 0.0,
-                "cv": 0.0,
-            },
+            "pressure": {"high_percentile": pressure},
+            "variability": variability,
             "spikes": {"sliding_mad": spike_evidence, **spike_risk},
             "trend": {"direction": "flat", "slope": 0.0},
+            "recent_trend": {
+                "direction": "flat",
+                "slope": 0.0,
+                "sample_size": 0,
+                "lookback_hours": RECENT_TREND_LOOKBACK_HOURS,
+            },
         }
 
     avg = statistics.mean(values)
@@ -496,6 +761,13 @@ def build_metric_evidence(
         "median": round(statistics.median(values), 4),
         "p95": percentile_nearest_rank(values, 95),
         "p99": percentile_nearest_rank(values, 99),
+    }
+    pressure = {
+        "high_percentile": build_high_percentile_pressure(distribution),
+    }
+    variability = {
+        "stddev": round(stddev, 4),
+        "cv": round(cv, 4),
     }
     grouped_points: Dict[str, List[Dict[str, Any]]] = {}
     for point in ordered_points:
@@ -552,6 +824,8 @@ def build_metric_evidence(
         spike_evidence,
         metric_key=metric_key,
         absolute_max=distribution["max"],
+        distribution=distribution,
+        variability=variability,
     )
 
     return {
@@ -569,12 +843,11 @@ def build_metric_evidence(
             series_count=series_count,
         ),
         "distribution": distribution,
-        "variability": {
-            "stddev": round(stddev, 4),
-            "cv": round(cv, 4),
-        },
+        "pressure": pressure,
+        "variability": variability,
         "spikes": {"sliding_mad": spike_evidence, **spike_risk},
         "trend": compute_trend(values),
+        "recent_trend": compute_recent_trend(values, period=period),
     }
 
 

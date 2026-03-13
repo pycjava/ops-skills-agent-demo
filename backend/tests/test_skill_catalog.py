@@ -233,3 +233,29 @@ def test_volcengine_rds_health_analyzer_documents_spike_risk_tiers():
     assert "qps" in skill_text
     assert "capacity model" in skill_text
     assert "`risk_tier = high`" in skill_text
+
+
+def test_volcengine_rds_health_analyzer_documents_recent24h_balanced_windows():
+    skill_text = read_backend_text(
+        "skills", "volcengine-rds-health-analyzer", "SKILL.md"
+    )
+
+    assert "recent24h" in skill_text
+    assert "24h" in skill_text
+    assert "instance_data_recent24h.json" in skill_text
+    assert "instance_data_recent24h_*.json" in skill_text
+    assert "最新出现的短时异常" in skill_text
+
+
+def test_volcengine_rds_health_analyzer_documents_balanced_scoring_and_throughput_heuristics():
+    skill_text = read_backend_text(
+        "skills", "volcengine-rds-health-analyzer", "SKILL.md"
+    )
+
+    assert "启发式" in skill_text
+    assert "`p95`" in skill_text
+    assert "`p99`" in skill_text
+    assert "`cv`" in skill_text
+    assert "`spike_ratio`" in skill_text
+    assert "24h" in skill_text
+    assert "avg + median + p95" in skill_text
