@@ -72,24 +72,24 @@ function createTaskNotification(
 const chatStoreMock = {
   messages: [] as AppTestMessage[],
   agents: [
-    { id: 'orchestrator', label: '智能编排助手', execution_mode: 'orchestrator' },
+    { id: 'router', label: '智能编排助手', execution_mode: 'router' },
     { id: 'general', label: '通用助手' },
     { id: 'dba', label: '数据库助手' },
     { id: 'ops', label: '运维助手' },
     { id: 'extra', label: '额外助手' },
   ],
-  activeAgentId: 'orchestrator',
+  activeAgentId: 'router',
   activeAgent: {
-    id: 'orchestrator',
+    id: 'router',
     label: '智能编排助手',
-    execution_mode: 'orchestrator',
+    execution_mode: 'router',
   },
   conversations: [] as ConversationItem[],
   inspectionTasks: [] as InspectionTask[],
   inspectionTaskRuns: [] as InspectionTaskRun[],
   taskNotifications: [] as TaskNotification[],
   currentConversationId: null as string | null,
-  draftAgentId: 'orchestrator',
+  draftAgentId: 'router',
   isConnected: true,
   isLoading: false,
   skills: [],
@@ -262,14 +262,14 @@ describe('App', () => {
     chatStoreMock.deleteInspectionTask.mockReset()
     chatStoreMock.deleteInspectionTask.mockResolvedValue(true)
     composerHarness.sendMessage = null
-    chatStoreMock.activeAgentId = 'orchestrator'
+    chatStoreMock.activeAgentId = 'router'
     chatStoreMock.activeAgent = {
-      id: 'orchestrator',
+      id: 'router',
       label: '智能编排助手',
-      execution_mode: 'orchestrator',
+      execution_mode: 'router',
     }
     chatStoreMock.currentConversationId = null
-    chatStoreMock.draftAgentId = 'orchestrator'
+    chatStoreMock.draftAgentId = 'router'
     chatStoreMock.messages = []
     chatStoreMock.conversations = []
     chatStoreMock.inspectionTasks = []

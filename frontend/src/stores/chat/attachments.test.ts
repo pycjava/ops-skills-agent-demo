@@ -53,7 +53,7 @@ describe('createAttachmentDomain', () => {
           id: 'conv-1',
           title: '新对话',
           source: 'web',
-          agent_id: 'orchestrator',
+          agent_id: 'router',
           created_at: null,
           updated_at: null,
         },
@@ -94,14 +94,14 @@ describe('createAttachmentDomain', () => {
     expect(conversationAttachments.value).toHaveLength(1)
     expect(conversationAttachments.value[0]?.id).toBe('att-1')
     expect(capturedBody).toBeInstanceOf(FormData)
-    expect((capturedBody as FormData).get('agent_id')).toBe('orchestrator')
+    expect((capturedBody as FormData).get('agent_id')).toBe('router')
     expect(fetchConversations).toHaveBeenCalledTimes(1)
-    expect(fetchSkills).toHaveBeenCalledWith('orchestrator')
+    expect(fetchSkills).toHaveBeenCalledWith('router')
     expect(wsState.current.send).toHaveBeenCalledWith(
       JSON.stringify({
         type: 'init',
         conversation_id: 'conv-1',
-        agent_id: 'orchestrator',
+        agent_id: 'router',
       }),
     )
   })

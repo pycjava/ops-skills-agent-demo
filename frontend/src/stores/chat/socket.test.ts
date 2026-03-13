@@ -45,10 +45,10 @@ describe('createSocketDomain', () => {
     const messages: Array<Record<string, unknown>> = []
     const conversations = ref<ConversationItem[]>([])
     const currentConversationId = ref<string | null>(null)
-    const draftAgentId = ref('orchestrator')
+    const draftAgentId = ref('router')
     const agents = ref<AgentInfo[]>([
       {
-        id: 'orchestrator',
+        id: 'router',
         label: '智能编排助手',
         description: '',
         capabilities: [],
@@ -101,7 +101,7 @@ describe('createSocketDomain', () => {
       conversations,
       currentConversationId,
       draftAgentId,
-      activeAgentId: computed(() => 'orchestrator'),
+      activeAgentId: computed(() => 'router'),
       agents,
       isConnected,
       isLoading,
@@ -126,7 +126,7 @@ describe('createSocketDomain', () => {
       data: JSON.stringify({
         type: 'text_delta',
         content: '正在为你分析问题。',
-        agent_id: 'orchestrator',
+        agent_id: 'router',
       }),
     } as MessageEvent<string>)
 
@@ -142,7 +142,7 @@ describe('createSocketDomain', () => {
       expect.objectContaining({
         role: 'assistant',
         content: '正在为你分析问题。',
-        agentId: 'orchestrator',
+        agentId: 'router',
       }),
       expect.objectContaining({
         role: 'assistant',
@@ -154,14 +154,14 @@ describe('createSocketDomain', () => {
     vi.unstubAllGlobals()
   })
 
-  test('initializes a new websocket session with orchestrator even if the stale draft agent differs', () => {
+  test('initializes a new websocket session with router even if the stale draft agent differs', () => {
     const messages: Array<Record<string, unknown>> = []
     const conversations = ref<ConversationItem[]>([])
     const currentConversationId = ref<string | null>(null)
     const draftAgentId = ref('dba')
     const agents = ref<AgentInfo[]>([
       {
-        id: 'orchestrator',
+        id: 'router',
         label: '智能编排助手',
         description: '',
         capabilities: [],
@@ -238,7 +238,7 @@ describe('createSocketDomain', () => {
       JSON.stringify({
         type: 'init',
         conversation_id: null,
-        agent_id: 'orchestrator',
+        agent_id: 'router',
       }),
     )
     vi.unstubAllGlobals()

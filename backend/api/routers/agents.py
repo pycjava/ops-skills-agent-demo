@@ -13,7 +13,7 @@ async def list_agents():
     default_agent_id = resolve_default_agent()
     payload = [
         profile.to_dict(is_default=profile.id == default_agent_id)
-        for profile in list_agent_profiles()
+        for profile in list_agent_profiles(include_legacy=False)
     ]
     return JSONResponse(payload)
 

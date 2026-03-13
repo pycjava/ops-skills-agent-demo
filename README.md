@@ -1,13 +1,15 @@
 # AgentWeave
 
+> 2026-03 架构更新：默认入口已从 `orchestrator` 切换为 `router`，新增 `supervisor` 作为复杂任务协调层；`orchestrator` 仅保留为兼容别名。
+
 AgentWeave 是一个基于 **FastAPI + Vue 3 + DeepAgents/LangGraph** 的多 Agent 智能编排与运维平台示例。它提供 Web 对话入口，并围绕 Agent 路由、Skills 白名单装配、定时巡检任务、任务提醒、会话附件、MCP Server、云凭证解析和长期记忆构建了一套可运行的工作台。
 
 当前仓库更适合被理解为“开发中的平台骨架 + 已落地的核心流程”，而不是单一聊天 Demo。
 
 ## 核心能力
 
-- **默认入口是 `orchestrator`**：新会话默认进入智能编排助手，由它识别意图并把专业任务路由给 `dba` 或 `ops`。
-- **4 个内置 Agent**：`orchestrator`、`general`、`dba`、`ops`，每个 Agent 都有自己的提示词、风险等级和可用 Skills 集合。
+- **默认入口是 `router`**：新会话默认进入智能编排助手，由它负责轻量意图识别、单域分流与复杂问题升级。
+- **5 个内置 Agent**：`router`、`supervisor`、`general`、`dba`、`ops`；其中 `orchestrator` 仅保留为兼容别名，不再作为独立运行时角色或提示词。
 - **Skills 白名单装配**：Skills 统一放在 [backend/skills](backend/skills)，Agent 运行时按白名单注入，而不是靠前端隐藏。
 - **WebSocket 流式对话**：主聊天链路走 `/ws/chat`，支持文本增量推流、思考过程、工具调用结果和子 Agent 路由事件。
 - **定时巡检任务**：支持从会话生成定时任务、查看任务列表、执行记录和任务运行会话流式回放。
@@ -228,11 +230,15 @@ pytest
 ```mermaid
 flowchart TD
     A[打开页面] --> B[新建对话]
-    B --> C[默认进入 orchestrator]
+    B --> C[默认进入 router]
     C --> D{识别任务类型}
     D -->|通用问答| E[general]
     D -->|数据库分析 / 巡检| F[dba]
     D -->|运维诊断| G[ops]
+    D -->|多域 / 复杂 / 异常升级| J[supervisor]
+    J --> E
+    J --> F
+    J --> G
     E --> H[流式对话与工具调用]
     F --> H
     G --> H
@@ -243,17 +249,19 @@ flowchart TD
 
 | Agent | 用途 | 说明 | 默认可用 Skills |
 | --- | --- | --- | --- |
-| `orchestrator` | 默认入口 | 识别意图、路由任务、协调结果 | `using-superpowers` |
+| `router` | 默认入口 | 轻量路由、升级判断、单域分流 | `using-superpowers` |
+| `supervisor` | 复杂任务协调 | 多域编排、并行调度、结果整合 | `using-superpowers` |
 | `general` | 通用问答 | 文档阅读、代码解释、Markdown 整理 | `file_reader`、`code_explainer`、`obsidian-markdown`、`using-superpowers` |
 | `dba` | 数据库分析 | MySQL SQL 分析、RDS 巡检、报告摘要 | `mysql-sql-analyzer`、`volcengine-rds-health-analyzer`、`volcengine-rds-report-summarizer`、`using-superpowers` |
 | `ops` | 运维诊断 | 远程运维、Docker 排查、Kubernetes 诊断 | `remote-ops`、`docker`、`kubernetes`、`using-superpowers` |
 
 ### 推荐使用路径
 
-- 新对话默认从 `orchestrator` 开始。
+- 新对话默认从 `router` 开始。
 - 明确知道任务属于数据库或运维领域时，可以直接切到 `dba` 或 `ops`。
 - `general` 更适合通用问答、文档处理和代码解释。
-- 会话一旦创建，会固定绑定 `agent_id`；新开会话才会重新回到默认入口 `orchestrator`。
+- `supervisor` 主要用于多域、复杂、异常升级任务，不作为普通用户默认入口。
+- 会话一旦创建，会固定绑定 `agent_id`；新开会话才会重新回到默认入口 `router`。
 
 ### 当前前端工作台包含的面板
 
@@ -284,7 +292,7 @@ flowchart LR
 
     subgraph Runtime[Agent Runtime]
         E[AgentManager]
-        F[orchestrator / general / dba / ops]
+        F[router / supervisor / general / dba / ops]
     end
 
     subgraph Extensions[Extensions]
@@ -316,7 +324,7 @@ flowchart LR
 
 - Agent 定义位于 [backend/agent_profiles.py](backend/agent_profiles.py)。
 - 运行时由 [backend/agent_manager.py](backend/agent_manager.py) 负责初始化、缓存和按需加载。
-- 默认 Agent 是 `orchestrator`，配置来源于 `DEFAULT_AGENT_ID = "orchestrator"`。
+- 默认 Agent 是 `router`，配置来源于 `DEFAULT_AGENT_ID = "router"`。
 
 ### 2. 会话与消息流
 
@@ -390,7 +398,7 @@ ops-skills-agent-demo/
 │   ├── services/                # 会话、任务、提醒、MCP、记忆等服务
 │   ├── models/                  # ORM 模型
 │   ├── skills/                  # Markdown Skills 仓库
-│   ├── prompts/                 # base/general/dba/ops/orchestrator 提示词
+│   ├── prompts/                 # base/router/supervisor/general/dba/ops 提示词
 │   ├── db/                      # SQLAlchemy 会话与基类
 │   └── tests/                   # 后端测试
 ├── frontend/

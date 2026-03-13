@@ -36,7 +36,7 @@ describe('createConversationDomain', () => {
     vi.restoreAllMocks()
   })
 
-  test('resets a new chat to orchestrator instead of reusing the previous conversation agent', () => {
+  test('resets a new chat to router instead of reusing the previous conversation agent', () => {
     const messages: Array<Record<string, unknown>> = [
       {
         id: 'msg-1',
@@ -59,8 +59,8 @@ describe('createConversationDomain', () => {
     const draftAgentId = ref('dba')
     const agents = ref<AgentInfo[]>([
       {
-        id: 'orchestrator',
-        label: 'Orchestrator',
+        id: 'router',
+        label: 'Router',
         description: '',
         capabilities: [],
         is_default: true,
@@ -98,15 +98,15 @@ describe('createConversationDomain', () => {
     domain.createConversation()
 
     expect(currentConversationId.value).toBeNull()
-    expect(draftAgentId.value).toBe('orchestrator')
+    expect(draftAgentId.value).toBe('router')
     expect(messages).toEqual([])
     expect(isLoading.value).toBe(false)
-    expect(fetchSkills).toHaveBeenCalledWith('orchestrator')
+    expect(fetchSkills).toHaveBeenCalledWith('router')
     expect(wsState.current.send).toHaveBeenCalledWith(
       JSON.stringify({
         type: 'init',
         conversation_id: null,
-        agent_id: 'orchestrator',
+        agent_id: 'router',
       }),
     )
   })

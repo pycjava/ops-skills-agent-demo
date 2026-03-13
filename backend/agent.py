@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 from langchain_core.messages import HumanMessage
 
 from agent_manager import AgentManager
+from agent_profiles import canonicalize_agent_id
 from config import MAX_TURNS
 from services.agent_event_identity import resolve_event_agent_id
 from utils.logger import logger
@@ -34,8 +35,8 @@ MEMORY_MATCH_LIMIT = 3
 _manager = AgentManager()
 
 
-def list_agent_profiles():
-    return _manager.list_profiles()
+def list_agent_profiles(*, include_legacy: bool = True):
+    return _manager.list_profiles(include_legacy=include_legacy)
 
 
 def resolve_default_agent() -> str:
@@ -285,7 +286,7 @@ async def run_agent(
     agent_id: str | None = None,
 ):
     """使用 deepagents (LangGraph) 运行指定 Agent，并处理流式事件。"""
-    resolved_agent_id = agent_id or resolve_default_agent()
+    resolved_agent_id = canonicalize_agent_id(agent_id)
     runtime = await get_runtime(resolved_agent_id)
     memory_context = await _build_memory_context(user_message, resolved_agent_id)
     attachment_context = await _build_attachment_context(conv_id)

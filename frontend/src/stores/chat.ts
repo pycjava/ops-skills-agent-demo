@@ -101,7 +101,11 @@ export const useChatStore = defineStore('chat', () => {
   )
 
   const activeAgentId = computed(
-    () => currentConversation.value?.agent_id || draftAgentId.value || CHAT_ENTRY_AGENT_ID,
+    () =>
+      resolveAgentId(
+        currentConversation.value?.agent_id || draftAgentId.value || CHAT_ENTRY_AGENT_ID,
+        agents.value,
+      ),
   )
 
   const activeAgent = computed(

@@ -1,5 +1,5 @@
 import type { ComputedRef, Ref } from 'vue'
-import { CHAT_ENTRY_AGENT_ID, apiFetch, readErrorMessage } from './helpers'
+import { CHAT_ENTRY_AGENT_ID, apiFetch, normalizeAgentId, readErrorMessage } from './helpers'
 import type { AgentInfo, ConversationAttachment, ConversationItem } from './types'
 
 interface AttachmentDomainDeps {
@@ -144,18 +144,20 @@ export function createAttachmentDomain({
       const { conversation, attachment } = payload
       const needsRebind = previousConversationId !== conversation.id
 
+      const resolvedAgentId = normalizeAgentId(conversation.agent_id) || draftAgentId.value
+
       currentConversationId.value = conversation.id
-      draftAgentId.value = conversation.agent_id || draftAgentId.value
-      upsertConversation(conversations, conversation)
+      draftAgentId.value = resolvedAgentId || draftAgentId.value
+      upsertConversation(conversations, { ...conversation, agent_id: resolvedAgentId })
       conversationAttachments.value = needsRebind
         ? [attachment]
         : upsertAttachment(conversationAttachments.value, attachment)
 
       await fetchConversations()
-      await fetchSkills(conversation.agent_id)
+      await fetchSkills(resolvedAgentId)
 
       if (needsRebind) {
-        sendConversationInit(wsState, conversation.id, conversation.agent_id)
+        sendConversationInit(wsState, conversation.id, resolvedAgentId)
       }
 
       return true

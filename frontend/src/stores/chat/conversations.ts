@@ -4,6 +4,7 @@ import {
   apiFetch,
   CHAT_ENTRY_AGENT_ID,
   findRecentToolInput,
+  normalizeAgentId,
   normalizeAttachmentSnapshots,
   readErrorMessage,
   resolveConversationAgentId,
@@ -55,7 +56,7 @@ function pushConversationHistoryMessage(
     role: message.role as 'user' | 'assistant' | 'system',
     content: message.role === 'user' ? stripSystemHint(message.content) : message.content,
     type: message.type as 'text' | 'tool_call' | 'tool_result' | 'error',
-    agentId: message.agent_id || undefined,
+    agentId: normalizeAgentId(message.agent_id),
     toolName: message.tool_name || undefined,
     toolInput:
       message.tool_input ||
@@ -86,7 +87,11 @@ export function createConversationDomain({
         ? `${backendUrl}/api/conversations?q=${encodeURIComponent(query.trim())}`
         : `${backendUrl}/api/conversations`
       const res = await apiFetch(url)
-      conversations.value = await res.json()
+      const payload: ConversationItem[] = await res.json()
+      conversations.value = payload.map((conversation) => ({
+        ...conversation,
+        agent_id: normalizeAgentId(conversation.agent_id) || conversation.agent_id,
+      }))
     } catch (error) {
       console.warn('获取会话列表失败:', error)
     }
@@ -186,7 +191,7 @@ export function createConversationDomain({
         if (event.type === 'history_start') {
           currentConversationId.value = event.conversation_id
           messages.length = 0
-          nextAgentId = event.agent_id || nextAgentId
+          nextAgentId = normalizeAgentId(event.agent_id) || nextAgentId
           draftAgentId.value = nextAgentId
           await fetchSkills(nextAgentId)
           sendConversationInit(wsState, event.conversation_id, nextAgentId)

@@ -51,7 +51,7 @@ def build_test_app(
     if include_chat_router:
         assert monkeypatch is not None
         stub_agent = types.ModuleType("agent")
-        stub_agent.resolve_default_agent = lambda: "orchestrator"
+        stub_agent.resolve_default_agent = lambda: "router"
 
         async def _run_agent(*args, **kwargs):
             return None

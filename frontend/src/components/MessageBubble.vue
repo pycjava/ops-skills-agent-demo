@@ -178,9 +178,9 @@ const messageAgentLabel = computed(() => {
   if (
     props.message.type === 'tool_call' &&
     props.message.toolName === 'task' &&
-    typeof props.message.toolInput?.subagent_type === 'string'
+    typeof props.message.toolInput?.source_agent_id === 'string'
   ) {
-    return resolveAgentLabel(props.message.toolInput.subagent_type) || '智能编排助手'
+    return resolveAgentLabel(props.message.toolInput.source_agent_id) || '智能编排助手'
   }
 
   return resolveAgentLabel(props.message.agentId) || '智能编排助手'

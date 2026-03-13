@@ -35,6 +35,9 @@ router = APIRouter(prefix="/ws", tags=["websocket"])
 
 
 SUBAGENT_LABELS = {
+    "router": "智能编排助手",
+    "supervisor": "复杂任务协调器",
+    "general": "通用助手",
     "dba": "数据库助手",
     "ops": "运维助手",
     "general-purpose": "通用助手",
@@ -116,12 +119,15 @@ async def websocket_chat(ws: WebSocket):
             if tool_name == "task":
                 subagent_type = tool_input.get("subagent_type", "unknown") if tool_input else "unknown"
                 subagent_label = SUBAGENT_LABELS.get(subagent_type, subagent_type)
+                source_agent_label = SUBAGENT_LABELS.get(event_agent_id, event_agent_id)
                 await ws.send_text(
                     json.dumps(
                         {
                             "type": "routing",
                             "subagent_type": subagent_type,
                             "subagent_label": subagent_label,
+                            "source_agent_id": event_agent_id,
+                            "source_agent_label": source_agent_label,
                             "agent_id": event_agent_id,
                         },
                         ensure_ascii=False,

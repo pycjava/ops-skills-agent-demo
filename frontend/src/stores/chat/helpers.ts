@@ -6,7 +6,21 @@ import type {
   ConversationItem,
 } from './types'
 
-export const CHAT_ENTRY_AGENT_ID = 'orchestrator'
+export const CHAT_ENTRY_AGENT_ID = 'router'
+
+const AGENT_ID_ALIASES: Record<string, string> = {
+  orchestrator: 'router',
+  'general-purpose': 'general',
+}
+
+export function normalizeAgentId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+
+  const normalized = value.trim()
+  if (!normalized) return undefined
+
+  return AGENT_ID_ALIASES[normalized] || normalized
+}
 
 export async function readErrorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -44,7 +58,7 @@ export function getDefaultAgentId(agents: AgentInfo[]): string {
 }
 
 export function resolveAgentId(agentId: string | null | undefined, agents: AgentInfo[]): string {
-  const candidate = typeof agentId === 'string' ? agentId.trim() : ''
+  const candidate = normalizeAgentId(agentId) || ''
   if (!candidate) {
     return getDefaultAgentId(agents)
   }

@@ -59,8 +59,8 @@ class AgentManager:
     def resolve_default_agent(self) -> str:
         return DEFAULT_AGENT_ID
 
-    def list_profiles(self) -> list[AgentProfile]:
-        return list_agent_profiles()
+    def list_profiles(self, *, include_legacy: bool = True) -> list[AgentProfile]:
+        return list_agent_profiles(include_legacy=include_legacy)
 
     def get_profile(self, agent_id: str) -> AgentProfile:
         return get_agent_profile(agent_id)
@@ -138,14 +138,15 @@ class AgentManager:
             return runtime
 
     async def _build_runtime(self, profile: AgentProfile):
-        if self._llm is None or self._sqlite_store is None or self._sqlite_saver is None:
+        if (
+            self._llm is None
+            or self._sqlite_store is None
+            or self._sqlite_saver is None
+        ):
             raise RuntimeError("AgentManager is not initialized")
 
         mcp_tools = await self._load_mcp_tools(profile.id)
-
-        subagents = None
-        if profile.execution_mode == "orchestrator":
-            subagents = self._build_subagents_for_orchestrator(profile)
+        subagents = self._build_subagents(profile) if profile.subagent_configs else None
 
         return create_deep_agent(
             model=self._llm,
@@ -159,29 +160,55 @@ class AgentManager:
             subagents=subagents,
         )
 
-    def _build_subagents_for_orchestrator(
-        self, orchestrator_profile: AgentProfile
+    def _build_subagents(
+        self,
+        profile: AgentProfile,
+        *,
+        lineage: tuple[str, ...] = (),
     ) -> list[SubAgent]:
-        """为 Orchestrator Agent 构建专业子 Agent 列表"""
+        if self._llm is None:
+            raise RuntimeError("AgentManager is not initialized")
+
         subagents: list[SubAgent] = []
 
-        for subagent_id in orchestrator_profile.subagent_configs:
+        for subagent_id in profile.subagent_configs:
             if subagent_id not in AGENT_PROFILES:
                 logger.warning(f"Unknown subagent config: {subagent_id}")
                 continue
 
-            profile = AGENT_PROFILES[subagent_id]
+            if subagent_id in lineage:
+                logger.warning(
+                    "Skipping recursive subagent config: "
+                    f"{' -> '.join((*lineage, subagent_id))}"
+                )
+                continue
+
+            subagent_profile = AGENT_PROFILES[subagent_id]
+            nested_subagents = (
+                self._build_subagents(
+                    subagent_profile,
+                    lineage=(*lineage, profile.id),
+                )
+                if subagent_profile.subagent_configs
+                else None
+            )
 
             subagent: SubAgent = {
-                "name": profile.id,
-                "description": f"{profile.label}：{profile.description}",
-                "system_prompt": self._compose_system_prompt(profile),
+                "name": subagent_profile.id,
+                "description": f"{subagent_profile.label}：{subagent_profile.description}",
+                "system_prompt": self._compose_system_prompt(subagent_profile),
                 "model": self._llm,
                 "tools": [],
-                "skills": resolve_skill_paths(profile.skills),
+                "skills": resolve_skill_paths(subagent_profile.skills),
             }
+            if nested_subagents:
+                subagent["subagents"] = nested_subagents
+
             subagents.append(subagent)
-            logger.info(f"Registered subagent: {profile.id} for orchestrator")
+            logger.info(
+                "Registered subagent: "
+                f"{subagent_profile.id} for {profile.id}"
+            )
 
         return subagents
 
@@ -237,32 +264,47 @@ class AgentManager:
         return "\n\n".join(section for section in sections if section)
 
     def _build_runtime_hint(self, profile: AgentProfile) -> str:
-        allowed_handoffs = (
-            "、".join(profile.allowed_handoffs) if profile.allowed_handoffs else "暂无"
-        )
+        allowed_handoffs = "、".join(profile.allowed_handoffs) if profile.allowed_handoffs else "暂无"
         capabilities = "、".join(profile.capabilities)
         memory_root = f"/memories/agents/{profile.id}/"
 
-        hint = (
-            "## 当前 Agent 运行时\n"
-            f"- 你的 agent_id 是 `{profile.id}`，显示名称是“{profile.label}”。\n"
-            f"- 你的执行模式是：{profile.execution_mode}。\n"
-            f"- 你的能力边界是：{capabilities}。\n"
-            f"- 你的风险等级是：{profile.risk_level}。\n"
-        )
+        lines = [
+            "## 当前 Agent 运行时",
+            f"- 你的 agent_id 是 `{profile.id}`，显示名称是“{profile.label}”。",
+            f"- 你的执行模式是：{profile.execution_mode}。",
+            f"- 你的能力边界是：{capabilities}。",
+            f"- 你的风险等级是：{profile.risk_level}。",
+        ]
 
-        if profile.execution_mode == "orchestrator":
-            hint += (
-                f"- 你可以调用的专业子 Agent：{allowed_handoffs}。\n"
-                "- 使用 task 工具调用子 Agent，支持并行调用多个。\n"
+        if profile.subagent_configs:
+            lines.append(f"- 你可调度的子 Agent：{allowed_handoffs}。")
+
+        if profile.execution_mode == "router":
+            lines.extend(
+                [
+                    "- 你是默认入口，只做一次路由决策：直达叶子 Agent，或升级给 supervisor。",
+                    "- 命中复杂、多域、冲突、异常升级场景时，立即使用 task 转交 supervisor。",
+                    "- 不要自行展开复杂并行诊断或最终整合结论。",
+                ]
             )
+        elif profile.execution_mode == "supervisor":
+            lines.extend(
+                [
+                    "- 你只处理 router 升级上来的复杂任务，不要把任务回交 router。",
+                    "- 你可以串行或并行调用多个叶子 Agent，并负责统一整合结论、证据和建议。",
+                ]
+            )
+        elif profile.execution_mode == "orchestrator":
+            lines.append("- 你是兼容别名，仅用于旧入口兼容；行为边界按 router 处理。")
 
-        hint += (
-            f"- 需要写入新的长期记忆时，优先写入 `{memory_root}`。\n"
-            "- 你只能使用当前 runtime 已注入的 Skills 和工具。\n"
+        lines.extend(
+            [
+                f"- 需要写入新的长期记忆时，优先写入 `{memory_root}`。",
+                "- 你只能使用当前 runtime 已注入的 Skills 和工具。",
+            ]
         )
 
-        return hint
+        return "\n".join(lines)
 
     def _make_backend(self, runtime):
         return CompositeBackend(

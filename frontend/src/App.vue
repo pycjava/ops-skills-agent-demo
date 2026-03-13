@@ -52,7 +52,10 @@ const pendingTaskCreation = ref<{
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
 const agentLabels = computed(() =>
-  Object.fromEntries(chatStore.agents.map((agent) => [agent.id, agent.label])),
+  Object.fromEntries([
+    ...chatStore.agents.map((agent) => [agent.id, agent.label]),
+    ['orchestrator', '智能编排助手'],
+  ]),
 )
 const activeAgentLabel = computed(
   () =>
