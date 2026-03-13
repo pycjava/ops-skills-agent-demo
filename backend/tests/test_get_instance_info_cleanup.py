@@ -226,6 +226,7 @@ def test_build_node_summaries_include_median_and_weighted(monkeypatch):
     assert node_summaries[0]["evidence"]["coverage"]["expected_point_count"] == 5
     assert node_summaries[0]["evidence"]["spikes"]["sliding_mad"]["window_size"] == 5
     assert node_summaries[0]["evidence"]["spikes"]["sliding_mad"]["spike_count"] == 1
+    assert node_summaries[0]["evidence"]["spikes"]["risk_tier"] == "low"
     assert node_summaries[0]["all_zero"] is False
 
     assert node_summaries[1]["node"] == "node-b"
@@ -234,6 +235,7 @@ def test_build_node_summaries_include_median_and_weighted(monkeypatch):
     assert node_summaries[1]["evidence"]["distribution"]["p95"] == 50.0
     assert node_summaries[1]["evidence"]["trend"]["direction"] == "up"
     assert node_summaries[1]["evidence"]["spikes"]["sliding_mad"]["spike_count"] == 0
+    assert node_summaries[1]["evidence"]["spikes"]["risk_tier"] == "none"
     assert node_summaries[1]["all_zero"] is False
 
 
@@ -281,9 +283,11 @@ def test_get_metric_data_summary_includes_median_and_weighted(monkeypatch):
     assert result["evidence"]["spikes"]["sliding_mad"]["spike_count"] == 1
     assert result["evidence"]["spikes"]["sliding_mad"]["top_spikes"][0]["node"] == "node-a"
     assert result["evidence"]["spikes"]["sliding_mad"]["top_spikes"][0]["time"] == "2026-03-10 00:15"
+    assert result["evidence"]["spikes"]["risk_tier"] == "high"
     assert result["node_summaries"][0]["median"] == build_expected_summary([10.0, 10.0, 10.0, 100.0, 10.0])["median"]
     assert result["node_summaries"][0]["weighted"] == build_expected_summary([10.0, 10.0, 10.0, 100.0, 10.0])["weighted"]
     assert result["node_summaries"][0]["evidence"]["spikes"]["sliding_mad"]["spike_count"] == 1
+    assert result["node_summaries"][0]["evidence"]["spikes"]["risk_tier"] == "high"
 
 
 def test_build_metric_evidence_includes_distribution_coverage_and_trend(
@@ -316,6 +320,66 @@ def test_build_metric_evidence_includes_distribution_coverage_and_trend(
     assert evidence["variability"]["cv"] > 0.0
     assert evidence["trend"]["direction"] == "up"
     assert evidence["spikes"]["sliding_mad"]["spike_count"] == 0
+    assert evidence["spikes"]["risk_tier"] == "none"
+
+
+def test_build_metric_evidence_marks_low_absolute_cpu_spike_as_low_risk(monkeypatch):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 20, 0)
+    data_points = build_data_points([10.0, 10.0, 10.0, 65.0, 10.0], start_time)
+
+    evidence = module.build_metric_evidence(
+        data_points,
+        metric_key="cpu",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    assert evidence["spikes"]["sliding_mad"]["spike_count"] == 1
+    assert evidence["spikes"]["risk_tier"] == "low"
+    assert "absolute" in evidence["spikes"]["risk_reason"]
+
+
+def test_build_metric_evidence_marks_high_absolute_cpu_spike_as_high_risk(monkeypatch):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 20, 0)
+    data_points = build_data_points([10.0, 10.0, 10.0, 70.0, 10.0], start_time)
+
+    evidence = module.build_metric_evidence(
+        data_points,
+        metric_key="cpu",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    assert evidence["spikes"]["sliding_mad"]["spike_count"] == 1
+    assert evidence["spikes"]["risk_tier"] == "high"
+    assert "70" in evidence["spikes"]["risk_reason"]
+
+
+def test_build_metric_evidence_keeps_qps_spikes_as_low_risk_without_capacity_model(
+    monkeypatch,
+):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 20, 0)
+    data_points = build_data_points([10.0, 10.0, 10.0, 1000.0, 10.0], start_time)
+
+    evidence = module.build_metric_evidence(
+        data_points,
+        metric_key="qps",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    assert evidence["spikes"]["sliding_mad"]["spike_count"] == 1
+    assert evidence["spikes"]["risk_tier"] == "low"
+    assert "capacity" in evidence["spikes"]["risk_reason"]
 
 
 def test_main_cleans_expired_metric_files_before_writing_output(

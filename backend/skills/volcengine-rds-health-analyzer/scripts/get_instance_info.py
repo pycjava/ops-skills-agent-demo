@@ -33,6 +33,8 @@ from volcenginesdkcore.rest import ApiException
 
 
 DEFAULT_OUTPUT_DIR = r"D:\Study\python\agent\maintenance-agent\metric_data"
+PERCENT_BASED_SPIKE_METRICS = {"cpu", "memory", "disk_util"}
+PERCENT_BASED_HIGH_RISK_THRESHOLD = 70.0
 
 
 def load_runtime_env() -> None:
@@ -351,6 +353,47 @@ def detect_sliding_mad_spikes(
     }
 
 
+def classify_spike_risk(
+    spike_evidence: Dict[str, Any],
+    *,
+    metric_key: Optional[str] = None,
+    absolute_max: Optional[float] = None,
+) -> Dict[str, str]:
+    if not spike_evidence.get("has_spike"):
+        return {
+            "risk_tier": "none",
+            "risk_reason": "no statistical spikes detected",
+        }
+
+    if metric_key in PERCENT_BASED_SPIKE_METRICS:
+        if (
+            absolute_max is not None
+            and absolute_max >= PERCENT_BASED_HIGH_RISK_THRESHOLD
+        ):
+            return {
+                "risk_tier": "high",
+                "risk_reason": (
+                    f"statistical spike reaches {round(absolute_max, 4)} and meets "
+                    f"the {PERCENT_BASED_HIGH_RISK_THRESHOLD:.0f}% absolute threshold"
+                ),
+            }
+        return {
+            "risk_tier": "low",
+            "risk_reason": (
+                "statistical spike detected, but absolute utilization stays below "
+                f"the {PERCENT_BASED_HIGH_RISK_THRESHOLD:.0f}% threshold"
+            ),
+        }
+
+    return {
+        "risk_tier": "low",
+        "risk_reason": (
+            "statistical spike detected, but this metric has no capacity model "
+            "for high-risk spike promotion"
+        ),
+    }
+
+
 def build_value_summary(
     values: List[float], *, period: str | None = "5m"
 ) -> Dict[str, Any]:
@@ -381,6 +424,7 @@ def build_value_summary(
 def build_metric_evidence(
     data_points: List[Dict[str, Any]],
     *,
+    metric_key: Optional[str] = None,
     period: str = "5m",
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
@@ -401,6 +445,15 @@ def build_metric_evidence(
                 derived_end_time = datetime.fromtimestamp(max(timestamps))
 
     if not values:
+        spike_evidence = detect_sliding_mad_spikes(
+            [],
+            window_size=window_size,
+        )
+        spike_risk = classify_spike_risk(
+            spike_evidence,
+            metric_key=metric_key,
+            absolute_max=None,
+        )
         return {
             "source_point_count": 0,
             "source_period": period,
@@ -428,18 +481,22 @@ def build_metric_evidence(
                 "stddev": 0.0,
                 "cv": 0.0,
             },
-            "spikes": {
-                "sliding_mad": detect_sliding_mad_spikes(
-                    [],
-                    window_size=window_size,
-                )
-            },
+            "spikes": {"sliding_mad": spike_evidence, **spike_risk},
             "trend": {"direction": "flat", "slope": 0.0},
         }
 
     avg = statistics.mean(values)
     stddev = statistics.pstdev(values) if len(values) > 1 else 0.0
     cv = (stddev / avg) if abs(avg) > 1e-9 else 0.0
+    distribution = {
+        "min": round(min(values), 4),
+        "max": round(max(values), 4),
+        "range": round(max(values) - min(values), 4),
+        "avg": round(avg, 4),
+        "median": round(statistics.median(values), 4),
+        "p95": percentile_nearest_rank(values, 95),
+        "p99": percentile_nearest_rank(values, 99),
+    }
     grouped_points: Dict[str, List[Dict[str, Any]]] = {}
     for point in ordered_points:
         node_key = point.get("node") or "__single__"
@@ -491,6 +548,12 @@ def build_metric_evidence(
             "top_spikes": merged_top_spikes,
         }
 
+    spike_risk = classify_spike_risk(
+        spike_evidence,
+        metric_key=metric_key,
+        absolute_max=distribution["max"],
+    )
+
     return {
         "source_point_count": len(values),
         "source_period": period,
@@ -505,20 +568,12 @@ def build_metric_evidence(
             actual_point_count=len(values),
             series_count=series_count,
         ),
-        "distribution": {
-            "min": round(min(values), 4),
-            "max": round(max(values), 4),
-            "range": round(max(values) - min(values), 4),
-            "avg": round(avg, 4),
-            "median": round(statistics.median(values), 4),
-            "p95": percentile_nearest_rank(values, 95),
-            "p99": percentile_nearest_rank(values, 99),
-        },
+        "distribution": distribution,
         "variability": {
             "stddev": round(stddev, 4),
             "cv": round(cv, 4),
         },
-        "spikes": {"sliding_mad": spike_evidence},
+        "spikes": {"sliding_mad": spike_evidence, **spike_risk},
         "trend": compute_trend(values),
     }
 
@@ -840,6 +895,7 @@ class MySQLInstanceInfoCollector:
         period: str = "5m",
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
+        metric_key: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         为每个节点生成轻量统计摘要，便于多节点场景下优先比较节点差异。
@@ -864,6 +920,7 @@ class MySQLInstanceInfoCollector:
             summary = build_value_summary(values, period=period)
             evidence = build_metric_evidence(
                 node.get("data_points", []),
+                metric_key=metric_key,
                 period=period,
                 start_time=start_time,
                 end_time=end_time,
@@ -940,6 +997,7 @@ class MySQLInstanceInfoCollector:
             period=period,
             start_time=start_time,
             end_time=end_time,
+            metric_key=metric_key,
         )
 
         result = {
@@ -969,6 +1027,7 @@ class MySQLInstanceInfoCollector:
         result["summary"] = build_value_summary(all_values, period=period)
         result["evidence"] = build_metric_evidence(
             all_points,
+            metric_key=metric_key,
             period=period,
             start_time=start_time,
             end_time=end_time,

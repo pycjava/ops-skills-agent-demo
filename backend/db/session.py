@@ -39,6 +39,11 @@ def _has_column(sync_conn, table_name: str, column_name: str) -> bool:
     return any(column["name"] == column_name for column in columns)
 
 
+def _has_table(sync_conn, table_name: str) -> bool:
+    inspector = inspect(sync_conn)
+    return inspector.has_table(table_name)
+
+
 def _bootstrap_sqlite_compat_columns(sync_conn):
     if not _has_column(sync_conn, "conversations", "agent_id"):
         sync_conn.execute(
@@ -93,14 +98,17 @@ def _bootstrap_sqlite_compat_columns(sync_conn):
         )
     )
 
-    if not _has_column(sync_conn, "mcp_servers", "command"):
-        sync_conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN command TEXT"))
+    if _has_table(sync_conn, "mcp_servers"):
+        if not _has_column(sync_conn, "mcp_servers", "command"):
+            sync_conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN command TEXT"))
 
-    if not _has_column(sync_conn, "mcp_servers", "args"):
-        sync_conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN args JSON DEFAULT '[]'"))
+        if not _has_column(sync_conn, "mcp_servers", "args"):
+            sync_conn.execute(
+                text("ALTER TABLE mcp_servers ADD COLUMN args JSON DEFAULT '[]'")
+            )
 
-    if not _has_column(sync_conn, "mcp_servers", "env"):
-        sync_conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN env JSON"))
+        if not _has_column(sync_conn, "mcp_servers", "env"):
+            sync_conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN env JSON"))
 
 
 async def init_db():
