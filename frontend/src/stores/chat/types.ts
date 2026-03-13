@@ -44,6 +44,29 @@ export interface AgentInfo {
   allowed_handoffs?: string[]
 }
 
+export interface AuthUser {
+  id: string
+  subject: string
+  email: string | null
+  display_name: string | null
+  roles: string[]
+  permissions: string[]
+}
+
+export interface AuthStatusResponse {
+  auth_enabled: boolean
+  authenticated: boolean
+  oidc_login_enabled: boolean
+  password_login_enabled: boolean
+  login_methods: string[]
+  user: AuthUser | null
+  permissions: string[]
+  available_permissions: string[]
+  login_url: string
+  logout_url: string
+  redirect_to?: string
+}
+
 export interface ConversationItem {
   id: string
   title: string

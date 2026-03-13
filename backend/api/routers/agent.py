@@ -4,10 +4,11 @@ POST /api/agent/chat
 程序发送问题，等待 Agent 完整执行后返回最终结果。
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from agent import run_agent
+from auth.dependencies import require_permission
 from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
 from services.agent_event_state import AgentEventState
@@ -53,7 +54,11 @@ class ChatResponse(BaseModel):
     )
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    dependencies=[Depends(require_permission("conversations:write"))],
+)
 async def agent_chat(req: ChatRequest):
     """
     同步调用 Agent，等待完整执行后返回最终结果。

@@ -72,18 +72,6 @@ function createTemplate(agentId: string): string {
   return JSON.stringify(payload, null, 2)
 }
 
-function createStdioTemplate(agentId: string): string {
-  const payload: EditableMcpConfig = {
-    name: 'my-mcp-server',
-    transport: 'stdio',
-    command: 'uvx',
-    args: ['my-mcp-package'],
-    env: { API_KEY: 'your-api-key' },
-    agent_ids: [agentId],
-  }
-  return JSON.stringify(payload, null, 2)
-}
-
 function serializeServer(server: McpServer): string {
   const payload: EditableMcpConfig = {
     name: server.name,

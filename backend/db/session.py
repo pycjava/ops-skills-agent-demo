@@ -106,10 +106,15 @@ def _bootstrap_sqlite_compat_columns(sync_conn):
 async def init_db():
     """Create tables and backfill compatibility columns."""
     from models import Base
+    from auth.service import ensure_authorization_seed_data
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_bootstrap_sqlite_compat_columns)
+
+    async with AsyncSessionLocal() as session:
+        await ensure_authorization_seed_data(session)
+        await session.commit()
     logger.info("Database tables initialized")
 
 

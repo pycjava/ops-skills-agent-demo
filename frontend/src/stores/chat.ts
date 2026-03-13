@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref, watch } from 'vue'
 import { createAttachmentDomain } from './chat/attachments'
+import { createAuthDomain } from './chat/auth'
 import { createConversationDomain } from './chat/conversations'
 import {
   CHAT_ENTRY_AGENT_ID,
+  apiFetch,
   getDefaultAgentId,
   resolveAgentId,
 } from './chat/helpers'
@@ -15,6 +17,7 @@ import { createTaskDomain } from './chat/tasks'
 import { isMysqlInspectionIntent } from '../utils/mysqlInspection'
 import type {
   AgentInfo,
+  AuthUser,
   ChatMessage,
   CloudContextResolution,
   ConversationAttachment,
@@ -69,6 +72,18 @@ export const useChatStore = defineStore('chat', () => {
   const taskNotificationToast = ref<TaskNotification | null>(null)
   const taskNotificationError = ref<string | null>(null)
   const isTaskNotificationLoading = ref(false)
+  const authEnabled = ref(false)
+  const isAuthenticated = ref(false)
+  const authUser = ref<AuthUser | null>(null)
+  const authPermissions = ref<string[]>([])
+  const availablePermissions = ref<string[]>([])
+  const loginUrl = ref('/api/auth/login')
+  const logoutUrl = ref('/api/auth/logout')
+  const oidcLoginEnabled = ref(false)
+  const passwordLoginEnabled = ref(false)
+  const loginMethods = ref<string[]>([])
+  const authError = ref<string | null>(null)
+  const isAuthLoading = ref(false)
 
   const isMemoryLoading = computed(
     () =>
@@ -121,10 +136,25 @@ export const useChatStore = defineStore('chat', () => {
     mcpError,
     testingServerIds,
   })
+  const authDomain = createAuthDomain({
+    backendUrl,
+    authEnabled,
+    isAuthenticated,
+    authUser,
+    authPermissions,
+    availablePermissions,
+    loginUrl,
+    logoutUrl,
+    oidcLoginEnabled,
+    passwordLoginEnabled,
+    loginMethods,
+    authError,
+    isAuthLoading,
+  })
 
   async function fetchAgents() {
     try {
-      const res = await fetch(`${backendUrl}/api/agents`)
+      const res = await apiFetch(`${backendUrl}/api/agents`)
       agents.value = await res.json()
       draftAgentId.value = resolveAgentId(
         draftAgentId.value || getDefaultAgentId(agents.value),
@@ -138,7 +168,7 @@ export const useChatStore = defineStore('chat', () => {
   async function fetchSkills(agentId?: string) {
     try {
       const targetAgentId = resolveAgentId(agentId || activeAgentId.value, agents.value)
-      const res = await fetch(
+      const res = await apiFetch(
         `${backendUrl}/api/skills?agent_id=${encodeURIComponent(targetAgentId)}`,
       )
       skills.value = await res.json()
@@ -151,7 +181,7 @@ export const useChatStore = defineStore('chat', () => {
     message: string,
     credentialRef?: string,
   ): Promise<CloudContextResolution> {
-    const res = await fetch(`${backendUrl}/api/cloud-credentials/resolve`, {
+    const res = await apiFetch(`${backendUrl}/api/cloud-credentials/resolve`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -295,11 +325,28 @@ export const useChatStore = defineStore('chat', () => {
     deletingAttachmentIds,
     isInspectionTaskLoading,
     isTaskNotificationLoading,
+    authEnabled,
+    isAuthenticated,
+    authUser,
+    authPermissions,
+    availablePermissions,
+    loginUrl,
+    logoutUrl,
+    oidcLoginEnabled,
+    passwordLoginEnabled,
+    loginMethods,
+    authError,
+    isAuthLoading,
     connect: socketDomain.connect,
     sendMessage: socketDomain.sendMessage,
     clearChat: socketDomain.clearChat,
     abortAgent: socketDomain.abortAgent,
     fetchAgents,
+    fetchAuthStatus: authDomain.fetchAuthStatus,
+    hasPermission: authDomain.hasPermission,
+    login: authDomain.login,
+    loginWithPassword: authDomain.loginWithPassword,
+    logout: authDomain.logout,
     fetchConversations: conversationDomain.fetchConversations,
     setDraftAgent,
     createConversation: conversationDomain.createConversation,

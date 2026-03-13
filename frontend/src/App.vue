@@ -120,6 +120,33 @@ const pendingSendOptions = computed(() =>
     ? { attachments: pendingAttachmentSnapshots.value }
     : undefined,
 )
+const showLoginGate = computed(() => chatStore.authEnabled && !chatStore.isAuthenticated)
+const canReadConversations = computed(() => chatStore.hasPermission('conversations:read'))
+const canWriteConversations = computed(() => chatStore.hasPermission('conversations:write'))
+const canDeleteConversations = computed(() => chatStore.hasPermission('conversations:delete'))
+const canManageAttachments = computed(() => chatStore.hasPermission('attachments:write'))
+const canReadTaskNotifications = computed(() => chatStore.hasPermission('task_notifications:read'))
+const canUpdateTaskNotifications = computed(() => chatStore.hasPermission('task_notifications:update'))
+const canReadTasks = computed(() => chatStore.hasPermission('inspection_tasks:read'))
+const canWriteTasks = computed(() => chatStore.hasPermission('inspection_tasks:write'))
+const canTriggerTasks = computed(() => chatStore.hasPermission('inspection_tasks:trigger'))
+const canDeleteTasks = computed(() => chatStore.hasPermission('inspection_tasks:delete'))
+const canReadSkills = computed(() => chatStore.hasPermission('agents:read'))
+const canReadMcp = computed(() => chatStore.hasPermission('mcp_servers:read'))
+const canReadMemories = computed(() => chatStore.hasPermission('memories:read'))
+const canOpenInspector = computed(
+  () => canReadSkills.value || canReadMcp.value || canReadMemories.value,
+)
+const composerDisabled = computed(
+  () => showLoginGate.value || !chatStore.isConnected || !canWriteConversations.value,
+)
+const uploadDisabled = computed(
+  () =>
+    composerDisabled.value ||
+    !canManageAttachments.value ||
+    chatStore.isAttachmentUploading ||
+    chatStore.isLoading,
+)
 
 const {
   inputText,
@@ -155,14 +182,18 @@ const {
   toggleTheme,
 } = useAppChrome({
   agents: computed(() => chatStore.agents),
+  authEnabled: computed(() => chatStore.authEnabled),
+  isAuthenticated: computed(() => chatStore.isAuthenticated),
   setDraftAgent: chatStore.setDraftAgent,
   connect: chatStore.connect,
+  fetchAuthStatus: chatStore.fetchAuthStatus,
   fetchAgents: chatStore.fetchAgents,
   fetchConversations: chatStore.fetchConversations,
   fetchTaskNotifications: chatStore.fetchTaskNotifications,
   fetchSkills: chatStore.fetchSkills,
   fetchMcpServers: chatStore.fetchMcpServers,
   fetchMemoryTree: chatStore.fetchMemoryTree,
+  hasPermission: chatStore.hasPermission,
   openMemoryDocument: chatStore.openMemoryDocument,
   resizeComposerInput,
 })
@@ -237,6 +268,7 @@ function appendTaskIntentAnalysisMessages(intentAnalysis?: InspectionTaskIntentA
 }
 
 async function refreshTaskDrawer() {
+  if (!canReadTasks.value) return
   await Promise.all([
     chatStore.fetchInspectionTasks(),
     chatStore.fetchInspectionTaskRuns(),
@@ -244,6 +276,7 @@ async function refreshTaskDrawer() {
 }
 
 async function openTaskDrawer(tab: 'tasks' | 'runs' | 'draft' = 'tasks') {
+  if (!canReadTasks.value) return
   closeInspector()
   showTaskDrawer.value = true
   taskDrawerTab.value = tab
@@ -258,6 +291,7 @@ async function openTaskDraftFromConversation(options?: {
   suggestedCron?: string | null
   notice?: string
 }) {
+  if (!canWriteTasks.value) return false
   if (!chatStore.currentConversationId) return false
 
   chatStore.inspectionTaskError = null
@@ -283,6 +317,7 @@ async function openTaskDraftFromConversation(options?: {
 }
 
 async function handleTaskDraftSave(draft: InspectionTaskDraft) {
+  if (!canWriteTasks.value) return
   isTaskDraftSaving.value = true
 
   try {
@@ -297,6 +332,7 @@ async function handleTaskDraftSave(draft: InspectionTaskDraft) {
 }
 
 async function handleTaskTrigger(taskId: string) {
+  if (!canTriggerTasks.value) return
   const run = await chatStore.triggerInspectionTask(taskId)
   if (!run) return
   taskDrawerTab.value = 'runs'
@@ -304,6 +340,7 @@ async function handleTaskTrigger(taskId: string) {
 }
 
 async function handleTaskToggle(taskId: string, enabled: boolean) {
+  if (!canWriteTasks.value) return
   const task = chatStore.inspectionTasks.find((candidate) => candidate.id === taskId)
   if (!task) return
 
@@ -314,12 +351,14 @@ async function handleTaskToggle(taskId: string, enabled: boolean) {
 }
 
 async function handleTaskDelete(taskId: string) {
+  if (!canDeleteTasks.value) return
   const deleted = await chatStore.deleteInspectionTask(taskId)
   if (!deleted) return
   await refreshTaskDrawer()
 }
 
 async function handleTaskConversationOpen(run: InspectionTaskRun) {
+  if (!canReadTasks.value) return
   if (!run.conversation_id) return
 
   await chatStore.streamInspectionTaskRunConversation(run.id, run.conversation_id)
@@ -327,14 +366,17 @@ async function handleTaskConversationOpen(run: InspectionTaskRun) {
 }
 
 async function handleTaskNotificationRead(notificationId: string) {
+  if (!canUpdateTaskNotifications.value) return
   await chatStore.markTaskNotificationRead(notificationId)
 }
 
 async function handleTaskNotificationReadAll() {
+  if (!canUpdateTaskNotifications.value) return
   await chatStore.markAllTaskNotificationsRead()
 }
 
 async function handleTaskNotificationConversationOpen(conversationId: string) {
+  if (!canReadTaskNotifications.value || !canReadConversations.value) return
   const notification = chatStore.taskNotifications.find(
     (item) => item.conversation_id === conversationId,
   )
@@ -347,6 +389,7 @@ async function handleTaskNotificationConversationOpen(conversationId: string) {
 }
 
 async function handleTaskNotificationDownload(notification: TaskNotification) {
+  if (!canReadTaskNotifications.value) return
   if (!notification.read_at) {
     await chatStore.markTaskNotificationRead(notification.id)
   }
@@ -358,11 +401,20 @@ async function handleTaskNotificationDownload(notification: TaskNotification) {
 }
 
 function handleOpenInspectorDrawer() {
+  const nextTab = canReadSkills.value
+    ? 'skills'
+    : canReadMcp.value
+      ? 'mcp'
+      : canReadMemories.value
+        ? 'memory'
+        : null
+  if (!nextTab) return
   closeTaskDrawer()
-  openInspector('skills')
+  openInspector(nextTab)
 }
 
 async function handleComposerSend(displayContent: string, sendContent?: string) {
+  if (!canWriteConversations.value) return false
   const normalizedDisplayContent = displayContent.trim()
   const normalizedSendContent = (sendContent || displayContent).trim()
 
@@ -474,7 +526,7 @@ async function handleComposerSend(displayContent: string, sendContent?: string) 
       return hasTaskKeyword
     })()
 
-    if (isTaskIntent) {
+    if (isTaskIntent && canWriteTasks.value) {
       // 将用户消息先加入消息列表（作为用户 bubble 展示）
       const now = Date.now()
       let baseId = `task-stream-${now}`
@@ -628,7 +680,7 @@ function confirmMysqlSelection(candidate: CloudContextCandidate) {
 }
 
 function triggerAttachmentSelect() {
-  if (!chatStore.isConnected || chatStore.isAttachmentUploading || chatStore.isLoading) {
+  if (uploadDisabled.value) {
     return
   }
 
@@ -644,6 +696,7 @@ function buildAttachmentLimitError(remainingSlots: number) {
 }
 
 async function handleAttachmentUpload(files: File[]) {
+  if (!canManageAttachments.value) return
   chatStore.attachmentError = null
   const remainingSlots =
     MAX_CONVERSATION_ATTACHMENTS - chatStore.conversationAttachments.length
@@ -668,10 +721,12 @@ async function handleAttachmentUpload(files: File[]) {
 }
 
 async function handleAttachmentDelete(attachmentId: string) {
+  if (!canManageAttachments.value) return
   await chatStore.deleteConversationAttachment(attachmentId)
 }
 
 async function handleConversationTitleSave(title: string) {
+  if (!canWriteConversations.value) return
   if (!chatStore.currentConversationId) return
 
   titleRenameError.value = ''
@@ -689,7 +744,7 @@ async function handleConversationTitleSave(title: string) {
 
 <template>
   <div class="app-shell">
-    <aside v-if="showSidebar" class="sidebar-frame">
+    <aside v-if="showSidebar && canReadConversations" class="sidebar-frame">
       <div class="sidebar-brand">
         <div class="brand-mark">C</div>
         <div class="brand-copy">
@@ -705,6 +760,8 @@ async function handleConversationTitleSave(title: string) {
         :conversations="chatStore.conversations"
         :current-id="chatStore.currentConversationId"
         :agent-labels="agentLabels"
+        :can-create="canWriteConversations"
+        :can-delete="canDeleteConversations"
         @select="chatStore.switchConversation"
         @create="chatStore.createConversation"
         @delete="chatStore.deleteConversation"
@@ -728,7 +785,7 @@ async function handleConversationTitleSave(title: string) {
         <div class="toolbar-right">
           <button
             class="icon-btn"
-            :disabled="chatStore.messages.length === 0"
+            :disabled="chatStore.messages.length === 0 || !canWriteConversations"
             title="清空当前对话"
             @click="chatStore.clearChat"
           >
@@ -742,6 +799,7 @@ async function handleConversationTitleSave(title: string) {
             {{ isDark ? '☀️' : '🌙' }}
           </button>
           <TaskNotificationCenter
+            v-if="canReadTaskNotifications"
             :notifications="chatStore.taskNotifications"
             :unread-count="chatStore.unreadTaskNotificationCount"
             :toast="chatStore.taskNotificationToast"
@@ -752,6 +810,7 @@ async function handleConversationTitleSave(title: string) {
             @dismiss-toast="chatStore.dismissTaskNotificationToast"
           />
           <button
+            v-if="canReadTasks"
             class="icon-btn"
             data-testid="open-task-drawer-btn"
             title="打开定时任务"
@@ -762,10 +821,45 @@ async function handleConversationTitleSave(title: string) {
           <button class="icon-btn" title="打开右侧面板" @click="handleOpenInspectorDrawer">
             ⚙
           </button>
+          <button
+            v-if="showLoginGate"
+            class="ui-pill-btn ui-pill-btn--primary"
+            type="button"
+            @click="chatStore.login()"
+          >
+            Sign In
+          </button>
+          <button
+            v-else-if="chatStore.authEnabled"
+            class="ui-pill-btn"
+            type="button"
+            @click="chatStore.logout()"
+          >
+            Sign Out
+          </button>
         </div>
       </div>
 
-      <section v-if="!hasMessages" class="empty-state">
+      <section v-if="showLoginGate" class="empty-state">
+        <div class="hero-panel">
+          <div class="auth-gate-card ui-panel-shell">
+            <h1 class="hero-title">Sign in to AgentWeave</h1>
+            <p class="auth-gate-copy">
+              This workspace requires login before chat, tasks, MCP, and memory features are available.
+            </p>
+            <button
+              class="ui-pill-btn ui-pill-btn--primary"
+              type="button"
+              @click="chatStore.login()"
+            >
+              Continue with SSO
+            </button>
+            <p v-if="chatStore.authError" class="auth-gate-error">{{ chatStore.authError }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section v-else-if="!hasMessages" class="empty-state">
         <div class="hero-panel">
           <h1 class="hero-title">{{ heroTitle }}</h1>
           <div class="auto-routing-hint" data-testid="auto-routing-hint">
@@ -792,7 +886,7 @@ async function handleConversationTitleSave(title: string) {
               :attachments="pendingConversationAttachments"
               :is-uploading="chatStore.isAttachmentUploading"
               :error="chatStore.attachmentError"
-              :disabled="!chatStore.isConnected"
+              :disabled="uploadDisabled"
               @upload="handleAttachmentUpload"
               @delete="handleAttachmentDelete"
             />
@@ -803,7 +897,7 @@ async function handleConversationTitleSave(title: string) {
               class="composer-input composer-input-home"
               :placeholder="inputPlaceholder"
               rows="1"
-              :disabled="!chatStore.isConnected"
+              :disabled="composerDisabled"
               @keydown="handleKeyDown"
               @input="handleInput"
             />
@@ -822,7 +916,7 @@ async function handleConversationTitleSave(title: string) {
                   data-testid="composer-upload-trigger"
                   title="上传附件"
                   aria-label="上传附件"
-                  :disabled="!chatStore.isConnected || chatStore.isAttachmentUploading || chatStore.isLoading"
+                  :disabled="uploadDisabled"
                   @click="triggerAttachmentSelect"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -839,7 +933,7 @@ async function handleConversationTitleSave(title: string) {
 
                 <button
                   class="send-btn"
-                  :disabled="!inputText.trim() || !chatStore.isConnected"
+                  :disabled="!inputText.trim() || composerDisabled"
                   @click="handleSend"
                 >
                   ▶
@@ -869,7 +963,7 @@ async function handleConversationTitleSave(title: string) {
           </div>
           <div class="chat-title-row chat-title-row-stable chat-title-row-actions-inline">
             <ConversationTitleEditor
-              v-if="chatStore.currentConversationId"
+              v-if="chatStore.currentConversationId && canWriteConversations"
               :title="currentConversationTitle"
               :error="titleRenameError"
               :saving="isTitleUpdating"
@@ -922,7 +1016,7 @@ async function handleConversationTitleSave(title: string) {
               :attachments="pendingConversationAttachments"
               :is-uploading="chatStore.isAttachmentUploading"
               :error="chatStore.attachmentError"
-              :disabled="!chatStore.isConnected"
+              :disabled="uploadDisabled"
               @upload="handleAttachmentUpload"
               @delete="handleAttachmentDelete"
             />
@@ -933,7 +1027,7 @@ async function handleConversationTitleSave(title: string) {
               class="composer-input composer-input-chat"
               :placeholder="inputPlaceholder"
               rows="1"
-              :disabled="!chatStore.isConnected"
+              :disabled="composerDisabled"
               @keydown="handleKeyDown"
               @input="handleInput"
             />
@@ -951,7 +1045,7 @@ async function handleConversationTitleSave(title: string) {
                   data-testid="composer-upload-trigger"
                   title="上传附件"
                   aria-label="上传附件"
-                  :disabled="!chatStore.isConnected || chatStore.isAttachmentUploading || chatStore.isLoading"
+                  :disabled="uploadDisabled"
                   @click="triggerAttachmentSelect"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -976,7 +1070,7 @@ async function handleConversationTitleSave(title: string) {
                 <button
                   v-else
                   class="send-btn"
-                  :disabled="!inputText.trim() || !chatStore.isConnected"
+                  :disabled="!inputText.trim() || composerDisabled"
                   @click="handleSend"
                 >
                   ▶
@@ -996,7 +1090,7 @@ async function handleConversationTitleSave(title: string) {
       />
 
       <transition name="drawer-fade">
-        <div v-if="showTaskDrawer" class="task-overlay" @click.self="closeTaskDrawer">
+        <div v-if="showTaskDrawer && canReadTasks" class="task-overlay" @click.self="closeTaskDrawer">
           <aside class="task-drawer-shell ui-panel-shell">
             <TaskDrawer
               :visible="showTaskDrawer"
@@ -1008,7 +1102,11 @@ async function handleConversationTitleSave(title: string) {
               :is-loading="chatStore.isInspectionTaskLoading"
               :is-saving="isTaskDraftSaving"
               :error="chatStore.inspectionTaskError"
-              :can-create-draft="Boolean(chatStore.currentConversationId)"
+              :can-create-draft="Boolean(chatStore.currentConversationId) && canWriteTasks"
+              :can-toggle="canWriteTasks"
+              :can-trigger="canTriggerTasks"
+              :can-delete="canDeleteTasks"
+              :can-save-draft="canWriteTasks"
               @close="closeTaskDrawer"
               @change-tab="taskDrawerTab = $event"
               @open-draft="openTaskDraftFromConversation()"
@@ -1024,11 +1122,12 @@ async function handleConversationTitleSave(title: string) {
       </transition>
 
       <transition name="drawer-fade">
-        <div v-if="showInspector" class="inspector-overlay" @click.self="closeInspector">
+        <div v-if="showInspector && canOpenInspector" class="inspector-overlay" @click.self="closeInspector">
           <aside class="inspector-drawer ui-panel-shell">
             <div class="inspector-head">
               <div class="inspector-tabs ui-segmented-tabs">
                 <button
+                  v-if="canReadSkills"
                   class="inspector-tab ui-segmented-tab"
                   :class="{ active: rightPanelTab === 'skills' }"
                   @click="rightPanelTab = 'skills'"
@@ -1036,6 +1135,7 @@ async function handleConversationTitleSave(title: string) {
                   Skills
                 </button>
                 <button
+                  v-if="canReadMcp"
                   class="inspector-tab ui-segmented-tab"
                   :class="{ active: rightPanelTab === 'mcp' }"
                   @click="rightPanelTab = 'mcp'"
@@ -1043,6 +1143,7 @@ async function handleConversationTitleSave(title: string) {
                   MCP
                 </button>
                 <button
+                  v-if="canReadMemories"
                   class="inspector-tab ui-segmented-tab"
                   :class="{ active: rightPanelTab === 'memory' }"
                   @click="rightPanelTab = 'memory'"
@@ -1057,10 +1158,10 @@ async function handleConversationTitleSave(title: string) {
             </div>
 
             <div class="inspector-body">
-              <SkillPanel v-if="rightPanelTab === 'skills'" :skills="chatStore.skills" />
-              <McpPanel v-else-if="rightPanelTab === 'mcp'" />
+              <SkillPanel v-if="rightPanelTab === 'skills' && canReadSkills" :skills="chatStore.skills" />
+              <McpPanel v-else-if="rightPanelTab === 'mcp' && canReadMcp" />
               <MemoryPanel
-                v-else
+                v-else-if="canReadMemories"
                 :nodes="chatStore.memoryTree"
                 :selected-path="chatStore.selectedMemoryPath"
                 :document="chatStore.memoryContent"
@@ -1366,6 +1467,29 @@ input {
   flex-direction: column;
   align-items: center;
   gap: 28px;
+}
+
+.auth-gate-card {
+  width: min(100%, 560px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 36px 32px;
+  text-align: center;
+}
+
+.auth-gate-copy {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.auth-gate-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
 }
 
 .hero-title {

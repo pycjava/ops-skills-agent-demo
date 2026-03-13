@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
 
-import { readErrorMessage } from './helpers'
+import { apiFetch, readErrorMessage } from './helpers'
 import type {
   InspectionTask,
   InspectionTaskDraft,
@@ -53,7 +53,7 @@ export function createTaskDomain({
     inspectionTaskError.value = null
 
     try {
-      const res = await fetch(`${backendUrl}/api/inspection-tasks`)
+      const res = await apiFetch(`${backendUrl}/api/inspection-tasks`)
       if (!res.ok) {
         throw new Error(await readErrorMessage(res, `HTTP ${res.status}`))
       }
@@ -75,7 +75,7 @@ export function createTaskDomain({
       const url = taskId
         ? `${backendUrl}/api/inspection-tasks/${encodeURIComponent(taskId)}/runs`
         : `${backendUrl}/api/inspection-tasks/runs/all`
-      const res = await fetch(url)
+      const res = await apiFetch(url)
       if (!res.ok) {
         throw new Error(await readErrorMessage(res, `HTTP ${res.status}`))
       }
@@ -93,7 +93,7 @@ export function createTaskDomain({
     conversationId: string,
   ): Promise<InspectionTaskDraft | null> {
     inspectionTaskError.value = null
-    const res = await fetch(`${backendUrl}/api/inspection-tasks/draft`, {
+    const res = await apiFetch(`${backendUrl}/api/inspection-tasks/draft`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -114,7 +114,7 @@ export function createTaskDomain({
 
   async function createInspectionTask(payload: InspectionTaskDraft): Promise<InspectionTask | null> {
     inspectionTaskError.value = null
-    const res = await fetch(`${backendUrl}/api/inspection-tasks`, {
+    const res = await apiFetch(`${backendUrl}/api/inspection-tasks`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -138,7 +138,7 @@ export function createTaskDomain({
     message: string,
   ): Promise<InspectionTaskFromConversationMessageResult | null> {
     inspectionTaskError.value = null
-    const res = await fetch(`${backendUrl}/api/inspection-tasks/from-conversation-message`, {
+    const res = await apiFetch(`${backendUrl}/api/inspection-tasks/from-conversation-message`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -183,7 +183,7 @@ export function createTaskDomain({
 
     let res: Response
     try {
-      res = await fetch(`${backendUrl}/api/inspection-tasks/from-conversation-message/stream`, {
+      res = await apiFetch(`${backendUrl}/api/inspection-tasks/from-conversation-message/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -272,7 +272,7 @@ export function createTaskDomain({
     payload: Partial<InspectionTaskDraft>,
   ): Promise<InspectionTask | null> {
     inspectionTaskError.value = null
-    const res = await fetch(`${backendUrl}/api/inspection-tasks/${encodeURIComponent(taskId)}`, {
+    const res = await apiFetch(`${backendUrl}/api/inspection-tasks/${encodeURIComponent(taskId)}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -293,7 +293,7 @@ export function createTaskDomain({
 
   async function deleteInspectionTask(taskId: string): Promise<boolean> {
     inspectionTaskError.value = null
-    const res = await fetch(`${backendUrl}/api/inspection-tasks/${encodeURIComponent(taskId)}`, {
+    const res = await apiFetch(`${backendUrl}/api/inspection-tasks/${encodeURIComponent(taskId)}`, {
       method: 'DELETE',
     })
 
@@ -310,7 +310,7 @@ export function createTaskDomain({
 
   async function triggerInspectionTask(taskId: string): Promise<InspectionTaskRun | null> {
     inspectionTaskError.value = null
-    const res = await fetch(
+    const res = await apiFetch(
       `${backendUrl}/api/inspection-tasks/${encodeURIComponent(taskId)}/trigger`,
       {
         method: 'POST',

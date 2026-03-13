@@ -5,6 +5,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from agent import resolve_default_agent, run_agent
+from auth.config import get_auth_settings
+from auth.dependencies import ensure_websocket_permission
 from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
 from models import Message
@@ -41,6 +43,9 @@ SUBAGENT_LABELS = {
 
 @router.websocket("/chat")
 async def websocket_chat(ws: WebSocket):
+    if get_auth_settings().enabled:
+        if await ensure_websocket_permission(ws, "conversations:write") is None:
+            return
     await ws.accept()
     await realtime_event_manager.register(ws)
     logger.info("WebSocket 客户端已连接")

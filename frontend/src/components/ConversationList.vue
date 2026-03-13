@@ -2,11 +2,19 @@
 import { ref, watch } from 'vue'
 import type { ConversationItem } from '../stores/chat'
 
-defineProps<{
-  conversations: ConversationItem[]
-  currentId: string | null
-  agentLabels: Record<string, string>
-}>()
+withDefaults(
+  defineProps<{
+    conversations: ConversationItem[]
+    currentId: string | null
+    agentLabels: Record<string, string>
+    canCreate?: boolean
+    canDelete?: boolean
+  }>(),
+  {
+    canCreate: true,
+    canDelete: true,
+  },
+)
 
 const emit = defineEmits<{
   (e: 'select', id: string): void
@@ -49,7 +57,7 @@ function getTaskBadgeLabel(triggerType?: string | null): string | null {
 
 <template>
   <div class="conv-list">
-    <button class="new-conv" @click="emit('create')">
+    <button v-if="canCreate !== false" class="new-conv" @click="emit('create')">
       <span class="plus">＋</span>
       <span>新对话</span>
     </button>
@@ -91,7 +99,12 @@ function getTaskBadgeLabel(triggerType?: string | null): string | null {
           <span class="conv-time">{{ formatTime(conv.updated_at) }}</span>
         </div>
 
-        <button class="del-btn" title="删除会话" @click.stop="emit('delete', conv.id)">
+        <button
+          v-if="canDelete !== false"
+          class="del-btn"
+          title="删除会话"
+          @click.stop="emit('delete', conv.id)"
+        >
           ✕
         </button>
       </div>

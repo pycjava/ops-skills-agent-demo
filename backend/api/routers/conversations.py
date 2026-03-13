@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
+from auth.dependencies import require_permission
 from db.session import AsyncSessionLocal
 from models import Conversation, Message
 from services.conversation_attachments import delete_all_conversation_attachments
@@ -17,7 +18,7 @@ class CreateConversationRequest(BaseModel):
     agent_id: str | None = None
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_permission("conversations:read"))])
 async def list_conversations(q: str | None = None):
     logger.info(f"正在获取对话列表, 搜索关键词: {q}")
     async with AsyncSessionLocal() as session:
@@ -31,7 +32,7 @@ async def list_conversations(q: str | None = None):
         return JSONResponse([conversation.to_dict() for conversation in conversations])
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_permission("conversations:write"))])
 async def create_conversation_route(body: CreateConversationRequest | None = None):
     logger.info("正在创建新对话")
     async with AsyncSessionLocal() as session:
@@ -46,7 +47,10 @@ async def create_conversation_route(body: CreateConversationRequest | None = Non
         return JSONResponse(conversation.to_dict())
 
 
-@router.get("/{conv_id}/messages")
+@router.get(
+    "/{conv_id}/messages",
+    dependencies=[Depends(require_permission("conversations:read"))],
+)
 async def get_messages(conv_id: str):
     logger.info(f"正在获取对话 {conv_id} 的消息记录")
     async with AsyncSessionLocal() as session:
@@ -59,7 +63,10 @@ async def get_messages(conv_id: str):
         return JSONResponse([message.to_dict() for message in messages])
 
 
-@router.delete("/{conv_id}")
+@router.delete(
+    "/{conv_id}",
+    dependencies=[Depends(require_permission("conversations:delete"))],
+)
 async def delete_conversation(conv_id: str):
     logger.info(f"正在删除对话 {conv_id}")
     async with AsyncSessionLocal() as session:
@@ -80,7 +87,10 @@ async def delete_conversation(conv_id: str):
         return JSONResponse({"ok": True})
 
 
-@router.patch("/{conv_id}")
+@router.patch(
+    "/{conv_id}",
+    dependencies=[Depends(require_permission("conversations:write"))],
+)
 async def update_conversation(conv_id: str, body: dict | None = None):
     logger.info(f"正在更新对话 {conv_id}，数据: {body}")
     if not isinstance(body, dict):

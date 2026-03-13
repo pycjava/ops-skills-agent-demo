@@ -1,4 +1,5 @@
 import type { Ref } from 'vue'
+import { apiFetch } from './helpers'
 import type { ArtifactKind, MemoryDocument, MemoryNode } from './types'
 
 interface MemoryDomainDeps {
@@ -64,7 +65,7 @@ export function createMemoryDomain({
     memoryError.value = null
 
     try {
-      const res = await fetch(`${backendUrl}/api/memories/tree`)
+      const res = await apiFetch(`${backendUrl}/api/memories/tree`)
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`)
       }
@@ -107,7 +108,7 @@ export function createMemoryDomain({
     memoryError.value = null
 
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${backendUrl}/api/memories/content?path=${encodeURIComponent(path)}`,
       )
       if (!res.ok) {
@@ -131,7 +132,7 @@ export function createMemoryDomain({
     memoryError.value = null
 
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${backendUrl}/api/memories/content?path=${encodeURIComponent(path)}`,
         { method: 'DELETE' },
       )

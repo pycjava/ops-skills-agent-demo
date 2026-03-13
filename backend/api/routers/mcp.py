@@ -1,10 +1,11 @@
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from agent import invalidate_runtime_cache
+from auth.dependencies import require_permission
 from services.mcp_registry import McpRegistryService
 
 
@@ -76,13 +77,13 @@ class McpServerUpdateRequest(McpServerCreateRequest):
     )
 
 
-@router.get("/servers")
+@router.get("/servers", dependencies=[Depends(require_permission("mcp_servers:read"))])
 async def list_mcp_servers():
     records = await service.list_servers()
     return JSONResponse([record.to_public_dict() for record in records])
 
 
-@router.post("/servers")
+@router.post("/servers", dependencies=[Depends(require_permission("mcp_servers:write"))])
 async def create_mcp_server(body: McpServerCreateRequest):
     try:
         record = await service.create_server(
@@ -103,7 +104,10 @@ async def create_mcp_server(body: McpServerCreateRequest):
     return JSONResponse(record.to_public_dict())
 
 
-@router.put("/servers/{server_id}")
+@router.put(
+    "/servers/{server_id}",
+    dependencies=[Depends(require_permission("mcp_servers:write"))],
+)
 async def update_mcp_server(server_id: str, body: McpServerUpdateRequest):
     try:
         record = await service.update_server(
@@ -129,7 +133,10 @@ async def update_mcp_server(server_id: str, body: McpServerUpdateRequest):
     return JSONResponse(record.to_public_dict())
 
 
-@router.delete("/servers/{server_id}")
+@router.delete(
+    "/servers/{server_id}",
+    dependencies=[Depends(require_permission("mcp_servers:delete"))],
+)
 async def delete_mcp_server(server_id: str):
     try:
         await service.delete_server(server_id)
@@ -140,7 +147,10 @@ async def delete_mcp_server(server_id: str):
     return JSONResponse({"ok": True})
 
 
-@router.post("/servers/{server_id}/test")
+@router.post(
+    "/servers/{server_id}/test",
+    dependencies=[Depends(require_permission("mcp_servers:test"))],
+)
 async def test_mcp_server(server_id: str):
     try:
         result = await service.test_server(server_id)

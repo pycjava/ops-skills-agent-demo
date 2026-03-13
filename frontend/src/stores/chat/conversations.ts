@@ -1,6 +1,7 @@
 import type { ComputedRef, Ref } from 'vue'
 import { getConversationTitleError, normalizeConversationTitle } from '../../utils/conversationTitle'
 import {
+  apiFetch,
   CHAT_ENTRY_AGENT_ID,
   findRecentToolInput,
   normalizeAttachmentSnapshots,
@@ -84,7 +85,7 @@ export function createConversationDomain({
       const url = query?.trim()
         ? `${backendUrl}/api/conversations?q=${encodeURIComponent(query.trim())}`
         : `${backendUrl}/api/conversations`
-      const res = await fetch(url)
+      const res = await apiFetch(url)
       conversations.value = await res.json()
     } catch (error) {
       console.warn('获取会话列表失败:', error)
@@ -115,7 +116,7 @@ export function createConversationDomain({
     draftAgentId.value = nextAgentId
 
     try {
-      const res = await fetch(`${backendUrl}/api/conversations/${convId}/messages`)
+      const res = await apiFetch(`${backendUrl}/api/conversations/${convId}/messages`)
       const historyMessages: ConversationHistoryMessage[] = await res.json()
 
       for (const message of historyMessages) {
@@ -134,7 +135,7 @@ export function createConversationDomain({
 
     let res: Response
     try {
-      res = await fetch(
+      res = await apiFetch(
         `${backendUrl}/api/inspection-tasks/runs/${encodeURIComponent(runId)}/conversation/stream`,
       )
     } catch (error) {
@@ -255,7 +256,7 @@ export function createConversationDomain({
 
   async function deleteConversation(convId: string) {
     try {
-      await fetch(`${backendUrl}/api/conversations/${convId}`, {
+      await apiFetch(`${backendUrl}/api/conversations/${convId}`, {
         method: 'DELETE',
       })
       conversations.value = conversations.value.filter((conversation) => conversation.id !== convId)
@@ -284,7 +285,7 @@ export function createConversationDomain({
     }
 
     const normalizedTitle = normalizeConversationTitle(title)
-    const res = await fetch(`${backendUrl}/api/conversations/${encodeURIComponent(convId)}`, {
+    const res = await apiFetch(`${backendUrl}/api/conversations/${encodeURIComponent(convId)}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',

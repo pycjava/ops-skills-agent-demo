@@ -5,18 +5,30 @@ import type { InspectionTask, InspectionTaskDraft, InspectionTaskRun } from '../
 
 type TaskDrawerTab = 'tasks' | 'runs' | 'draft'
 
-const props = defineProps<{
-  visible: boolean
-  tasks: InspectionTask[]
-  runs: InspectionTaskRun[]
-  draft: InspectionTaskDraft | null
-  draftNotice?: string | null
-  activeTab: TaskDrawerTab
-  isLoading: boolean
-  isSaving: boolean
-  error: string | null
-  canCreateDraft?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    visible: boolean
+    tasks: InspectionTask[]
+    runs: InspectionTaskRun[]
+    draft: InspectionTaskDraft | null
+    draftNotice?: string | null
+    activeTab: TaskDrawerTab
+    isLoading: boolean
+    isSaving: boolean
+    error: string | null
+    canCreateDraft?: boolean
+    canToggle?: boolean
+    canTrigger?: boolean
+    canDelete?: boolean
+    canSaveDraft?: boolean
+  }>(),
+  {
+    canToggle: true,
+    canTrigger: true,
+    canDelete: true,
+    canSaveDraft: true,
+  },
+)
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -169,6 +181,7 @@ function handleSaveDraft() {
               :data-testid="`task-toggle-${task.id}`"
               class="task-toggle-btn ui-pill-btn"
               type="button"
+              :disabled="canToggle === false"
               @click="emit('toggle', task.id, !task.enabled)"
             >
               {{ task.enabled ? '停用' : '启用' }}
@@ -180,6 +193,7 @@ function handleSaveDraft() {
               :data-testid="`task-trigger-${task.id}`"
               class="task-action-btn ui-pill-btn ui-pill-btn--primary"
               type="button"
+              :disabled="canTrigger === false"
               @click="emit('trigger', task.id)"
             >
               手动触发
@@ -188,6 +202,7 @@ function handleSaveDraft() {
               :data-testid="`task-delete-${task.id}`"
               class="task-action-btn ui-pill-btn"
               type="button"
+              :disabled="canDelete === false"
               @click="emit('delete-task', task.id)"
             >
               删除
@@ -264,7 +279,7 @@ function handleSaveDraft() {
           data-testid="task-draft-save"
           class="task-action-btn ui-pill-btn ui-pill-btn--primary"
           type="button"
-          :disabled="!isDraftValid || isSaving"
+          :disabled="!isDraftValid || isSaving || canSaveDraft === false"
           @click="handleSaveDraft"
         >
           {{ isSaving ? '保存中…' : '创建任务' }}

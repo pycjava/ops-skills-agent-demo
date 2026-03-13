@@ -14,28 +14,36 @@ export type InspectorTab = 'skills' | 'mcp' | 'memory'
 
 interface UseAppChromeOptions {
   agents: ComputedRef<AgentInfo[]>
+  authEnabled: ComputedRef<boolean>
+  isAuthenticated: ComputedRef<boolean>
   setDraftAgent: (agentId: string) => void
   connect: () => void
+  fetchAuthStatus: () => Promise<void>
   fetchAgents: () => Promise<void>
   fetchConversations: () => Promise<void>
   fetchTaskNotifications: () => Promise<void>
   fetchSkills: (agentId?: string) => Promise<void>
   fetchMcpServers: () => Promise<void>
   fetchMemoryTree: (force?: boolean) => Promise<void>
+  hasPermission: (permission: string) => boolean
   openMemoryDocument: (path: string) => Promise<void>
   resizeComposerInput: () => void
 }
 
 export function useAppChrome({
   agents,
+  authEnabled,
+  isAuthenticated,
   setDraftAgent,
   connect,
+  fetchAuthStatus,
   fetchAgents,
   fetchConversations,
   fetchTaskNotifications,
   fetchSkills,
   fetchMcpServers,
   fetchMemoryTree,
+  hasPermission,
   openMemoryDocument,
   resizeComposerInput,
 }: UseAppChromeOptions) {
@@ -57,6 +65,7 @@ export function useAppChrome({
   const overflowAgents = computed(() => agents.value.slice(visibleAgentCount.value))
 
   let greetingRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  let workspaceInitialized = false
 
   function clearGreetingRefreshTimer() {
     if (!greetingRefreshTimer) return
@@ -192,21 +201,55 @@ export function useAppChrome({
     localStorage.setItem('theme', theme)
   }
 
+  async function initializeWorkspace() {
+    if (workspaceInitialized) return
+    workspaceInitialized = true
+
+    connect()
+
+    if (hasPermission('agents:read')) {
+      await fetchAgents()
+      await fetchSkills()
+    }
+    if (hasPermission('conversations:read')) {
+      await fetchConversations()
+    }
+    if (hasPermission('task_notifications:read')) {
+      await fetchTaskNotifications()
+    }
+    if (hasPermission('mcp_servers:read')) {
+      await fetchMcpServers()
+    }
+
+    await nextTick()
+    resizeComposerInput()
+    recalculateVisibleAgents()
+  }
+
   onMounted(async () => {
     document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
     syncGreetingClock()
     document.addEventListener('click', handleDocumentClick)
     window.addEventListener('resize', handleWindowResize)
-    connect()
-    await fetchAgents()
-    await fetchConversations()
-    await fetchTaskNotifications()
-    await fetchSkills()
-    await fetchMcpServers()
-    await nextTick()
-    resizeComposerInput()
-    recalculateVisibleAgents()
+    await fetchAuthStatus()
+    if (!authEnabled.value || isAuthenticated.value) {
+      await initializeWorkspace()
+    } else {
+      await nextTick()
+      resizeComposerInput()
+      recalculateVisibleAgents()
+    }
   })
+
+  watch(
+    [authEnabled, isAuthenticated],
+    ([enabled, authenticated]) => {
+      if (!enabled || authenticated) {
+        void initializeWorkspace()
+      }
+    },
+    { immediate: false },
+  )
 
   onBeforeUnmount(() => {
     clearGreetingRefreshTimer()
@@ -215,7 +258,12 @@ export function useAppChrome({
   })
 
   watch([rightPanelTab, showInspector], ([tab, visible]) => {
-    if (visible && tab === 'memory' && !pendingMemoryOpenPath.value) {
+    if (
+      visible &&
+      tab === 'memory' &&
+      !pendingMemoryOpenPath.value &&
+      hasPermission('memories:read')
+    ) {
       void fetchMemoryTree(true)
     }
   })

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 
+from auth.dependencies import require_permission
 from db.session import AsyncSessionLocal
 from services.conversation_attachments import (
     create_attachment_record,
@@ -14,7 +15,10 @@ from services.conversation_state import create_conversation, get_conversation
 router = APIRouter(prefix="/api/conversations", tags=["conversation-attachments"])
 
 
-@router.post("/attachments")
+@router.post(
+    "/attachments",
+    dependencies=[Depends(require_permission("attachments:write"))],
+)
 async def upload_conversation_attachment(
     file: UploadFile = File(...),
     conversation_id: str | None = Form(default=None),
@@ -55,7 +59,10 @@ async def upload_conversation_attachment(
     )
 
 
-@router.get("/{conv_id}/attachments")
+@router.get(
+    "/{conv_id}/attachments",
+    dependencies=[Depends(require_permission("attachments:read"))],
+)
 async def get_conversation_attachments(conv_id: str):
     attachments = await list_conversation_attachments(
         conv_id,
@@ -64,7 +71,10 @@ async def get_conversation_attachments(conv_id: str):
     return JSONResponse([attachment.to_dict() for attachment in attachments])
 
 
-@router.delete("/{conv_id}/attachments/{attachment_id}")
+@router.delete(
+    "/{conv_id}/attachments/{attachment_id}",
+    dependencies=[Depends(require_permission("attachments:delete"))],
+)
 async def remove_conversation_attachment(conv_id: str, attachment_id: str):
     await delete_conversation_attachment(
         conv_id,

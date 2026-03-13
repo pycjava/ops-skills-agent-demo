@@ -8,11 +8,13 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
 from agent import init_agent_runtime, list_agent_profiles
 from api.routers import (
     agent,
     agents,
+    auth,
     cloud_credentials,
     conversation_attachments,
     conversations,
@@ -23,17 +25,27 @@ from api.routers import (
     task_notifications,
 )
 from api.ws import chat
-from config import ANTHROPIC_API_KEY, BASE_DIR, SKILLS_DIR
+from auth.config import get_auth_settings
+from config import ANTHROPIC_API_KEY, BASE_DIR, SKILLS_DIR, get_cors_allowed_origins
 from db.session import close_db, init_db
 from services.inspection_scheduler import InspectionSchedulerRuntime
 from utils.logger import logger
 
 app = FastAPI(title="AgentWeave Demo", version="0.2.0")
 inspection_scheduler = InspectionSchedulerRuntime()
+auth_settings = get_auth_settings()
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=auth_settings.session_secret,
+    session_cookie=auth_settings.session_cookie_name,
+    same_site=auth_settings.session_cookie_same_site,
+    https_only=auth_settings.session_cookie_secure,
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -95,6 +107,7 @@ app.include_router(conversations.router)
 app.include_router(conversation_attachments.router)
 app.include_router(inspection_tasks.router)
 app.include_router(task_notifications.router)
+app.include_router(auth.router)
 app.include_router(agents.router)
 app.include_router(skills.router)
 app.include_router(mcp.router)

@@ -1,9 +1,10 @@
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from auth.dependencies import require_permission
 from services.cloud_credentials import (
     get_cloud_credentials_registry,
     resolve_cloud_request_context,
@@ -37,12 +38,18 @@ class CloudCredentialResolveRequest(BaseModel):
     )
 
 
-@router.get("/registry")
+@router.get(
+    "/registry",
+    dependencies=[Depends(require_permission("cloud_credentials:read"))],
+)
 async def get_registry():
     return JSONResponse(await get_cloud_credentials_registry())
 
 
-@router.put("/registry")
+@router.put(
+    "/registry",
+    dependencies=[Depends(require_permission("cloud_credentials:write"))],
+)
 async def update_registry(body: CloudCredentialRegistryUpdateRequest):
     payload: dict[str, Any] = {
         "provider": body.provider,
@@ -53,7 +60,10 @@ async def update_registry(body: CloudCredentialRegistryUpdateRequest):
     return JSONResponse(await save_cloud_credentials_registry(payload))
 
 
-@router.post("/resolve")
+@router.post(
+    "/resolve",
+    dependencies=[Depends(require_permission("cloud_credentials:read"))],
+)
 async def resolve_registry_context(body: CloudCredentialResolveRequest):
     return JSONResponse(
         await resolve_cloud_request_context(

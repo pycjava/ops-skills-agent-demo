@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
 
-import { readErrorMessage } from './helpers'
+import { apiFetch, readErrorMessage } from './helpers'
 import type { MemoryDocument, TaskNotification } from './types'
 
 interface TaskNotificationDomainDeps {
@@ -49,7 +49,7 @@ export function createTaskNotificationDomain({
     taskNotificationError.value = null
 
     try {
-      const res = await fetch(`${backendUrl}/api/task-notifications`)
+      const res = await apiFetch(`${backendUrl}/api/task-notifications`)
       if (!res.ok) {
         throw new Error(await readErrorMessage(res, `HTTP ${res.status}`))
       }
@@ -71,7 +71,7 @@ export function createTaskNotificationDomain({
   async function markTaskNotificationRead(notificationId: string) {
     taskNotificationError.value = null
 
-    const res = await fetch(
+    const res = await apiFetch(
       `${backendUrl}/api/task-notifications/${encodeURIComponent(notificationId)}/read`,
       {
         method: 'POST',
@@ -94,7 +94,7 @@ export function createTaskNotificationDomain({
   async function markAllTaskNotificationsRead() {
     taskNotificationError.value = null
 
-    const res = await fetch(`${backendUrl}/api/task-notifications/read-all`, {
+    const res = await apiFetch(`${backendUrl}/api/task-notifications/read-all`, {
       method: 'POST',
     })
 
@@ -127,7 +127,7 @@ export function createTaskNotificationDomain({
     if (!normalizedPath) return false
 
     taskNotificationError.value = null
-    const res = await fetch(
+    const res = await apiFetch(
       `${backendUrl}/api/memories/content?path=${encodeURIComponent(normalizedPath)}`,
     )
     if (!res.ok) {

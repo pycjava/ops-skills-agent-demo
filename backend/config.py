@@ -46,3 +46,15 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = os.getenv("LOG_FILE", str(BASE_DIR / "logs" / "app.log"))
 LOG_MAX_SIZE_MB = int(os.getenv("LOG_MAX_SIZE_MB", "10"))
 LOG_BACKUP_COUNT = int(os.getenv("LOG_BACKUP_COUNT", "5"))
+
+
+def get_cors_allowed_origins() -> list[str]:
+    raw = os.getenv(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:5173,"
+        "http://127.0.0.1:5173,"
+        "http://localhost:4173,"
+        "http://127.0.0.1:4173",
+    )
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    return origins or ["http://localhost:5173"]

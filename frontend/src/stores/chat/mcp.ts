@@ -1,5 +1,5 @@
 import type { Ref } from 'vue'
-import { readErrorMessage } from './helpers'
+import { apiFetch, readErrorMessage } from './helpers'
 import type {
   McpServer,
   McpServerPayload,
@@ -39,7 +39,7 @@ export function createMcpDomain({
     mcpError.value = null
 
     try {
-      const res = await fetch(`${backendUrl}/api/mcp/servers`)
+      const res = await apiFetch(`${backendUrl}/api/mcp/servers`)
       if (!res.ok) {
         throw new Error(await readErrorMessage(res, `HTTP ${res.status}`))
       }
@@ -55,7 +55,7 @@ export function createMcpDomain({
   async function createMcpServer(payload: McpServerPayload): Promise<boolean> {
     mcpError.value = null
     try {
-      const res = await fetch(`${backendUrl}/api/mcp/servers`, {
+      const res = await apiFetch(`${backendUrl}/api/mcp/servers`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -80,7 +80,7 @@ export function createMcpDomain({
   ): Promise<boolean> {
     mcpError.value = null
     try {
-      const res = await fetch(`${backendUrl}/api/mcp/servers/${encodeURIComponent(serverId)}`, {
+      const res = await apiFetch(`${backendUrl}/api/mcp/servers/${encodeURIComponent(serverId)}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -102,7 +102,7 @@ export function createMcpDomain({
   async function deleteMcpServer(serverId: string): Promise<boolean> {
     mcpError.value = null
     try {
-      const res = await fetch(`${backendUrl}/api/mcp/servers/${encodeURIComponent(serverId)}`, {
+      const res = await apiFetch(`${backendUrl}/api/mcp/servers/${encodeURIComponent(serverId)}`, {
         method: 'DELETE',
       })
       if (!res.ok) {
@@ -126,7 +126,7 @@ export function createMcpDomain({
     mcpError.value = null
 
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${backendUrl}/api/mcp/servers/${encodeURIComponent(serverId)}/test`,
         {
           method: 'POST',

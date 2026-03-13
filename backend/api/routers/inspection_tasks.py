@@ -3,11 +3,12 @@ import json
 from datetime import datetime
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from auth.dependencies import require_permission
 from db.session import AsyncSessionLocal
 from models import Conversation, InspectionTaskRun, Message
 from services.inspection_task_llm import (
@@ -187,7 +188,7 @@ class CreateInspectionTaskFromConversationMessageRequest(BaseModel):
     previous_context: dict[str, Any] | None = None
 
 
-@router.post("/draft")
+@router.post("/draft", dependencies=[Depends(require_permission("inspection_tasks:write"))])
 async def create_inspection_task_draft(body: DraftRequest):
     try:
         draft = await build_inspection_task_draft(
@@ -200,13 +201,13 @@ async def create_inspection_task_draft(body: DraftRequest):
     return JSONResponse(draft)
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_permission("inspection_tasks:read"))])
 async def get_inspection_tasks():
     tasks = await list_inspection_tasks(session_factory=AsyncSessionLocal)
     return JSONResponse([task.to_dict() for task in tasks])
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_permission("inspection_tasks:write"))])
 async def create_inspection_task_route(body: CreateInspectionTaskRequest):
     try:
         task = await create_inspection_task(
@@ -227,7 +228,10 @@ async def create_inspection_task_route(body: CreateInspectionTaskRequest):
     return JSONResponse(task.to_dict())
 
 
-@router.post("/from-conversation-message")
+@router.post(
+    "/from-conversation-message",
+    dependencies=[Depends(require_permission("inspection_tasks:write"))],
+)
 async def create_inspection_task_from_conversation_message_route(
     body: CreateInspectionTaskFromConversationMessageRequest,
 ):
@@ -247,7 +251,10 @@ async def create_inspection_task_from_conversation_message_route(
     return JSONResponse(result)
 
 
-@router.post("/from-conversation-message/stream")
+@router.post(
+    "/from-conversation-message/stream",
+    dependencies=[Depends(require_permission("inspection_tasks:write"))],
+)
 async def create_inspection_task_from_conversation_message_stream_route(
     body: CreateInspectionTaskFromConversationMessageRequest,
 ):
@@ -471,7 +478,10 @@ async def create_inspection_task_from_conversation_message_stream_route(
     )
 
 
-@router.get("/runs/{run_id}/conversation/stream")
+@router.get(
+    "/runs/{run_id}/conversation/stream",
+    dependencies=[Depends(require_permission("inspection_tasks:read"))],
+)
 async def stream_inspection_task_run_conversation_route(run_id: str):
     try:
         initial_state = await _load_inspection_task_run_stream_state(
@@ -497,7 +507,7 @@ async def stream_inspection_task_run_conversation_route(run_id: str):
     )
 
 
-@router.get("/{task_id}")
+@router.get("/{task_id}", dependencies=[Depends(require_permission("inspection_tasks:read"))])
 async def get_inspection_task_route(task_id: str):
     try:
         task = await get_inspection_task(task_id, session_factory=AsyncSessionLocal)
@@ -506,7 +516,7 @@ async def get_inspection_task_route(task_id: str):
     return JSONResponse(task.to_dict())
 
 
-@router.patch("/{task_id}")
+@router.patch("/{task_id}", dependencies=[Depends(require_permission("inspection_tasks:write"))])
 async def update_inspection_task_route(task_id: str, body: UpdateInspectionTaskRequest):
     try:
         task = await update_inspection_task(
@@ -528,7 +538,7 @@ async def update_inspection_task_route(task_id: str, body: UpdateInspectionTaskR
     return JSONResponse(task.to_dict())
 
 
-@router.delete("/{task_id}")
+@router.delete("/{task_id}", dependencies=[Depends(require_permission("inspection_tasks:delete"))])
 async def delete_inspection_task_route(task_id: str):
     try:
         await delete_inspection_task(task_id, session_factory=AsyncSessionLocal)
@@ -538,7 +548,10 @@ async def delete_inspection_task_route(task_id: str):
     return JSONResponse({"status": "deleted", "task_id": task_id})
 
 
-@router.post("/{task_id}/trigger")
+@router.post(
+    "/{task_id}/trigger",
+    dependencies=[Depends(require_permission("inspection_tasks:trigger"))],
+)
 async def trigger_inspection_task(task_id: str):
     try:
         run = await execute_inspection_task(
@@ -554,13 +567,16 @@ async def trigger_inspection_task(task_id: str):
     return JSONResponse(run)
 
 
-@router.get("/{task_id}/runs")
+@router.get(
+    "/{task_id}/runs",
+    dependencies=[Depends(require_permission("inspection_tasks:read"))],
+)
 async def get_inspection_task_runs(task_id: str):
     runs = await list_inspection_task_runs(task_id, session_factory=AsyncSessionLocal)
     return JSONResponse([run.to_dict() for run in runs])
 
 
-@router.get("/runs/all")
+@router.get("/runs/all", dependencies=[Depends(require_permission("inspection_tasks:read"))])
 async def get_all_inspection_task_runs():
     runs = await list_inspection_task_runs(session_factory=AsyncSessionLocal)
     return JSONResponse([run.to_dict() for run in runs])

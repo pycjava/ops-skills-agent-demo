@@ -32,6 +32,13 @@ export async function readErrorMessage(res: Response, fallback: string): Promise
   return fallback
 }
 
+export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  return fetch(input, {
+    ...init,
+    credentials: 'include',
+  })
+}
+
 export function getDefaultAgentId(agents: AgentInfo[]): string {
   return agents.find((agent) => agent.is_default)?.id || CHAT_ENTRY_AGENT_ID
 }

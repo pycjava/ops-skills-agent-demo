@@ -1,4 +1,5 @@
 from db.base_class import Base
+from models.auth import Permission, Role, User
 from models.conversation_attachment import ConversationAttachment
 from models.conversation import Conversation
 from models.inspection_task import InspectionTask
@@ -9,6 +10,9 @@ from models.task_notification import TaskNotification
 
 __all__ = [
     "Base",
+    "User",
+    "Role",
+    "Permission",
     "Conversation",
     "ConversationAttachment",
     "InspectionTask",

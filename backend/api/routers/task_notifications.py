@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
+from auth.dependencies import require_permission
 from db.session import AsyncSessionLocal
 from services.task_notifications import (
     list_task_notifications,
@@ -12,7 +13,7 @@ from services.task_notifications import (
 router = APIRouter(prefix="/api/task-notifications", tags=["task-notifications"])
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_permission("task_notifications:read"))])
 async def get_task_notifications():
     notifications, unread_count = await list_task_notifications(
         session_factory=AsyncSessionLocal
@@ -25,7 +26,10 @@ async def get_task_notifications():
     )
 
 
-@router.post("/read-all")
+@router.post(
+    "/read-all",
+    dependencies=[Depends(require_permission("task_notifications:update"))],
+)
 async def read_all_task_notifications():
     updated_count = await mark_all_task_notifications_read(
         session_factory=AsyncSessionLocal
@@ -33,7 +37,10 @@ async def read_all_task_notifications():
     return JSONResponse({"updated_count": updated_count})
 
 
-@router.post("/{notification_id}/read")
+@router.post(
+    "/{notification_id}/read",
+    dependencies=[Depends(require_permission("task_notifications:update"))],
+)
 async def read_task_notification(notification_id: str):
     try:
         notification = await mark_task_notification_read(

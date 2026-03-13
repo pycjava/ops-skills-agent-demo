@@ -76,6 +76,59 @@ SQLITE_PATH=data/app.db
 LOG_LEVEL=INFO
 ```
 
+可直接参考 `backend/.env.example` 创建 `backend/.env`。如需启用 OIDC 登录认证与本地 RBAC，请继续追加：
+
+```dotenv
+AUTH_ENABLED=true
+OIDC_ISSUER_URL=https://keycloak.example.com/realms/agentweave
+OIDC_CLIENT_ID=agentweave-web
+OIDC_CLIENT_SECRET=change-me
+OIDC_REDIRECT_URI=http://127.0.0.1:8000/api/auth/callback
+OIDC_SCOPE=openid profile email
+OIDC_ROLE_CLAIM=roles
+OIDC_ROLE_MAP=viewer=viewer,operator=operator,admin=admin
+AUTH_DEFAULT_ROLE=viewer
+SESSION_SECRET=replace-with-a-random-secret
+SESSION_COOKIE_NAME=agentweave_session
+SESSION_COOKIE_SAMESITE=lax
+SESSION_COOKIE_SECURE=false
+CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173
+```
+
+- `OIDC_ROLE_CLAIM=roles` 默认兼容 Keycloak `realm_access.roles`；如果角色来自其他 claim，也可以改成 `realm_access.roles` 或类似点路径。
+- `OIDC_ROLE_MAP` 用于把外部角色映射到本地 `viewer` / `operator` / `admin`。
+- `AUTH_DEFAULT_ROLE` 会在外部身份没有匹配角色时兜底。
+- `SESSION_COOKIE_SECURE=true` 适合 HTTPS 部署；本地 HTTP 开发通常保持 `false`。
+
+如需同时启用本地固定管理员账号密码登录，请继续追加：
+
+```dotenv
+LOCAL_AUTH_ENABLED=true
+LOCAL_ADMIN_USERNAME=admin
+LOCAL_ADMIN_PASSWORD=change-me
+LOCAL_ADMIN_DISPLAY_NAME=Platform Admin
+```
+
+- 本地登录与 OIDC/SSO 可以并存，前端 `/login` 页面会同时显示两种入口。
+- 本地管理员登录成功后会映射到本地 `admin` 角色。
+- 当前版本的本地账号密码来自 `backend/.env`，适合启动期或内网场景，不建议长期以明文密码方式用于生产环境。
+
+登录流程总览：
+```mermaid
+flowchart LR
+    A[打开 AgentWeave 页面] --> B[GET /api/auth/me]
+    B -->|AUTH_ENABLED=false| C[直接进入工作台]
+    B -->|AUTH_ENABLED=true 且未登录| D[跳转到 /login]
+    D --> E{选择登录方式}
+    E -->|本地账号密码| F[POST /api/auth/login/password]
+    E -->|OIDC / SSO| G[GET /api/auth/login?next=当前页面]
+    G --> H[OIDC Provider / Keycloak]
+    H --> I[GET /api/auth/callback]
+    F --> J[后端写入会话 Cookie]
+    I --> J
+    J --> K[前端重新加载认证状态]
+```
+
 然后启动后端：
 
 ```powershell
@@ -97,12 +150,22 @@ cd frontend
 npm install
 ```
 
+可直接参考 `frontend/.env.example` 创建 `frontend/.env`。
+
 如果前端开发服务器和后端不在同一 Origin，启动前设置：
 
 ```text
 VITE_API_BASE_URL=http://127.0.0.1:8000
 VITE_WS_URL=ws://127.0.0.1:8000/ws/chat
 ```
+
+启用登录后，页面会先请求 `/api/auth/me`；当 `AUTH_ENABLED=true` 且当前未认证时，页面右上角会显示 `Sign In`，点击后跳转到 `${VITE_API_BASE_URL}/api/auth/login`。因此前端访问的后端地址、`OIDC_REDIRECT_URI` 与 `CORS_ALLOW_ORIGINS` 需要保持一致。
+
+当前前端还提供独立登录页：
+
+- `GET /login`：独立登录页，支持本地账号密码和 OIDC / SSO 并存
+- 未登录访问工作台路径时，会先跳到 `/login?next=原路径`
+- 已登录再次访问 `/login` 时，会自动跳回 `next` 或 `/`
 
 然后启动开发服务器：
 

@@ -1,5 +1,5 @@
 import type { ComputedRef, Ref } from 'vue'
-import { CHAT_ENTRY_AGENT_ID, readErrorMessage } from './helpers'
+import { CHAT_ENTRY_AGENT_ID, apiFetch, readErrorMessage } from './helpers'
 import type { AgentInfo, ConversationAttachment, ConversationItem } from './types'
 
 interface AttachmentDomainDeps {
@@ -97,7 +97,7 @@ export function createAttachmentDomain({
     }
 
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${backendUrl}/api/conversations/${encodeURIComponent(conversationId)}/attachments`,
       )
       if (!res.ok) {
@@ -132,7 +132,7 @@ export function createAttachmentDomain({
         formData.append('agent_id', CHAT_ENTRY_AGENT_ID)
       }
 
-      const res = await fetch(`${backendUrl}/api/conversations/attachments`, {
+      const res = await apiFetch(`${backendUrl}/api/conversations/attachments`, {
         method: 'POST',
         body: formData,
       })
@@ -178,7 +178,7 @@ export function createAttachmentDomain({
     attachmentError.value = null
 
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${backendUrl}/api/conversations/${encodeURIComponent(conversationId)}/attachments/${encodeURIComponent(attachmentId)}`,
         {
           method: 'DELETE',
