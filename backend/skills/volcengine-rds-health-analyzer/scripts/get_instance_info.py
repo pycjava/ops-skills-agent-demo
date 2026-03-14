@@ -44,6 +44,35 @@ HIGH_PERCENTILE_HIGH_RATIO = 3.0
 HIGH_PERCENTILE_P99_HIGH_RATIO = 4.0
 THROUGHPUT_HIGH_SPIKE_RATIO = 0.2
 THROUGHPUT_HIGH_CV = 1.0
+# 吞吐饱和阈值用于识别“高位但平稳”的平台期负载，避免仅因缺少尖峰而低估风险。
+# 调优思路：
+# - 先用最小活动门槛过滤低负载噪声；
+# - 再要求低波动（cv / spike_ratio 较低）；
+# - 最后要求高分位与中位数接近，说明负载更像持续平台而非偶发突刺。
+# 这些值是保守启发式默认值，后续应结合真实业务样本回看误报/漏报情况再微调。
+# THROUGHPUT_SATURATION_MAX_CV=0.35 表示变异系数低于 35% 时，认为吞吐整体足够平稳。
+THROUGHPUT_SATURATION_MAX_CV = 0.35
+# THROUGHPUT_SATURATION_MAX_SPIKE_RATIO=0.05 表示滑动 MAD 识别出的尖峰点占比不超过 5%，
+# 否则更像“波动型负载”而不是“稳定高位平台期”。
+THROUGHPUT_SATURATION_MAX_SPIKE_RATIO = 0.05
+# THROUGHPUT_SATURATION_MAX_P95_RATIO=1.3 表示 p95 最多约为 median 的 1.3 倍，
+# 用于约束高分位不能明显偏离常态水平。
+THROUGHPUT_SATURATION_MAX_P95_RATIO = 1.3
+# THROUGHPUT_SATURATION_MAX_P99_RATIO=1.6 表示 p99 最多约为 median 的 1.6 倍，
+# 给极端尾部留少量弹性，但仍要求整体分布接近平稳平台。
+THROUGHPUT_SATURATION_MAX_P99_RATIO = 1.6
+# 最小活动门槛用于屏蔽“低吞吐但很平稳”的无意义命中：
+# - qps>=50 / tps>=20：至少进入中低负载区间才考虑平台期识别
+# - IOPS>=100：避免轻微 IO 背景噪声被误判
+# - network>=1 MiB/s：避免极低网络吞吐触发稳定高位规则
+THROUGHPUT_SATURATION_MIN_FLOORS = {
+    "qps": 50.0,
+    "tps": 20.0,
+    "IOPSRate": 100.0,
+    "network_in": 1024 * 1024,
+    "network_out": 1024 * 1024,
+}
+METRIC_SIGNAL_SEVERITY_ORDER = {"high": 3, "medium": 2, "low": 1, "none": 0, "unknown": -1}
 
 RESOURCE_SCORE_BANDS = {
     "cpu": [(60.0, 20), (70.0, 15), (80.0, 10), (math.inf, 5)],
@@ -60,6 +89,17 @@ RESOURCE_P95_WARNING_THRESHOLDS = {
     "memory": 80.0,
     "disk_util": 80.0,
 }
+DEFAULT_CORE_METRICS = [
+    "cpu",
+    "memory",
+    "disk_util",
+    "qps",
+    "tps",
+    "replication_delay",
+    "IOPSRate",
+    "network_in",
+    "network_out",
+]
 
 
 def load_runtime_env() -> None:
@@ -372,6 +412,157 @@ def build_high_percentile_pressure(distribution: Dict[str, Any]) -> Dict[str, An
     }
 
 
+def classify_resource_pressure(
+    metric_key: Optional[str],
+    distribution: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if metric_key not in RESOURCE_SCORE_BANDS:
+        return {
+            "level": "none",
+            "reason": "resource pressure classification is only available for cpu/memory/disk_util",
+            "drivers": [],
+        }
+
+    distribution = distribution or {}
+    avg = distribution.get("avg")
+    median = distribution.get("median")
+    p95 = distribution.get("p95")
+    if avg is None or median is None or p95 is None:
+        return {
+            "level": "unknown",
+            "reason": "resource pressure classification requires avg/median/p95",
+            "drivers": [],
+        }
+
+    median_threshold = RESOURCE_MEDIAN_WARNING_THRESHOLDS[metric_key]
+    p95_threshold = RESOURCE_P95_WARNING_THRESHOLDS[metric_key]
+    drivers = []
+    avg_elevated = avg >= p95_threshold
+    median_elevated = median >= median_threshold
+    p95_elevated = p95 >= p95_threshold
+
+    if avg >= median_threshold:
+        drivers.append("avg")
+    if median_elevated:
+        drivers.append("median")
+    if p95_elevated:
+        drivers.append("p95")
+
+    has_sustained_pressure = median_elevated and p95_elevated
+    has_high_baseline = avg_elevated and median_elevated
+
+    if has_sustained_pressure:
+        return {
+            "level": "high",
+            "reason": (
+                f"sustained resource pressure: median {round(median, 4)} exceeds "
+                f"{median_threshold:.0f} and p95 {round(p95, 4)} exceeds {p95_threshold:.0f}"
+            ),
+            "drivers": drivers,
+        }
+    if has_high_baseline:
+        return {
+            "level": "high",
+            "reason": (
+                f"sustained high baseline: avg {round(avg, 4)} and median {round(median, 4)} "
+                "both remain elevated"
+            ),
+            "drivers": drivers,
+        }
+    if median_elevated or p95_elevated:
+        return {
+            "level": "medium",
+            "reason": (
+                f"resource pressure warning: median={round(median, 4)}, p95={round(p95, 4)}"
+            ),
+            "drivers": drivers,
+        }
+    return {
+        "level": "none",
+        "reason": "resource pressure stays below sustained warning thresholds",
+        "drivers": drivers,
+    }
+
+
+def classify_throughput_saturation(
+    metric_key: Optional[str],
+    distribution: Optional[Dict[str, Any]],
+    variability: Optional[Dict[str, Any]],
+    spike_evidence: Optional[Dict[str, Any]],
+    recent_trend: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if metric_key not in THROUGHPUT_HEURISTIC_METRICS:
+        return {
+            "level": "none",
+            "reason": "throughput saturation classification is only available for throughput metrics",
+            "drivers": [],
+        }
+
+    distribution = distribution or {}
+    variability = variability or {}
+    spike_evidence = spike_evidence or {}
+    recent_trend = recent_trend or {}
+
+    avg = distribution.get("avg")
+    median = distribution.get("median")
+    if avg is None or median is None:
+        return {
+            "level": "unknown",
+            "reason": "throughput saturation classification requires avg/median",
+            "drivers": [],
+        }
+
+    floor = THROUGHPUT_SATURATION_MIN_FLOORS.get(metric_key, 0.0)
+    if max(avg, median) < floor:
+        return {
+            "level": "none",
+            "reason": f"steady throughput stays below the {floor:g} activity floor",
+            "drivers": [],
+        }
+
+    percentile_pressure = build_high_percentile_pressure(distribution)
+    p95_ratio = percentile_pressure.get("p95_to_median_ratio")
+    p99_ratio = percentile_pressure.get("p99_to_median_ratio")
+    cv = float(variability.get("cv") or 0.0)
+    spike_ratio = float(spike_evidence.get("spike_ratio") or 0.0)
+    trend_direction = recent_trend.get("direction", "flat")
+
+    drivers = []
+    if avg >= floor:
+        drivers.append("avg")
+    if median >= floor:
+        drivers.append("median")
+    if cv <= THROUGHPUT_SATURATION_MAX_CV:
+        drivers.append("low_cv")
+    if spike_ratio <= THROUGHPUT_SATURATION_MAX_SPIKE_RATIO:
+        drivers.append("low_spike_ratio")
+    if trend_direction in {"flat", "up"}:
+        drivers.append(f"trend_{trend_direction}")
+
+    if (
+        p95_ratio is not None
+        and p99_ratio is not None
+        and p95_ratio <= THROUGHPUT_SATURATION_MAX_P95_RATIO
+        and p99_ratio <= THROUGHPUT_SATURATION_MAX_P99_RATIO
+        and cv <= THROUGHPUT_SATURATION_MAX_CV
+        and spike_ratio <= THROUGHPUT_SATURATION_MAX_SPIKE_RATIO
+        and trend_direction in {"flat", "up"}
+    ):
+        return {
+            "level": "medium",
+            "reason": (
+                "throughput stays on a steady elevated plateau with limited variance/spikes"
+            ),
+            "drivers": drivers,
+        }
+
+    return {
+        "level": "none",
+        "reason": "throughput pattern does not meet steady saturation heuristics",
+        "drivers": drivers,
+    }
+
+
 def detect_sliding_mad_spikes(
     data_points: List[Dict[str, Any]],
     *,
@@ -638,6 +829,8 @@ def compute_balanced_resource_score(
 
     if evidence.get("spikes", {}).get("risk_tier") == "high":
         drivers.append("risk_tier")
+    elif evidence.get("pressure", {}).get("level") == "high":
+        drivers.append("pressure")
 
     penalty_steps = max(len(drivers) - 1, 0)
     score = max(base_score - (penalty_steps * 5), 5)
@@ -645,6 +838,119 @@ def compute_balanced_resource_score(
         "score": score,
         "base_score": base_score,
         "drivers": drivers,
+    }
+
+
+def _metric_signal_level(metric_data: Optional[Dict[str, Any]]) -> str:
+    if not metric_data or metric_data.get("error"):
+        return "none"
+
+    evidence = metric_data.get("evidence", {})
+    levels = [
+        evidence.get("spikes", {}).get("risk_tier", "none"),
+        evidence.get("pressure", {}).get("level", "none"),
+        evidence.get("saturation", {}).get("level", "none"),
+    ]
+    return max(levels, key=lambda item: METRIC_SIGNAL_SEVERITY_ORDER.get(item, -1))
+
+
+def _has_metric_signal(metric_data: Optional[Dict[str, Any]], *, minimum_level: str) -> bool:
+    signal_level = _metric_signal_level(metric_data)
+    return METRIC_SIGNAL_SEVERITY_ORDER.get(signal_level, -1) >= METRIC_SIGNAL_SEVERITY_ORDER.get(
+        minimum_level, -1
+    )
+
+
+def build_metric_correlation_summary(metrics_data: Dict[str, Any]) -> Dict[str, Any]:
+    def append_signal(
+        signals: List[Dict[str, Any]],
+        *,
+        category: str,
+        level: str,
+        metrics: List[str],
+        reason: str,
+    ) -> None:
+        signals.append(
+            {
+                "category": category,
+                "level": level,
+                "metrics": metrics,
+                "reason": reason,
+            }
+        )
+
+    cpu_metric = metrics_data.get("cpu")
+    disk_metric = metrics_data.get("disk_util")
+    qps_metric = metrics_data.get("qps")
+    tps_metric = metrics_data.get("tps")
+    iops_metric = metrics_data.get("IOPSRate")
+    network_in_metric = metrics_data.get("network_in")
+    network_out_metric = metrics_data.get("network_out")
+    replication_metric = metrics_data.get("replication_delay")
+
+    throughput_active = any(
+        _has_metric_signal(metrics_data.get(metric_key), minimum_level="medium")
+        or metrics_data.get(metric_key, {}).get("evidence", {}).get("spikes", {}).get("risk_tier")
+        == "high"
+        for metric_key in ("qps", "tps")
+    )
+    network_active = any(
+        _has_metric_signal(metrics_data.get(metric_key), minimum_level="medium")
+        or metrics_data.get(metric_key, {}).get("evidence", {}).get("spikes", {}).get("risk_tier")
+        == "high"
+        for metric_key in ("network_in", "network_out")
+    )
+    storage_pressure = _has_metric_signal(disk_metric, minimum_level="high") or _has_metric_signal(
+        iops_metric, minimum_level="medium"
+    )
+    signals: List[Dict[str, Any]] = []
+
+    if throughput_active and _has_metric_signal(cpu_metric, minimum_level="high"):
+        append_signal(
+            signals,
+            category="compute_pressure",
+            level="high",
+            metrics=["qps", "tps", "cpu"],
+            reason="throughput is elevated while CPU also shows sustained pressure",
+        )
+
+    if throughput_active and storage_pressure:
+        append_signal(
+            signals,
+            category="storage_pressure",
+            level="high" if _has_metric_signal(disk_metric, minimum_level="high") else "medium",
+            metrics=["qps", "tps", "IOPSRate", "disk_util"],
+            reason="throughput is elevated while storage-path metrics also show pressure",
+        )
+
+    if _has_metric_signal(replication_metric, minimum_level="high") and (
+        throughput_active or network_active
+    ):
+        append_signal(
+            signals,
+            category="replication_pressure",
+            level="high",
+            metrics=["replication_delay", "network_in", "network_out", "qps", "tps"],
+            reason="replication delay rises together with write/network activity",
+        )
+
+    if throughput_active and not signals:
+        append_signal(
+            signals,
+            category="business_load_up",
+            level="medium",
+            metrics=["qps", "tps"],
+            reason="throughput is elevated but resource and replication bottlenecks are not obvious",
+        )
+
+    ordered_signals = sorted(
+        signals,
+        key=lambda item: METRIC_SIGNAL_SEVERITY_ORDER.get(item["level"], -1),
+        reverse=True,
+    )
+    return {
+        "signals": ordered_signals,
+        "top_signal": ordered_signals[0] if ordered_signals else None,
     }
 
 
@@ -703,10 +1009,17 @@ def build_metric_evidence(
             [],
             window_size=window_size,
         )
-        pressure = build_high_percentile_pressure({})
+        high_percentile_pressure = build_high_percentile_pressure({})
+        sustained_pressure = classify_resource_pressure(metric_key, None)
         variability = {
             "stddev": 0.0,
             "cv": 0.0,
+        }
+        recent_trend = {
+            "direction": "flat",
+            "slope": 0.0,
+            "sample_size": 0,
+            "lookback_hours": RECENT_TREND_LOOKBACK_HOURS,
         }
         spike_risk = classify_spike_risk(
             spike_evidence,
@@ -714,6 +1027,13 @@ def build_metric_evidence(
             absolute_max=None,
             distribution=None,
             variability=variability,
+        )
+        saturation = classify_throughput_saturation(
+            metric_key,
+            None,
+            variability,
+            spike_evidence,
+            recent_trend,
         )
         return {
             "source_point_count": 0,
@@ -738,16 +1058,17 @@ def build_metric_evidence(
                 "p95": None,
                 "p99": None,
             },
-            "pressure": {"high_percentile": pressure},
+            "pressure": {
+                "high_percentile": high_percentile_pressure,
+                "level": sustained_pressure["level"],
+                "reason": sustained_pressure["reason"],
+                "drivers": sustained_pressure["drivers"],
+            },
             "variability": variability,
+            "saturation": saturation,
             "spikes": {"sliding_mad": spike_evidence, **spike_risk},
             "trend": {"direction": "flat", "slope": 0.0},
-            "recent_trend": {
-                "direction": "flat",
-                "slope": 0.0,
-                "sample_size": 0,
-                "lookback_hours": RECENT_TREND_LOOKBACK_HOURS,
-            },
+            "recent_trend": recent_trend,
         }
 
     avg = statistics.mean(values)
@@ -762,9 +1083,8 @@ def build_metric_evidence(
         "p95": percentile_nearest_rank(values, 95),
         "p99": percentile_nearest_rank(values, 99),
     }
-    pressure = {
-        "high_percentile": build_high_percentile_pressure(distribution),
-    }
+    high_percentile_pressure = build_high_percentile_pressure(distribution)
+    sustained_pressure = classify_resource_pressure(metric_key, distribution)
     variability = {
         "stddev": round(stddev, 4),
         "cv": round(cv, 4),
@@ -827,6 +1147,14 @@ def build_metric_evidence(
         distribution=distribution,
         variability=variability,
     )
+    recent_trend = compute_recent_trend(values, period=period)
+    saturation = classify_throughput_saturation(
+        metric_key,
+        distribution,
+        variability,
+        spike_evidence,
+        recent_trend,
+    )
 
     return {
         "source_point_count": len(values),
@@ -843,11 +1171,17 @@ def build_metric_evidence(
             series_count=series_count,
         ),
         "distribution": distribution,
-        "pressure": pressure,
+        "pressure": {
+            "high_percentile": high_percentile_pressure,
+            "level": sustained_pressure["level"],
+            "reason": sustained_pressure["reason"],
+            "drivers": sustained_pressure["drivers"],
+        },
         "variability": variability,
+        "saturation": saturation,
         "spikes": {"sliding_mad": spike_evidence, **spike_risk},
         "trend": compute_trend(values),
-        "recent_trend": compute_recent_trend(values, period=period),
+        "recent_trend": recent_trend,
     }
 
 
@@ -1331,7 +1665,7 @@ class MySQLInstanceInfoCollector:
             所有监控数据汇总
         """
         if metrics is None:
-            metrics = list(self.METRIC_DEFINITIONS.keys())
+            metrics = list(DEFAULT_CORE_METRICS)
 
         results = {}
         for metric_key in metrics:
@@ -1345,6 +1679,7 @@ class MySQLInstanceInfoCollector:
             # 避免触发API限流（1秒20次）
             time.sleep(0.1)
 
+        correlation_summary = build_metric_correlation_summary(results)
         return {
             "instance_id": instance_id,
             "time_range": {
@@ -1353,6 +1688,7 @@ class MySQLInstanceInfoCollector:
             },
             "period": period,
             "metrics": results,
+            "correlation_summary": correlation_summary,
         }
 
     def get_comprehensive_info(
@@ -1388,34 +1724,19 @@ class MySQLInstanceInfoCollector:
             "instance_detail": self.get_instance_detail(instance_id),
         }
 
-        # 获取核心监控指标
-        core_metrics = [
-            "cpu",
-            "memory",
-            "disk_util",
-            "qps",
-            "tps",
-            "replication_delay",
-            "IOPSRate",
-            "network_in",
-            "network_out",
-        ]
-        metrics_data = {}
-        for metric_key in core_metrics:
-            metric_result = self.get_metric_data(
-                instance_id=instance_id,
-                metric_key=metric_key,
-                start_time=start_time,
-                end_time=end_time,
-                period=period,
-            )
-            metrics_data[metric_key] = metric_result
-            # 避免触发API限流（1秒20次）
-            time.sleep(0.1)
-
+        resource_metrics = self.get_all_metrics(
+            instance_id=instance_id,
+            start_time=start_time,
+            end_time=end_time,
+            period=period,
+            metrics=list(DEFAULT_CORE_METRICS),
+        )
+        metrics_data = resource_metrics["metrics"]
+        correlation_summary = resource_metrics["correlation_summary"]
         return {
             "common": common_info,
             "metrics": metrics_data,
+            "correlation_summary": correlation_summary,
             "resource_meta": {
                 "instance_id": instance_id,
                 "time_range": {
@@ -1423,6 +1744,7 @@ class MySQLInstanceInfoCollector:
                     "end": end_time.isoformat(),
                 },
                 "period": period,
+                "correlation_summary": correlation_summary,
             },
         }
 
@@ -1571,6 +1893,7 @@ def main():
                     "instance_id": resource_meta["instance_id"],
                     "time_range": resource_meta["time_range"],
                     "period": resource_meta["period"],
+                    "correlation_summary": resource_meta.get("correlation_summary"),
                     "metrics": {metric_key: metric_data},
                 },
             }

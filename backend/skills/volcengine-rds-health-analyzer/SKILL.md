@@ -15,6 +15,9 @@ description: Use when users need Volcengine RDS MySQL 单实例健康巡检、CP
 - `qps`、`tps`、`IOPSRate`、`network_in`、`network_out` 这类吞吐指标，不再依赖固定 `capacity model`，而是用 `启发式` 信号做风险升级。
 - 吞吐启发式要联合引用 `p95`、`p99`、`cv`、`spike_ratio` 与滑动 MAD 尖峰结果；只有组合信号足够强时才升级到 ``risk_tier = high``。
 - 资源评分采用 `avg + median + p95` 的平衡视角，避免低均值掩盖持续偏高或高分位压力。
+- 对 `cpu`、`memory`、`disk_util` 额外识别 `pressure.level`，用于捕捉“没有明显尖峰、但持续高位运行”的资源压力。
+- 对 `qps`、`tps`、`IOPSRate`、`network_in`、`network_out` 额外识别 `saturation.level`，用于标记“稳定高吞吐平台期”，避免只因波动不大就低估风险。
+- 采集后要结合 `correlation_summary` 做跨指标关联判断，优先区分“业务负载上升”“计算压力”“存储路径压力”“复制链路压力”。
 
 ## 本项目可用工具
 
@@ -156,6 +159,8 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - `evidence.coverage`
    - `evidence.distribution`
    - `evidence.variability`
+   - `evidence.pressure`
+   - `evidence.saturation`
    - `evidence.spikes.sliding_mad`
    - `evidence.spikes.risk_tier`
    - `evidence.spikes.risk_reason`
@@ -203,6 +208,8 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
    - 主窗口正常 + 最近 `3d` 异常：判定为“最近新出现或近期加剧的问题”
    - 主窗口正常 + 最近 `3d` 正常：维持健康 / 低风险结论
    - 如果最近 `3d` 辅助采集失败但主窗口成功，仍可输出主窗口分析，但必须明确写“最近 3 天辅助判断未获取”，不能脑补近期结论
+   - 即使 `spikes.risk_tier != high`，只要 `pressure.level = high`，也要把它视为真实资源压力，而不是简单写“未见明显异常”
+   - `saturation.level` 仅表示稳定高吞吐信号，不单独等价于容量瓶颈；要结合 `cpu` / `disk_util` / `IOPSRate` / `replication_delay` 以及 `correlation_summary` 再下结论
 
 7. 输出巡检结果：
    - 如果用户只是要“结论”“概览”“摘要”，可以用简版结构回复：
@@ -211,7 +218,7 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
      - 核心指标分析
      - 异常发现
      - 行动建议
-   - 如果用户明确要“报告”“巡检报告”“完整报告”或“按模板输出”，不要自由组织章节，直接遵循下方“报告输出要求”
+   - 如果用户明确要“报告”“巡检报告”“完整报告”“按模板输出”或“严格按照模板样式进行输出”，不要自由组织章节，直接遵循下方“报告输出要求”
 
 8. 如用户要求“保存报告”或“生成文件”，使用 `obsidian-markdown` 风格写成 Markdown，并用 `write_file` 写入 `/memories/reports/` 下的 `.md` 文件。
    - 生成报告前，先使用 `read_file` 读取模板文件 `./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
@@ -244,8 +251,11 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 
 - `instance_detail`：实例规格、版本、节点等基础信息
 - `resource_metrics.metrics.<metric_key>.summary`：该指标的汇总统计
+- `resource_metrics.metrics.<metric_key>.evidence.pressure`：持续高压识别结果；资源型指标重点看 `level` / `reason` / `drivers`
+- `resource_metrics.metrics.<metric_key>.evidence.saturation`：稳定高吞吐识别结果；吞吐型指标重点看 `level` / `reason`
 - `resource_metrics.metrics.<metric_key>.node_summaries`：每个节点的轻量统计摘要
 - `resource_metrics.metrics.<metric_key>.nodes`：按节点拆分的数据
+- `resource_metrics.correlation_summary`：跨指标关联摘要；用于辅助判断是业务增长、CPU 压力、存储压力还是复制问题
 
 按指标拆分方式处理：
 
@@ -339,10 +349,12 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - 模板路径：`./skills/volcengine-rds-health-analyzer/assets/inspection_report_template.md`
 - 先用 `read_file` 读取该模板，再按模板结构填充实际分析结果
 - `inspection_report_template.md` 是巡检 Markdown 报告的唯一骨架来源，必须固定章节/标题顺序
+- 只要输出目标是“巡检报告”或用户要求“按模板样式”，无论是在聊天中直接展示还是保存为文件，都必须从模板标题开始输出，不要在模板前后追加导语、总结、额外小节、下载说明或自由发挥的补充段落
 - 固定章节/标题顺序，只允许在模板已有占位符所在位置填充内容
 - 不得新增、删除、改名、重排模板中已存在的固定章节或标题
 - 保留模板中现有一级、二级标题顺序，以及 Markdown 表格、callout、分隔线和内部备注块
 - 模板已有表格必须继续使用，不要改成纯段落、列表或新增自定义小节
+- 不要把模板内容包在 Markdown 代码块、引用块或额外容器里，也不要把模板表格改写成列表、段落或 JSON
 - 所有填入占位符的实例 ID、实例名称、节点 ID、时间、配置值、监控值都必须来自原始输入或采集结果原文
 - 分析结论、健康评分、风险等级可以新增，但它们属于派生内容，不得反向覆盖、替换或伪装成原始采集数据
 - 没有数据的字段写“未获取”或“无异常”
@@ -350,6 +362,7 @@ python ./skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py \
 - 所有双窗口判断只能填入模板现有占位符位置
 - 当主窗口 `time_range >= 7d` 时，必须显式区分“主窗口（用户请求范围）”与“最近 3 天辅助窗口”
 - 不允许用最近 `3d` 的数据覆盖主窗口数据，也不允许把主窗口数据改写成最近 `3d` 结论；两者都必须按原值引用并带窗口标签
+- 若本次分析还包含最近 `24h` 辅助窗口，则也必须在模板现有占位符内明确标注为“最近 24 小时辅助窗口”或 `recent24h`，并在“主窗口正常、最近 `3d` 正常、但最近 `24h` 异常”时表述为“最新出现的短时异常”；后续若调整该窗口语义，必须同步更新 `inspection_report_template.md` 顶部使用说明，避免模板与正文规则漂移
 - `{{node_topology_summary}}`：写实例的节点拓扑摘要；`2` 节点突出对比，`3` 节点及以上突出排序
 - `{{cpu_node_breakdown}}`、`{{memory_node_breakdown}}`、`{{disk_node_breakdown}}`、`{{replication_node_breakdown}}`、`{{iops_network_node_breakdown}}` 只允许填充模板已有位置；必须输出 Markdown 表格，列固定为 `Node | Avg | Median | Max | 风险级别 | 说明`，并按加权值从高到低排序
 - `{{qps_tps_scope_note}}`：明确写“该指标当前无节点拆分，不能用于定位单节点热点”

@@ -412,6 +412,93 @@ def test_build_metric_evidence_promotes_qps_spikes_to_high_risk_with_heuristics(
     assert "spike_ratio" in evidence["spikes"]["risk_reason"]
 
 
+def test_build_metric_evidence_marks_sustained_cpu_pressure_without_spikes(monkeypatch):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 20, 0)
+    data_points = build_data_points([72.0, 74.0, 76.0, 78.0, 80.0], start_time)
+
+    evidence = module.build_metric_evidence(
+        data_points,
+        metric_key="cpu",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    assert evidence["spikes"]["risk_tier"] == "none"
+    assert evidence["pressure"]["level"] == "high"
+    assert "median" in evidence["pressure"]["drivers"]
+    assert "p95" in evidence["pressure"]["drivers"]
+
+
+def test_build_metric_evidence_identifies_stable_qps_saturation(monkeypatch):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 40, 0)
+    data_points = build_data_points(
+        [80.0, 82.0, 81.0, 83.0, 82.0, 84.0, 85.0, 84.0, 83.0],
+        start_time,
+    )
+
+    evidence = module.build_metric_evidence(
+        data_points,
+        metric_key="qps",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    assert evidence["spikes"]["risk_tier"] == "none"
+    assert evidence["saturation"]["level"] == "medium"
+    assert "plateau" in evidence["saturation"]["reason"]
+
+
+def test_build_metric_correlation_summary_identifies_compute_pressure(monkeypatch):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 40, 0)
+
+    cpu_evidence = module.build_metric_evidence(
+        build_data_points([72.0, 74.0, 76.0, 78.0, 80.0, 79.0, 77.0, 76.0, 78.0], start_time),
+        metric_key="cpu",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+    qps_evidence = module.build_metric_evidence(
+        build_data_points([80.0, 82.0, 81.0, 83.0, 82.0, 84.0, 85.0, 84.0, 83.0], start_time),
+        metric_key="qps",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+    tps_evidence = module.build_metric_evidence(
+        build_data_points([25.0, 26.0, 27.0, 26.0, 25.0, 27.0, 28.0, 27.0, 26.0], start_time),
+        metric_key="tps",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+    correlation_summary = module.build_metric_correlation_summary(
+        {
+            "cpu": {"evidence": cpu_evidence},
+            "memory": {"evidence": module.build_metric_evidence(build_data_points([40.0] * 9, start_time), metric_key="memory", period="5m", start_time=start_time, end_time=end_time)},
+            "disk_util": {"evidence": module.build_metric_evidence(build_data_points([45.0] * 9, start_time), metric_key="disk_util", period="5m", start_time=start_time, end_time=end_time)},
+            "qps": {"evidence": qps_evidence},
+            "tps": {"evidence": tps_evidence},
+            "replication_delay": {"evidence": module.build_metric_evidence(build_data_points([0.0] * 9, start_time), metric_key="replication_delay", period="5m", start_time=start_time, end_time=end_time)},
+            "IOPSRate": {"evidence": module.build_metric_evidence(build_data_points([40.0] * 9, start_time), metric_key="IOPSRate", period="5m", start_time=start_time, end_time=end_time)},
+            "network_in": {"evidence": module.build_metric_evidence(build_data_points([4096.0] * 9, start_time), metric_key="network_in", period="5m", start_time=start_time, end_time=end_time)},
+            "network_out": {"evidence": module.build_metric_evidence(build_data_points([4096.0] * 9, start_time), metric_key="network_out", period="5m", start_time=start_time, end_time=end_time)},
+        }
+    )
+
+    assert correlation_summary["top_signal"]["category"] == "compute_pressure"
+    assert correlation_summary["top_signal"]["level"] == "high"
+
+
 def test_summarize_window_alignment_classifies_newly_active_issue(monkeypatch):
     module = load_get_instance_info_module(monkeypatch)
 
@@ -446,6 +533,115 @@ def test_compute_balanced_resource_score_penalizes_high_p95_even_with_low_avg(
     assert score["score"] == 15
     assert "p95" in score["drivers"]
     assert "risk_tier" in score["drivers"]
+
+
+def test_compute_balanced_resource_score_penalizes_sustained_pressure_without_spike(
+    monkeypatch,
+):
+    module = load_get_instance_info_module(monkeypatch)
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 0, 20, 0)
+    data_points = build_data_points([72.0, 74.0, 76.0, 78.0, 80.0], start_time)
+
+    summary = module.build_value_summary([dp["value"] for dp in data_points], period="5m")
+    evidence = module.build_metric_evidence(
+        data_points,
+        metric_key="cpu",
+        period="5m",
+        start_time=start_time,
+        end_time=end_time,
+    )
+    score = module.compute_balanced_resource_score("cpu", summary, evidence)
+
+    assert "pressure" in score["drivers"]
+    assert "risk_tier" not in score["drivers"]
+    assert score["score"] == 5
+
+
+def test_classify_resource_pressure_marks_single_threshold_breach_as_medium(monkeypatch):
+    module = load_get_instance_info_module(monkeypatch)
+
+    result = module.classify_resource_pressure(
+        "cpu",
+        {
+            "avg": 55.0,
+            "median": 55.0,
+            "p95": 72.0,
+        },
+    )
+
+    assert result["level"] == "medium"
+    assert result["drivers"] == ["p95"]
+    assert "warning" in result["reason"]
+
+
+def test_get_all_metrics_defaults_to_default_core_metrics(monkeypatch):
+    module = load_get_instance_info_module(monkeypatch)
+    collector = module.MySQLInstanceInfoCollector(ak="ak", sk="sk", region="cn-shanghai")
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 1, 0, 0)
+    captured_metric_keys = []
+
+    def fake_get_metric_data(**kwargs):
+        captured_metric_keys.append(kwargs["metric_key"])
+        return {"metric_key": kwargs["metric_key"], "evidence": {}, "summary": {}}
+
+    monkeypatch.setattr(collector, "get_metric_data", fake_get_metric_data)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        module,
+        "build_metric_correlation_summary",
+        lambda metrics_data: {"signals": [], "top_signal": None, "metric_keys": list(metrics_data.keys())},
+    )
+
+    result = collector.get_all_metrics(
+        instance_id="mysql-demo",
+        start_time=start_time,
+        end_time=end_time,
+        period="5m",
+    )
+
+    assert captured_metric_keys == module.DEFAULT_CORE_METRICS
+    assert list(result["metrics"].keys()) == module.DEFAULT_CORE_METRICS
+
+
+def test_get_comprehensive_info_reuses_default_core_metrics_collection(monkeypatch):
+    module = load_get_instance_info_module(monkeypatch)
+    collector = module.MySQLInstanceInfoCollector(ak="ak", sk="sk", region="cn-shanghai")
+    start_time = datetime(2026, 3, 10, 0, 0, 0)
+    end_time = datetime(2026, 3, 10, 1, 0, 0)
+    captured_metrics_argument = {}
+
+    monkeypatch.setattr(
+        collector,
+        "get_instance_detail",
+        lambda instance_id: {"instance_id": instance_id, "status": "ok"},
+    )
+
+    def fake_get_all_metrics(**kwargs):
+        captured_metrics_argument["metrics"] = kwargs["metrics"]
+        return {
+            "instance_id": kwargs["instance_id"],
+            "time_range": {
+                "start": kwargs["start_time"].isoformat(),
+                "end": kwargs["end_time"].isoformat(),
+            },
+            "period": kwargs["period"],
+            "metrics": {metric_key: {"metric_key": metric_key} for metric_key in kwargs["metrics"]},
+            "correlation_summary": {"signals": [], "top_signal": None},
+        }
+
+    monkeypatch.setattr(collector, "get_all_metrics", fake_get_all_metrics)
+
+    result = collector.get_comprehensive_info(
+        instance_id="mysql-demo",
+        start_time=start_time,
+        end_time=end_time,
+        period="5m",
+    )
+
+    assert captured_metrics_argument["metrics"] == module.DEFAULT_CORE_METRICS
+    assert list(result["metrics"].keys()) == module.DEFAULT_CORE_METRICS
 
 
 def test_main_cleans_expired_metric_files_before_writing_output(
