@@ -26,3 +26,10 @@ def test_resolve_event_agent_id_falls_back_when_metadata_is_missing():
         )
         == "router"
     )
+
+
+def test_resolve_event_agent_id_falls_back_for_removed_legacy_alias():
+    assert (
+        resolve_event_agent_id({"agent_id": "orchestrator"}, fallback_agent_id="general")
+        == "general"
+    )

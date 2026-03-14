@@ -1,23 +1,30 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent_profiles import DEFAULT_AGENT_ID, canonicalize_agent_id, get_agent_profile
+from agent_profiles import (
+    get_agent_profile,
+    get_default_agent_id,
+    resolve_known_agent_id,
+)
 from models import Conversation
 from services.conversation_messages import DEFAULT_CONVERSATION_TITLE
 
 
 def resolve_agent_id(agent_id: str | None) -> str:
-    candidate = canonicalize_agent_id(agent_id)
+    candidate = resolve_known_agent_id(agent_id)
     get_agent_profile(candidate)
     return candidate
 
 
 def get_conversation_agent_id(conversation: Conversation) -> str:
-    candidate = canonicalize_agent_id(conversation.agent_id)
+    candidate = resolve_known_agent_id(
+        conversation.agent_id,
+        default_on_unknown=True,
+    )
     try:
         get_agent_profile(candidate)
     except ValueError:
-        return DEFAULT_AGENT_ID
+        return get_default_agent_id()
     return candidate
 
 

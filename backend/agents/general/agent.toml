@@ -1,0 +1,11 @@
+id = "general"
+label = "通用助手"
+description = "负责通用问答、文档阅读、代码解释与轻量内容整理。"
+execution_mode = "direct"
+risk_level = "low"
+
+prompt_paths = ["prompts/base.md", "prompts/general.md"]
+skills = ["file_reader", "code_explainer", "obsidian-markdown", "using-superpowers"]
+capabilities = ["通用问答", "文档阅读", "代码解释"]
+allowed_handoffs = []
+subagent_configs = []

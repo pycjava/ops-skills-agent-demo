@@ -66,6 +66,38 @@ async def test_build_inspection_task_draft_uses_latest_non_task_user_message(ses
 
 
 @pytest.mark.asyncio
+async def test_build_inspection_task_draft_falls_back_for_removed_legacy_agent_id(
+    session_factory,
+):
+    async with session_factory() as session:
+        conversation = Conversation(
+            title="Legacy orchestrator inspection",
+            source="web",
+            agent_id="orchestrator",
+        )
+        session.add(conversation)
+        await session.flush()
+        session.add(
+            Message(
+                conversation_id=conversation.id,
+                role="user",
+                content="Please inspect the environment",
+                type="text",
+                agent_id="orchestrator",
+            )
+        )
+        await session.commit()
+        await session.refresh(conversation)
+
+    draft = await build_inspection_task_draft(
+        conversation.id,
+        session_factory=session_factory,
+    )
+
+    assert draft["agent_id"] == "router"
+
+
+@pytest.mark.asyncio
 async def test_build_inspection_task_draft_skips_task_creation_messages(session_factory):
     async with session_factory() as session:
         conversation = Conversation(

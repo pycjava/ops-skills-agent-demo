@@ -11,6 +11,7 @@ from sqlalchemy import select
 from auth.dependencies import require_permission
 from db.session import AsyncSessionLocal
 from models import Conversation, InspectionTaskRun, Message
+from services.conversation_state import get_conversation_agent_id
 from services.inspection_task_llm import (
     analyze_task_creation_intent,
     summarize_task_template_from_conversation,
@@ -104,7 +105,7 @@ async def _stream_inspection_task_run_conversation(
             "type": "history_start",
             "run_id": run.id,
             "conversation_id": conversation.id,
-            "agent_id": conversation.agent_id,
+            "agent_id": get_conversation_agent_id(conversation),
             "title": conversation.title,
             "status": run.status,
         }
@@ -360,10 +361,6 @@ async def create_inspection_task_from_conversation_message_stream_route(
             return
 
         # 意图分析成功，有 cron 表达式
-        intent_analysis_success = _build_task_intent_analysis(
-            outcome="creating",
-            cron_expr=intent.cron_expr,
-        )
         yield _sse_event({
             "type": "tool_result",
             "tool_name": "inspection_task_intent",
@@ -425,7 +422,7 @@ async def create_inspection_task_from_conversation_message_stream_route(
             task = await create_inspection_task(
                 name=(summary.name or "").strip() or conversation.title,
                 source_conversation_id=conversation.id,
-                agent_id=conversation.agent_id,   # ← 使用对话的 agent_id
+                agent_id=get_conversation_agent_id(conversation),
                 skill_id=summary.skill_id,
                 prompt_template=summary.prompt_template,
                 target_payload=summary.target_payload,

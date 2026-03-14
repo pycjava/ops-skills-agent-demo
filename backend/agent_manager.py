@@ -11,9 +11,9 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.store.sqlite.aio import AsyncSqliteStore
 
 from agent_profiles import (
-    AGENT_PROFILES,
-    DEFAULT_AGENT_ID,
     AgentProfile,
+    get_agent_profiles,
+    get_default_agent_id,
     get_agent_profile,
     list_agent_profiles,
 )
@@ -57,7 +57,7 @@ class AgentManager:
         self._runtime_lock = asyncio.Lock()
 
     def resolve_default_agent(self) -> str:
-        return DEFAULT_AGENT_ID
+        return get_default_agent_id()
 
     def list_profiles(self, *, include_legacy: bool = True) -> list[AgentProfile]:
         return list_agent_profiles(include_legacy=include_legacy)
@@ -170,9 +170,11 @@ class AgentManager:
             raise RuntimeError("AgentManager is not initialized")
 
         subagents: list[SubAgent] = []
+        profiles_by_id = get_agent_profiles()
 
         for subagent_id in profile.subagent_configs:
-            if subagent_id not in AGENT_PROFILES:
+            subagent_profile = profiles_by_id.get(subagent_id)
+            if subagent_profile is None:
                 logger.warning(f"Unknown subagent config: {subagent_id}")
                 continue
 
@@ -183,7 +185,6 @@ class AgentManager:
                 )
                 continue
 
-            subagent_profile = AGENT_PROFILES[subagent_id]
             nested_subagents = (
                 self._build_subagents(
                     subagent_profile,
@@ -264,7 +265,9 @@ class AgentManager:
         return "\n\n".join(section for section in sections if section)
 
     def _build_runtime_hint(self, profile: AgentProfile) -> str:
-        allowed_handoffs = "、".join(profile.allowed_handoffs) if profile.allowed_handoffs else "暂无"
+        allowed_handoffs = (
+            "、".join(profile.allowed_handoffs) if profile.allowed_handoffs else "暂无"
+        )
         capabilities = "、".join(profile.capabilities)
         memory_root = f"/memories/agents/{profile.id}/"
 
@@ -284,7 +287,7 @@ class AgentManager:
                 [
                     "- 你是默认入口，只做一次路由决策：直达叶子 Agent，或升级给 supervisor。",
                     "- 命中复杂、多域、冲突、异常升级场景时，立即使用 task 转交 supervisor。",
-                    "- 不要自行展开复杂并行诊断或最终整合结论。",
+                    "- 不要自行展开复杂并行诊断或最终结果整合。",
                 ]
             )
         elif profile.execution_mode == "supervisor":
@@ -294,8 +297,6 @@ class AgentManager:
                     "- 你可以串行或并行调用多个叶子 Agent，并负责统一整合结论、证据和建议。",
                 ]
             )
-        elif profile.execution_mode == "orchestrator":
-            lines.append("- 你是兼容别名，仅用于旧入口兼容；行为边界按 router 处理。")
 
         lines.extend(
             [

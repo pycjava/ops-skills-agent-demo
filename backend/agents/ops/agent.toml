@@ -1,0 +1,11 @@
+id = "ops"
+label = "运维助手"
+description = "负责远程运维、Docker 排障与 Kubernetes 诊断。"
+execution_mode = "direct"
+risk_level = "high"
+
+prompt_paths = ["prompts/base.md", "prompts/ops.md"]
+skills = ["remote-ops", "docker", "kubernetes", "using-superpowers"]
+capabilities = ["远程运维", "Docker 排障", "Kubernetes 诊断"]
+allowed_handoffs = []
+subagent_configs = []

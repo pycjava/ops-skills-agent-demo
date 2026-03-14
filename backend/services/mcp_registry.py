@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from agent_profiles import get_agent_profile
+from agent_profiles import resolve_known_agent_id
 from config import MCP_CONFIG_PATH, MCP_DEFAULT_TIMEOUT_SECONDS
 from utils.logger import logger
 
@@ -130,13 +130,13 @@ class McpRegistryService:
         return normalized_text, servers
 
     async def get_agent_connections(self, agent_id: str) -> dict[str, dict[str, object]]:
-        get_agent_profile(agent_id)
+        resolved_agent_id = resolve_known_agent_id(agent_id)
 
         connections: dict[str, dict[str, object]] = {}
         for server in await self.list_servers():
             if not server.enabled:
                 continue
-            if server.agent_ids and agent_id not in server.agent_ids:
+            if server.agent_ids and resolved_agent_id not in server.agent_ids:
                 continue
             connections[server.name] = server.to_connection_dict(
                 timeout=self._timeout_seconds
@@ -379,11 +379,13 @@ class McpRegistryService:
         seen: set[str] = set()
         for raw_agent_id in value:
             agent_id = str(raw_agent_id or "").strip()
-            if not agent_id or agent_id in seen:
+            if not agent_id:
                 continue
-            get_agent_profile(agent_id)
-            normalized.append(agent_id)
-            seen.add(agent_id)
+            resolved_agent_id = resolve_known_agent_id(agent_id)
+            if resolved_agent_id in seen:
+                continue
+            normalized.append(resolved_agent_id)
+            seen.add(resolved_agent_id)
         return normalized
 
     @staticmethod

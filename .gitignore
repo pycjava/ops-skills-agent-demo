@@ -22,7 +22,7 @@ nginx-es-analyzer/
 mysql-cli-sql-analyzer/
 kubeconfig
 nginx-es-analyzer-design.md
-agents/
+agents/__pycache__/**
 backend/data/conversation_attachments/*
 
 # Celery

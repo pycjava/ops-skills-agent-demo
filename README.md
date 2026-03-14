@@ -1,6 +1,6 @@
 # AgentWeave
 
-> 2026-03 架构更新：默认入口已从 `orchestrator` 切换为 `router`，新增 `supervisor` 作为复杂任务协调层；`orchestrator` 仅保留为兼容别名。
+> 2026-03 架构更新：默认入口为 `router`，`supervisor` 负责复杂任务协调与跨域整合。
 
 AgentWeave 是一个基于 **FastAPI + Vue 3 + DeepAgents/LangGraph** 的多 Agent 智能编排与运维平台示例。它提供 Web 对话入口，并围绕 Agent 路由、Skills 白名单装配、定时巡检任务、任务提醒、会话附件、MCP Server、云凭证解析和长期记忆构建了一套可运行的工作台。
 
@@ -9,7 +9,7 @@ AgentWeave 是一个基于 **FastAPI + Vue 3 + DeepAgents/LangGraph** 的多 Age
 ## 核心能力
 
 - **默认入口是 `router`**：新会话默认进入智能编排助手，由它负责轻量意图识别、单域分流与复杂问题升级。
-- **5 个内置 Agent**：`router`、`supervisor`、`general`、`dba`、`ops`；其中 `orchestrator` 仅保留为兼容别名，不再作为独立运行时角色或提示词。
+- **5 个内置 Agent**：`router`、`supervisor`、`general`、`dba`、`ops`。
 - **Skills 白名单装配**：Skills 统一放在 [backend/skills](backend/skills)，Agent 运行时按白名单注入，而不是靠前端隐藏。
 - **WebSocket 流式对话**：主聊天链路走 `/ws/chat`，支持文本增量推流、思考过程、工具调用结果和子 Agent 路由事件。
 - **定时巡检任务**：支持从会话生成定时任务、查看任务列表、执行记录和任务运行会话流式回放。

@@ -1,0 +1,11 @@
+id = "supervisor"
+label = "复杂任务协调器"
+description = "负责多域任务编排、异常升级诊断、并行调度与统一整合输出。"
+execution_mode = "supervisor"
+risk_level = "low"
+
+prompt_paths = ["prompts/base.md", "prompts/supervisor.md"]
+skills = ["using-superpowers"]
+capabilities = ["复杂任务编排", "跨域诊断", "结果整合"]
+allowed_handoffs = ["general", "dba", "ops"]
+subagent_configs = ["general", "dba", "ops"]

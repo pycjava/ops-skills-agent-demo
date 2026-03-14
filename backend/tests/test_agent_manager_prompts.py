@@ -1,3 +1,5 @@
+import pytest
+
 from agent_manager import AgentManager
 from agent_profiles import get_agent_profile, list_public_agent_profiles
 
@@ -38,10 +40,15 @@ def test_router_and_supervisor_prompts_are_composed_with_runtime_hints():
     assert "只处理 router 升级上来的复杂任务" in supervisor_prompt
 
 
-def test_public_agent_profiles_hide_legacy_orchestrator():
+def test_public_agent_profiles_match_router_supervisor_topology():
     public_ids = [profile.id for profile in list_public_agent_profiles()]
 
     assert public_ids == ["router", "supervisor", "general", "dba", "ops"]
+
+
+def test_unknown_agent_profile_raises_for_removed_orchestrator_id():
+    with pytest.raises(ValueError, match="agent_id"):
+        get_agent_profile("orchestrator")
 
 
 def test_router_and_supervisor_profiles_have_expected_subagent_layout():

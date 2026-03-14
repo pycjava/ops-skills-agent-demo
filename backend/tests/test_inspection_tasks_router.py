@@ -137,6 +137,32 @@ def test_create_and_list_tasks_round_trip(session_factory):
     assert payload[0]["last_status"] == "idle"
 
 
+@pytest.mark.asyncio
+async def test_list_tasks_falls_back_for_removed_legacy_agent_id(session_factory):
+    async with session_factory() as session:
+        task = InspectionTask(
+            name="Legacy task",
+            source_conversation_id=None,
+            agent_id="orchestrator",
+            skill_id=None,
+            prompt_template="Please inspect the environment",
+            target_payload=None,
+            schedule_type="cron",
+            cron_expr="0 9 * * *",
+            enabled=True,
+            last_status="idle",
+        )
+        session.add(task)
+        await session.commit()
+
+    client = create_test_client(session_factory)
+    response = client.get("/api/inspection-tasks")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["agent_id"] == "router"
+
+
 def test_create_from_conversation_message_route_returns_created_task(
     session_factory,
     monkeypatch,

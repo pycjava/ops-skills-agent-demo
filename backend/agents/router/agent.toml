@@ -1,0 +1,11 @@
+id = "router"
+label = "智能编排助手"
+description = "默认入口，负责轻量意图识别、单域分流与复杂问题升级。"
+execution_mode = "router"
+risk_level = "low"
+
+prompt_paths = ["prompts/base.md", "prompts/router.md"]
+skills = ["using-superpowers"]
+capabilities = ["意图识别", "轻量路由", "升级判断"]
+allowed_handoffs = ["general", "dba", "ops", "supervisor"]
+subagent_configs = ["general", "dba", "ops", "supervisor"]

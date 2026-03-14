@@ -1,0 +1,2 @@
+default_agent_id = "router"
+public_agent_ids = ["router", "supervisor", "general", "dba", "ops"]

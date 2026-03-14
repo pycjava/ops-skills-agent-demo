@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from agent_profiles import resolve_known_agent_id
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -52,7 +53,10 @@ class InspectionTask(Base):
             "id": self.id,
             "name": self.name,
             "source_conversation_id": self.source_conversation_id,
-            "agent_id": self.agent_id,
+            "agent_id": resolve_known_agent_id(
+                self.agent_id,
+                default_on_unknown=True,
+            ),
             "skill_id": self.skill_id,
             "prompt_template": self.prompt_template,
             "target_payload": self.target_payload,

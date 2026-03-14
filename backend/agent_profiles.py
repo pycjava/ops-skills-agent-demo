@@ -1,9 +1,11 @@
 from dataclasses import dataclass
-from typing import Literal
+from pathlib import Path
+from threading import Lock
+from typing import NoReturn
 
-
-RiskLevel = Literal["low", "medium", "high"]
-ExecutionMode = Literal["direct", "router", "supervisor", "orchestrator"]
+from agents.loader import load_agent_registry
+from agents.schema import AgentManifest, ExecutionMode, RiskLevel
+from utils.logger import logger
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,106 +37,162 @@ class AgentProfile:
         }
 
 
-DEFAULT_AGENT_ID = "router"
-LEGACY_AGENT_ALIASES: dict[str, str] = {
-    "orchestrator": "router",
-}
-PUBLIC_AGENT_IDS: tuple[str, ...] = ("router", "supervisor", "general", "dba", "ops")
+class AgentRegistryLoadError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        registry_path: Path | str,
+        cause: Exception | str,
+    ) -> None:
+        self.registry_path = Path(registry_path)
+        self.cause = cause
+        reason = str(cause).strip()
+        if not reason:
+            reason = type(cause).__name__ if isinstance(cause, Exception) else "unknown error"
+        elif isinstance(cause, Exception):
+            reason = f"{type(cause).__name__}: {reason}"
+        super().__init__(
+            f'Failed to load agent registry configuration from "{self.registry_path}": '
+            f"{reason}"
+        )
 
 
-AGENT_PROFILES: dict[str, AgentProfile] = {
-    "router": AgentProfile(
-        id="router",
-        label="智能编排助手",
-        description="默认入口，负责轻量意图识别、单域分流与复杂问题升级。",
-        prompt_paths=("prompts/base.md", "prompts/router.md"),
-        skills=("using-superpowers",),
-        capabilities=("意图识别", "轻量路由", "升级判断"),
-        risk_level="low",
-        execution_mode="router",
-        allowed_handoffs=("general", "dba", "ops", "supervisor"),
-        subagent_configs=("general", "dba", "ops", "supervisor"),
-    ),
-    "supervisor": AgentProfile(
-        id="supervisor",
-        label="复杂任务协调器",
-        description="负责多域任务编排、异常升级诊断、并行调度与统一整合输出。",
-        prompt_paths=("prompts/base.md", "prompts/supervisor.md"),
-        skills=("using-superpowers",),
-        capabilities=("复杂任务编排", "跨域诊断", "结果整合"),
-        risk_level="low",
-        execution_mode="supervisor",
-        allowed_handoffs=("general", "dba", "ops"),
-        subagent_configs=("general", "dba", "ops"),
-    ),
-    "orchestrator": AgentProfile(
-        id="orchestrator",
-        label="智能编排助手（兼容）",
-        description="兼容旧会话与旧 API 的历史入口，新请求会归一化到 router。",
-        prompt_paths=("prompts/base.md", "prompts/router.md"),
-        skills=("using-superpowers",),
-        capabilities=("兼容别名", "轻量路由", "升级判断"),
-        risk_level="low",
-        execution_mode="orchestrator",
-        allowed_handoffs=("general", "dba", "ops", "supervisor"),
-        subagent_configs=("general", "dba", "ops", "supervisor"),
-    ),
-    "general": AgentProfile(
-        id="general",
-        label="通用助手",
-        description="负责通用问答、文档阅读、代码解释与轻量内容整理。",
-        prompt_paths=("prompts/base.md", "prompts/general.md"),
-        skills=("file_reader", "code_explainer", "obsidian-markdown", "using-superpowers"),
-        capabilities=("通用问答", "文档阅读", "代码解释"),
-        risk_level="low",
-    ),
-    "dba": AgentProfile(
-        id="dba",
-        label="数据库助手",
-        description="负责 MySQL SQL 分析、Volcengine RDS 巡检与数据库诊断。",
-        prompt_paths=("prompts/base.md", "prompts/dba.md"),
-        skills=(
-            "mysql-sql-analyzer",
-            "volcengine-rds-health-analyzer",
-            "volcengine-rds-report-summarizer",
-            "using-superpowers",
-        ),
-        capabilities=("SQL 分析", "RDS 巡检", "数据库诊断"),
-        risk_level="medium",
-    ),
-    "ops": AgentProfile(
-        id="ops",
-        label="运维助手",
-        description="负责远程运维、Docker 排障与 Kubernetes 诊断。",
-        prompt_paths=("prompts/base.md", "prompts/ops.md"),
-        skills=("remote-ops", "docker", "kubernetes", "using-superpowers"),
-        capabilities=("远程运维", "Docker 排障", "Kubernetes 诊断"),
-        risk_level="high",
-    ),
-}
+@dataclass(frozen=True, slots=True)
+class _AgentRegistrySnapshot:
+    default_agent_id: str
+    legacy_agent_aliases: dict[str, str]
+    public_agent_ids: tuple[str, ...]
+    agent_profiles: dict[str, AgentProfile]
+
+
+def _build_agent_profile(manifest: AgentManifest) -> AgentProfile:
+    return AgentProfile(
+        id=manifest.id,
+        label=manifest.label,
+        description=manifest.description,
+        prompt_paths=manifest.prompt_paths,
+        skills=manifest.skills,
+        capabilities=manifest.capabilities,
+        risk_level=manifest.risk_level,
+        execution_mode=manifest.execution_mode,
+        allowed_handoffs=manifest.allowed_handoffs,
+        subagent_configs=manifest.subagent_configs,
+    )
+
+
+_REGISTRY_LOCK = Lock()
+_REGISTRY_SNAPSHOT: _AgentRegistrySnapshot | None = None
+_REGISTRY_LOAD_ERROR: Exception | None = None
+_AGENT_REGISTRY_PATH = Path(__file__).resolve().parent / "agents" / "registry.toml"
+
+
+def _build_registry_snapshot() -> _AgentRegistrySnapshot:
+    loaded_registry = load_agent_registry()
+    return _AgentRegistrySnapshot(
+        default_agent_id=loaded_registry.config.default_agent_id,
+        legacy_agent_aliases=dict(loaded_registry.config.aliases),
+        public_agent_ids=loaded_registry.config.public_agent_ids,
+        agent_profiles={
+            agent_id: _build_agent_profile(manifest)
+            for agent_id, manifest in loaded_registry.manifests.items()
+        },
+    )
+
+
+def _raise_registry_load_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, AgentRegistryLoadError):
+        raise exc
+    raise AgentRegistryLoadError(
+        registry_path=_AGENT_REGISTRY_PATH,
+        cause=exc,
+    ) from exc
+
+
+def _get_registry_snapshot() -> _AgentRegistrySnapshot:
+    global _REGISTRY_SNAPSHOT, _REGISTRY_LOAD_ERROR
+
+    if _REGISTRY_SNAPSHOT is not None:
+        return _REGISTRY_SNAPSHOT
+    if _REGISTRY_LOAD_ERROR is not None:
+        _raise_registry_load_error(_REGISTRY_LOAD_ERROR)
+
+    with _REGISTRY_LOCK:
+        if _REGISTRY_SNAPSHOT is not None:
+            return _REGISTRY_SNAPSHOT
+        if _REGISTRY_LOAD_ERROR is not None:
+            _raise_registry_load_error(_REGISTRY_LOAD_ERROR)
+
+        try:
+            _REGISTRY_SNAPSHOT = _build_registry_snapshot()
+        except Exception as exc:
+            _REGISTRY_LOAD_ERROR = exc
+            logger.error(
+                f'Failed to load agent registry configuration from "{_AGENT_REGISTRY_PATH}": {exc}'
+            )
+            _raise_registry_load_error(exc)
+
+    return _REGISTRY_SNAPSHOT
+
+
+def get_default_agent_id() -> str:
+    return _get_registry_snapshot().default_agent_id
+
+
+def get_agent_profiles() -> dict[str, AgentProfile]:
+    return _get_registry_snapshot().agent_profiles
 
 
 def canonicalize_agent_id(agent_id: str | None) -> str:
-    candidate = (agent_id or "").strip()
+    """Normalize empty values and configured aliases without validating existence."""
+    candidate = str(agent_id or "").strip()
     if not candidate:
-        return DEFAULT_AGENT_ID
-    return LEGACY_AGENT_ALIASES.get(candidate, candidate)
+        return get_default_agent_id()
+    return _get_registry_snapshot().legacy_agent_aliases.get(candidate, candidate)
+
+
+def resolve_known_agent_id(
+    agent_id: str | None,
+    *,
+    allow_none: bool = False,
+    default_on_unknown: bool = False,
+) -> str | None:
+    candidate = str(agent_id or "").strip()
+    if not candidate:
+        return None if allow_none else get_default_agent_id()
+
+    normalized = canonicalize_agent_id(candidate)
+    if normalized in get_agent_profiles():
+        return normalized
+    if default_on_unknown:
+        return get_default_agent_id()
+    if allow_none:
+        return None
+    raise ValueError(f"Unknown agent_id: {normalized}")
 
 
 def list_agent_profiles(*, include_legacy: bool = True) -> list[AgentProfile]:
-    profiles = list(AGENT_PROFILES.values())
+    snapshot = _get_registry_snapshot()
+    ordered_ids = list(snapshot.public_agent_ids)
     if include_legacy:
-        return profiles
-    return [profile for profile in profiles if profile.id in PUBLIC_AGENT_IDS]
+        ordered_ids.extend(
+            agent_id
+            for agent_id in snapshot.agent_profiles
+            if agent_id not in snapshot.public_agent_ids
+        )
+    return [
+        snapshot.agent_profiles[agent_id]
+        for agent_id in ordered_ids
+        if agent_id in snapshot.agent_profiles
+    ]
 
 
 def list_public_agent_profiles() -> list[AgentProfile]:
     return list_agent_profiles(include_legacy=False)
 
 
-def get_agent_profile(agent_id: str) -> AgentProfile:
-    key = (agent_id or "").strip()
-    profile = AGENT_PROFILES.get(key)
+def get_agent_profile(agent_id: str | None) -> AgentProfile:
+    key = resolve_known_agent_id(agent_id)
+    profile = get_agent_profiles().get(key)
     if profile is None:
-        raise ValueError(f"未知 agent_id: {agent_id}")
+        raise ValueError(f"Unknown agent_id: {key}")
     return profile

@@ -11,7 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from agent import run_agent
 from services.agent_event_state import AgentEventState
 from services.conversation_messages import save_message
-from services.conversation_state import create_conversation, get_conversation, resolve_agent_id
+from services.conversation_state import (
+    create_conversation,
+    get_conversation,
+    get_conversation_agent_id,
+    resolve_agent_id,
+)
 from services.inspection_task_llm import (
     TaskConversationSummary,
     TaskCreationIntentResult,
@@ -305,7 +310,7 @@ async def build_inspection_task_draft(
     return {
         "source_conversation_id": conversation.id,
         "name": conversation.title,
-        "agent_id": conversation.agent_id,
+        "agent_id": get_conversation_agent_id(conversation),
         "skill_id": None,
         "prompt_template": latest_user_message.content,
         "target_payload": None,
@@ -406,7 +411,7 @@ async def create_inspection_task_from_conversation_message(
     task = await create_inspection_task(
         name=generated_task_name or fallback_task_name,
         source_conversation_id=conversation.id,
-        agent_id=conversation.agent_id,
+        agent_id=get_conversation_agent_id(conversation),
         skill_id=summary.skill_id,
         prompt_template=summary.prompt_template,
         target_payload=summary.target_payload,
@@ -577,6 +582,7 @@ async def execute_inspection_task(
         task = await session.get(InspectionTask, task_id)
         if task is None:
             raise LookupError("inspection task not found")
+        resolved_task_agent_id = resolve_agent_id(task.agent_id)
 
         run = InspectionTaskRun(
             task_id=task.id,
@@ -590,7 +596,7 @@ async def execute_inspection_task(
         conversation = await create_conversation(
             session,
             source="task",
-            agent_id=task.agent_id,
+            agent_id=resolved_task_agent_id,
             title=f"{task.name} · {current_time.strftime('%m-%d %H:%M')}",
             source_task_id=task.id,
             source_task_run_id=run.id,
@@ -610,7 +616,7 @@ async def execute_inspection_task(
         "user",
         task.prompt_template,
         "text",
-        agent_id=task.agent_id,
+        agent_id=resolved_task_agent_id,
         session_factory=session_factory,
     )
 
@@ -619,7 +625,7 @@ async def execute_inspection_task(
     async def on_event(event: dict[str, Any]):
         normalized_event = event_state.apply_event(event)
         event_type = normalized_event.get("type")
-        event_agent_id = event.get("agent_id") or task.agent_id
+        event_agent_id = event.get("agent_id") or resolved_task_agent_id
 
         if event_type == "text_delta":
             return
@@ -673,7 +679,7 @@ async def execute_inspection_task(
             user_message=task.prompt_template,
             conv_id=run.conversation_id,
             on_event=on_event,
-            agent_id=task.agent_id,
+            agent_id=resolved_task_agent_id,
         )
     except Exception as exc:
         async with session_factory() as session:

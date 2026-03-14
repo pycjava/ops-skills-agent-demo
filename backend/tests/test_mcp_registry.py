@@ -107,3 +107,23 @@ async def test_save_config_rejects_invalid_cursor_mcp_shape(tmp_path):
 
     with pytest.raises(ValueError, match="command or url"):
         await service.save_config_text('{"mcpServers":{"broken":{"enabled":true}}}')
+
+
+@pytest.mark.asyncio
+async def test_save_config_rejects_removed_legacy_agent_aliases(tmp_path):
+    service = McpRegistryService(config_path=tmp_path / "mcp.json")
+
+    with pytest.raises(ValueError, match="agent_id"):
+        await service.save_config_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "legacy-router": {
+                            "url": "https://example.com/mcp",
+                            "enabled": True,
+                            "agentIds": ["orchestrator", "router"],
+                        }
+                    }
+                }
+            )
+        )

@@ -37,4 +37,3 @@
 
 - 新会话默认从 `router` 进入，负责轻量路由与升级判断。
 - `supervisor` 只处理复杂、多域、异常升级任务，负责协调多个叶子 Agent 并整合结果。
-- 历史消息或旧文档中出现 `orchestrator` 时，将其视为旧入口名；当前主架构以 `router` / `supervisor` 为准。

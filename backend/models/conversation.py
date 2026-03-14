@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from agent_profiles import resolve_known_agent_id
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,7 +55,10 @@ class Conversation(Base):
             "id": self.id,
             "title": self.title,
             "source": self.source,
-            "agent_id": self.agent_id,
+            "agent_id": resolve_known_agent_id(
+                self.agent_id,
+                default_on_unknown=True,
+            ),
             "source_task_id": self.source_task_id,
             "source_task_run_id": self.source_task_run_id,
             "source_task_trigger_type": self.source_task_trigger_type,

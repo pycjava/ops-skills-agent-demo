@@ -1,12 +1,13 @@
 from typing import Any
 
+from agent_profiles import resolve_known_agent_id
+
 
 def _normalize_agent_id(value: Any) -> str | None:
     if value is None:
         return None
 
-    normalized = str(value).strip()
-    return normalized or None
+    return resolve_known_agent_id(value, allow_none=True)
 
 
 def resolve_event_agent_id(event: dict[str, Any], fallback_agent_id: str) -> str:
@@ -20,4 +21,4 @@ def resolve_event_agent_id(event: dict[str, Any], fallback_agent_id: str) -> str
         if metadata_agent_id:
             return metadata_agent_id
 
-    return fallback_agent_id
+    return resolve_known_agent_id(fallback_agent_id)

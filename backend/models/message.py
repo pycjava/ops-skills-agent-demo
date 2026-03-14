@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from agent_profiles import resolve_known_agent_id
 from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -43,7 +44,11 @@ class Message(Base):
             "role": self.role,
             "content": self.content,
             "type": self.type,
-            "agent_id": self.agent_id,
+            "agent_id": resolve_known_agent_id(
+                self.agent_id,
+                allow_none=True,
+                default_on_unknown=True,
+            ),
             "tool_name": self.tool_name,
             "tool_input": self.tool_input,
             "attachments_snapshot": self.attachments_snapshot,

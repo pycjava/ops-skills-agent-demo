@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from config import MODEL_NAME
 from models import Conversation, Message
+from services.conversation_state import get_conversation_agent_id
 
 StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
 
@@ -166,7 +167,7 @@ def _format_conversation_history(
 ) -> str:
     lines = [
         f"Conversation title: {conversation.title}",
-        f"Agent id: {conversation.agent_id}",
+        f"Agent id: {get_conversation_agent_id(conversation)}",
         "History:",
     ]
 

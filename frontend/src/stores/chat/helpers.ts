@@ -9,7 +9,6 @@ import type {
 export const CHAT_ENTRY_AGENT_ID = 'router'
 
 const AGENT_ID_ALIASES: Record<string, string> = {
-  orchestrator: 'router',
   'general-purpose': 'general',
 }
 
