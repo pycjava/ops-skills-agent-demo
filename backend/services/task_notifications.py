@@ -46,6 +46,25 @@ def _extract_report_path(message: Message) -> str | None:
     return None
 
 
+def extract_latest_report_path(messages: list[Message]) -> str | None:
+    return next(
+        (
+            report_path
+            for report_path in (_extract_report_path(message) for message in reversed(messages))
+            if report_path
+        ),
+        None,
+    )
+
+
+def extract_latest_report_reference(messages: list[Message]) -> tuple[str | None, str | None]:
+    latest_report_path = extract_latest_report_path(messages)
+    return (
+        os.path.basename(latest_report_path) if latest_report_path else None,
+        latest_report_path,
+    )
+
+
 async def create_task_notification_for_run(
     task_id: str,
     task_run_id: str,
@@ -81,17 +100,13 @@ async def create_task_notification_for_run(
             ),
             None,
         )
+        report_name = None
         latest_report_path = None
         if run.status == "succeeded":
-            latest_report_path = next(
-                (
-                    report_path
-                    for report_path in (
-                        _extract_report_path(message) for message in reversed(messages)
-                    )
-                    if report_path
-                ),
-                None,
+            report_name, latest_report_path = extract_latest_report_reference(messages)
+            latest_report_path = run.report_path or latest_report_path
+            report_name = run.report_name or report_name or (
+                os.path.basename(latest_report_path) if latest_report_path else None
             )
 
         summary = _normalize_summary(
@@ -107,7 +122,7 @@ async def create_task_notification_for_run(
             status=run.status,
             title=task.name,
             summary=summary,
-            report_name=os.path.basename(latest_report_path) if latest_report_path else None,
+            report_name=report_name,
             report_path=latest_report_path,
         )
         session.add(notification)

@@ -1,61 +1,117 @@
 # MySQL SQL Analyzer 设计说明
 
-## 概述
+## 1. Skill 定位
 
-对单条 SQL 进行执行计划分析，自动读取涉及表的结构和索引，识别全表扫描、filesort、临时表等性能风险，给出索引优化和 SQL 改写建议。**全程只读，不执行原 SQL**。
+`mysql-sql-analyzer` 用于分析单条 MySQL SQL 的执行计划和潜在性能风险。它不是数据库变更工具，也不是 SQL 执行器，而是一个**只读执行计划分析 Skill**。
 
-## 架构
+## 2. 设计目标
 
-```
-用户："帮我看下这条 SQL 为什么慢"
-  → Agent 提取 SQL + 目标数据库信息
-  → 调用 analyze_mysql_sql.py 脚本
-  → 脚本执行 EXPLAIN FORMAT=JSON
-  → 自动提取涉及表，查 information_schema 获取表结构/索引
-  → 按规则引擎输出风险和建议
-  → Agent 解读结果，给出优化方案
-```
+- 对单条 SQL 建立稳定、可重复的执行计划分析流程。
+- 自动补充相关表结构和索引证据，避免只看 `EXPLAIN` 表面字段。
+- 把优化建议建立在真实计划与元数据上，而不是经验猜测。
 
-## 设计要点
+## 3. 输入约束
 
-- **纯只读分析**：仅执行 `EXPLAIN`、`SHOW`、`information_schema` 查询，禁止执行原 SQL（特别是 DML）
-- **凭据与连接分离**：`host`/`port`/`database` 由用户输入提供，`MYSQL_USER`/`MYSQL_PASSWORD` 通过环境变量注入，回答中禁止回显密码
-- **自动化程度高**：脚本自动完成"执行计划 → 提取涉及表 → 读表结构索引 → 规则匹配 → 输出建议"全流程
-- **EXPLAIN ANALYZE 可选**：默认不执行（避免额外开销），仅在用户明确要求时通过 `--explain-analyze` 启用
-- **多输出格式**：支持 `markdown`（人类阅读）和 `json`（程序消费）
-- **环境变量自动加载**：与其他 Skill 一致的 `.env` 搜索链
+进入分析前必须拿到：
 
-## 风险识别规则
+- 单条完整 SQL
+- `host`
+- `port`
+- `database`
 
-脚本内置规则引擎，自动检测以下性能风险：
+连接凭据不通过用户聊天直接传递，而是通过环境变量注入：
 
-| 风险项 | 检测方式 |
-|--------|---------|
-| 全表扫描 | access_type = ALL |
-| 文件排序 | using_filesort = true |
-| 临时表 | using_temporary_table = true |
-| 无索引命中 | possible_keys 为空 |
-| 大范围扫描 | rows 估算值过大 |
+- `MYSQL_USER`
+- `MYSQL_PASSWORD`
 
-详细规则见 `references/rules.md`。
+这体现了“连接目标与敏感凭据分离”的设计。
 
-## 目录结构
+## 4. 运行边界
 
-```
-backend/skills/mysql-sql-analyzer/
-├── SKILL.md                        # 技能指令
-├── scripts/
-│   └── analyze_mysql_sql.py        # 分析脚本
-└── references/
-    ├── rules.md                    # 风险识别规则说明
-    └── env-vars.md                 # 环境变量说明
+- 仅执行 `EXPLAIN`、`SHOW` 和 `information_schema` 查询。
+- 禁止直接执行原 SQL，尤其是 `UPDATE`、`DELETE`、`INSERT`。
+- 禁止在回复中泄露数据库密码或完整连接串。
+
+该边界的意义在于：既能获得足够分析证据，又不引入数据写风险。
+
+## 5. 标准执行流程
+
+```text
+收集 SQL 和连接目标
+  -> 调用 analyze_mysql_sql.py
+  -> 获取 EXPLAIN FORMAT=JSON
+  -> 抽取涉及表
+  -> 读取表结构和索引
+  -> 按规则识别风险
+  -> 输出摘要、证据与优化建议
 ```
 
-## 输出规范
+### 5.1 默认分析
 
-Agent 的分析回答必须包含：
+默认使用 `EXPLAIN FORMAT=JSON`，原因是：
 
-1. **执行计划摘要**：访问类型、命中索引、预估扫描行数
-2. **风险发现**：全表扫描 / filesort / 临时表等
-3. **表结构与索引证据**：涉及表的列定义和现有索引
-4. **优化建议**：推荐创建的索引、SQL 改写方向
+- 成本较低
+- 风险更小
+- 已足以识别大多数计划层问题
+
+### 5.2 深入分析
+
+只有在用户明确要求、并能接受额外开销时，才启用 `EXPLAIN ANALYZE`。
+
+## 6. 依赖资产
+
+该 Skill 当前依赖：
+
+- `backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py`
+- `backend/skills/mysql-sql-analyzer/references/rules.md`
+- `backend/skills/mysql-sql-analyzer/references/env-vars.md`
+
+这些资产的分工是：
+
+- 脚本负责标准化采集与输出。
+- `rules.md` 负责判读规则。
+- `env-vars.md` 负责环境变量约束和连接安全建议。
+
+## 7. 分析输出结构
+
+Skill 推荐按以下结构给出结论：
+
+- 执行计划摘要
+- 风险发现
+- 表结构与索引证据
+- 优化建议
+
+重点不是只说“慢”，而是回答：
+
+- 为什么慢
+- 慢在什么访问路径
+- 哪些索引没有命中或设计不合理
+- 优化优先级应该怎么排
+
+## 8. 典型风险类型
+
+该 Skill 重点关注：
+
+- 全表扫描
+- `filesort`
+- 临时表
+- 低效 join 顺序
+- 错误或缺失索引
+- 计划中行数估计异常
+
+## 9. 与其他 Skill 的边界
+
+- 如果用户要做数据库巡检，应切换到 `volcengine-rds-health-analyzer`。
+- 如果用户要解释 SQL 语法本身，而不是执行计划，可由 `general` 能力处理。
+- 如果用户要求真正执行 SQL 或修改索引，该 Skill 只能先提供诊断和建议，不能直接代替变更流程。
+
+## 10. 失败场景与回退
+
+- 缺少 SQL 或连接目标时，应先补齐输入。
+- 无法连接数据库时应反馈连接问题，不应猜测性能结论。
+- 无法安全执行 `EXPLAIN ANALYZE` 时，应退回默认只读分析模式。
+
+## 11. 设计取舍
+
+- 通过脚本统一分析流程，结果更稳定，但也要求脚本与规则持续同步。
+- 只做只读计划分析，安全性更高，但不能直接验证全部真实运行时问题。

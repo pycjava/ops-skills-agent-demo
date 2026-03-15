@@ -76,6 +76,8 @@ async def test_execute_inspection_task_creates_success_notification_with_latest_
     )
 
     assert run.status == "succeeded"
+    assert run.report_name == "report-b.md"
+    assert run.report_path == "/memories/reports/report-b.md"
 
     async with session_factory() as session:
         notifications = (
@@ -140,6 +142,8 @@ async def test_execute_inspection_task_creates_failed_notification_without_repor
     )
 
     assert run.status == "failed"
+    assert run.report_name is None
+    assert run.report_path is None
 
     async with session_factory() as session:
         notifications = (

@@ -39,6 +39,7 @@ const emit = defineEmits<{
   (e: 'toggle', taskId: string, enabled: boolean): void
   (e: 'delete-task', taskId: string): void
   (e: 'open-conversation', run: InspectionTaskRun): void
+  (e: 'download-report', run: InspectionTaskRun): void
   (e: 'save-draft', draft: InspectionTaskDraft): void
 }>()
 
@@ -230,7 +231,18 @@ function handleSaveDraft() {
           <div v-if="run.error_message" class="task-run-error">{{ run.error_message }}</div>
 
           <button
+            v-if="run.report_path"
+            :data-testid="`task-run-download-${run.id}`"
+            class="task-action-btn ui-pill-btn"
+            type="button"
+            @click="emit('download-report', run)"
+          >
+            下载报告
+          </button>
+
+          <button
             v-if="run.conversation_id"
+            :data-testid="`task-run-open-${run.id}`"
             class="task-action-btn ui-pill-btn"
             type="button"
             @click="emit('open-conversation', run)"

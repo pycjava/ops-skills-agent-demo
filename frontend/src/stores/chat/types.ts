@@ -138,6 +138,8 @@ export interface InspectionTaskRun {
   started_at: string | null
   finished_at: string | null
   error_message: string | null
+  report_name?: string | null
+  report_path?: string | null
 }
 
 export interface TaskNotification {

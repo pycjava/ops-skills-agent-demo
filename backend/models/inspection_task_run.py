@@ -29,6 +29,8 @@ class InspectionTaskRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    report_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    report_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     task: Mapped["InspectionTask"] = relationship(back_populates="runs")
     conversation: Mapped["Conversation | None"] = relationship()
@@ -51,4 +53,6 @@ class InspectionTaskRun(Base):
                 else None
             ),
             "error_message": self.error_message,
+            "report_name": self.report_name,
+            "report_path": self.report_path,
         }

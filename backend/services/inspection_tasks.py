@@ -27,6 +27,7 @@ from services.realtime_events import broadcast_event
 from services.task_notifications import (
     build_task_notification_event,
     create_task_notification_for_run,
+    extract_latest_report_reference,
 )
 from db.session import AsyncSessionLocal
 from models import Conversation, InspectionTask, InspectionTaskRun, Message
@@ -709,9 +710,24 @@ async def execute_inspection_task(
         db_task = await session.get(InspectionTask, task.id)
         if db_run is None or db_task is None:
             raise LookupError("inspection task run not found after execution")
+        report_name = None
+        latest_report_path = None
+        if db_run.conversation_id:
+            messages = list(
+                (
+                    await session.execute(
+                        select(Message)
+                        .where(Message.conversation_id == db_run.conversation_id)
+                        .order_by(Message.created_at.asc())
+                    )
+                ).scalars().all()
+            )
+            report_name, latest_report_path = extract_latest_report_reference(messages)
         db_run.status = "succeeded"
         db_run.finished_at = datetime.now()
         db_task.last_status = "succeeded"
+        db_run.report_path = latest_report_path
+        db_run.report_name = report_name
         if trigger_type != "scheduled" and db_task.enabled:
             db_task.next_run_at = next_cron_run_at(db_task.cron_expr, current_time)
         await session.commit()

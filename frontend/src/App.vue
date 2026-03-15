@@ -365,6 +365,12 @@ async function handleTaskConversationOpen(run: InspectionTaskRun) {
   closeTaskDrawer()
 }
 
+async function handleTaskRunReportDownload(run: InspectionTaskRun) {
+  if (!canReadTasks.value) return
+  if (!run.report_path) return
+  await chatStore.downloadTaskNotificationReport(run.report_path, run.report_name ?? null)
+}
+
 async function handleTaskNotificationRead(notificationId: string) {
   if (!canUpdateTaskNotifications.value) return
   await chatStore.markTaskNotificationRead(notificationId)
@@ -1114,6 +1120,7 @@ async function handleConversationTitleSave(title: string) {
               @trigger="handleTaskTrigger"
               @toggle="handleTaskToggle"
               @delete-task="handleTaskDelete"
+              @download-report="handleTaskRunReportDownload"
               @open-conversation="handleTaskConversationOpen"
               @save-draft="handleTaskDraftSave"
             />

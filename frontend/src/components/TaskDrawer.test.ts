@@ -136,9 +136,42 @@ describe('TaskDrawer', () => {
       },
     })
 
-    await wrapper.get('.task-run-card .task-action-btn').trigger('click')
+    await wrapper.get('[data-testid="task-run-open-run-1"]').trigger('click')
 
     expect(wrapper.emitted('open-conversation')).toEqual([[run]])
+  })
+
+  test('shows report download for runs with report_path and emits the selected run', async () => {
+    const run = {
+      id: 'run-1',
+      task_id: 'task-1',
+      trigger_type: 'manual' as const,
+      status: 'succeeded' as const,
+      conversation_id: 'conv-run-1',
+      started_at: '2026-03-11T08:30:00.000',
+      finished_at: '2026-03-11T08:31:00.000',
+      error_message: null,
+      report_name: 'report-a.md',
+      report_path: '/memories/reports/report-a.md',
+    }
+
+    const wrapper = mount(TaskDrawer, {
+      props: {
+        visible: true,
+        tasks: [],
+        runs: [run],
+        draft: null,
+        activeTab: 'runs',
+        isLoading: false,
+        isSaving: false,
+        error: null,
+        canCreateDraft: true,
+      },
+    })
+
+    await wrapper.get('[data-testid="task-run-download-run-1"]').trigger('click')
+
+    expect(wrapper.emitted('download-report')).toEqual([[run]])
   })
 
   test('shows the task name for each run by matching task_id', () => {

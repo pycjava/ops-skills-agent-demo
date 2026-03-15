@@ -410,6 +410,49 @@ def test_delete_task_route_deletes_task(session_factory):
 
 
 @pytest.mark.asyncio
+async def test_get_task_runs_route_returns_report_fields(session_factory):
+    async with session_factory() as session:
+        task = InspectionTask(
+            name="Peets Daily Inspection",
+            source_conversation_id=None,
+            agent_id="dba",
+            skill_id="volcengine-rds-health-analyzer",
+            prompt_template="Inspect peets-prod-pos-mysql for slow queries",
+            target_payload={"instance_name": "peets-prod-pos-mysql"},
+            schedule_type="cron",
+            cron_expr="0 9 * * *",
+            enabled=True,
+            last_status="succeeded",
+        )
+        session.add(task)
+        await session.flush()
+
+        run = InspectionTaskRun(
+            id="run-1",
+            task_id=task.id,
+            trigger_type="manual",
+            status="succeeded",
+            conversation_id=None,
+            started_at=datetime(2026, 3, 11, 8, 30),
+            finished_at=datetime(2026, 3, 11, 8, 31),
+            report_name="report-a.md",
+            report_path="/memories/reports/report-a.md",
+        )
+        session.add(run)
+        await session.commit()
+
+    client = create_test_client(session_factory)
+    response = client.get(f"/api/inspection-tasks/{task.id}/runs")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == "run-1"
+    assert payload[0]["report_name"] == "report-a.md"
+    assert payload[0]["report_path"] == "/memories/reports/report-a.md"
+
+
+@pytest.mark.asyncio
 async def test_run_conversation_stream_route_replays_history_and_finishes(session_factory):
     started_at = datetime(2026, 3, 11, 8, 30)
     finished_at = datetime(2026, 3, 11, 8, 31)

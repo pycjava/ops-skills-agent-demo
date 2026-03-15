@@ -887,6 +887,41 @@ describe('App', () => {
     expect(chatStoreMock.switchConversation).not.toHaveBeenCalled()
   })
 
+  test('downloads a task run report from the drawer', async () => {
+    chatStoreMock.inspectionTaskRuns = [
+      {
+        id: 'run-1',
+        task_id: 'task-1',
+        trigger_type: 'manual',
+        status: 'succeeded',
+        conversation_id: 'conv-run-1',
+        started_at: '2026-03-11T08:30:00.000',
+        finished_at: '2026-03-11T08:31:00.000',
+        error_message: null,
+        report_name: 'report-a.md',
+        report_path: '/memories/reports/report-a.md',
+      },
+    ]
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    await wrapper.get('[data-testid="open-task-drawer-btn"]').trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'TaskDrawer' }).vm.$emit(
+      'download-report',
+      chatStoreMock.inspectionTaskRuns[0],
+    )
+    await flushPromises()
+
+    expect(chatStoreMock.downloadTaskNotificationReport).toHaveBeenCalledWith(
+      '/memories/reports/report-a.md',
+      'report-a.md',
+    )
+  })
+
   test('keeps the title row on stable layout classes for long conversation titles', () => {
     chatStoreMock.currentConversationId = 'conv-1'
     chatStoreMock.messages = [

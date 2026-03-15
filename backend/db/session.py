@@ -98,6 +98,16 @@ def _bootstrap_sqlite_compat_columns(sync_conn):
         )
     )
 
+    if not _has_column(sync_conn, "inspection_task_runs", "report_name"):
+        sync_conn.execute(
+            text("ALTER TABLE inspection_task_runs ADD COLUMN report_name VARCHAR(255)")
+        )
+
+    if not _has_column(sync_conn, "inspection_task_runs", "report_path"):
+        sync_conn.execute(
+            text("ALTER TABLE inspection_task_runs ADD COLUMN report_path VARCHAR(500)")
+        )
+
     if _has_table(sync_conn, "mcp_servers"):
         if not _has_column(sync_conn, "mcp_servers", "command"):
             sync_conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN command TEXT"))

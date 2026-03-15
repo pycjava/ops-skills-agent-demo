@@ -1,116 +1,134 @@
 # Remote-Ops SSH Skill 设计文档
 
-## 设计思路
+## 1. Skill 定位
 
-让 AI Agent 具备**远程服务器运维能力**，通过 SSH 连接目标服务器并执行命令，实现自动化故障排查和运维操作。
+`remote-ops` 让 Agent 具备通过 SSH 在远程服务器执行运维排查命令的能力。它的本质不是新增一套远程执行 API，而是把“如何安全使用 SSH 做运维”固化为可复用流程。
 
-### 核心理念
+## 2. 设计目标
 
-> Agent 不需要写 Python 代码来远程执行命令 —— 只需要教会它"用 SSH"就行。
+- 用最少额外基础设施获得远程诊断能力。
+- 优先执行只读运维动作，降低风险。
+- 把提权边界从 Agent 逻辑下沉到操作系统的 sudo 白名单。
 
-本项目的 Agent 本身已有 shell 执行能力（`execute` 工具），SSH 本质上就是"远程 shell"，因此只需要一个 **Skill（Markdown 指令文件）** 来告诉 Agent 如何使用 SSH 连接远程服务器，而不需要开发任何新的代码或 API。
+## 3. 连接模型
 
-## 架构图
+### 3.1 基本连接方式
 
-```
-┌──────────────┐   WebSocket    ┌───────────────┐    SSH       ┌──────────────────┐
-│   Frontend   │ ◄────────────► │  Backend Agent │ ─────────►  │  Remote Server   │
-│  (Vue 3)     │   streaming    │  (DeepAgents)  │  port 65300  │  (agent-ops)     │
-└──────────────┘                │                │  or 22       │                  │
-                                │  execute(      │              │  sudo whitelist  │
-                                │   "ssh ..."    │  ◄─────────  │  only!           │
-                                │  )             │   stdout     │                  │
-                                └───────────────┘              └──────────────────┘
+Skill 约定使用项目内置私钥，通过如下模式连接：
+
+```text
+ssh -i ./skills/remote-ops/keys/agent_ops_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 -p <PORT> agent-ops@<HOST> "<COMMAND>"
 ```
 
-## 三层安全模型
+### 3.2 端口策略
 
-```
-┌─────────────────────────────────────────────────┐
-│  Layer 1: LLM 层（SKILL.md 安全约束）            │
-│  • 禁止危险命令（rm -rf, shutdown 等）            │
-│  • 修改前先备份，优先只读命令                       │
-│  • 每步操作前向用户说明意图                         │
-├─────────────────────────────────────────────────┤
-│  Layer 2: OS 用户层（agent-ops 非 root）          │
-│  • SSH 登录为普通用户，无特权                      │
-│  • 不带 sudo 只能执行普通操作                      │
-├─────────────────────────────────────────────────┤
-│  Layer 3: Sudoers 白名单                         │
-│  • /etc/sudoers.d/agent-ops 精确列出允许的命令     │
-│  • 即使 Agent "犯错"，OS 也会 permission denied   │
-│  • 最后一道防线，硬性拦截                          │
-└─────────────────────────────────────────────────┘
-```
+连接端口采用显式降级策略：
 
-## 目录结构
+1. 优先尝试 `65300`
+2. 失败后回退到 `22`
 
-```
-backend/skills/remote-ops/
-├── SKILL.md                            # 技能描述（Agent 读取此文件获取能力）
-├── .gitignore                          # 排除 keys/ 防止秘钥入库
-├── keys/
-│   ├── agent_ops_key                   # Ed25519 SSH 私钥（600 权限）
-│   └── agent_ops_key.pub              # 对应公钥（部署到远程服务器）
-└── references/
-    └── sudoers_whitelist.md           # sudoers 免密命令白名单文档
-```
+这样做是为了兼容部署环境中“非标准 SSH 端口优先”的场景。
 
-## 快速部署
+### 3.3 身份模型
 
-### 1. 生成 SSH 秘钥
+- 用户名固定为 `agent-ops`
+- 登录用户是非 root
+- 需要提权时走 `sudo`
 
-```bash
-ssh-keygen -t ed25519 -C "agent-ops" -f ~/.ssh/agent_ops_key -N ""
-cp ~/.ssh/agent_ops_key* backend/skills/remote-ops/keys/
-chmod 600 backend/skills/remote-ops/keys/agent_ops_key
-```
+## 4. 安全模型
 
-### 2. 远程服务器配置
+该 Skill 的核心不是 SSH 本身，而是三层安全治理。
 
-```bash
-# 创建专用用户
-useradd -m -s /bin/bash agent-ops
+### 4.1 第一层：Skill 约束
 
-# 部署公钥
-su - agent-ops
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-vim ~/.ssh/authorized_keys   # 粘贴 agent_ops_key.pub 内容
-chmod 600 ~/.ssh/authorized_keys
+Skill 明确禁止：
 
-# 配置 sudoers 白名单
-sudo visudo -f /etc/sudoers.d/agent-ops
-# 参考 references/sudoers_whitelist.md 中的配置
-```
+- 大范围删除
+- 关机重启
+- 磁盘破坏性命令
+- 权限篡改
+- 下载并执行远程脚本
 
-### 3. 验证连接
+同时要求：
 
-```bash
-ssh -i backend/skills/remote-ops/keys/agent_ops_key -p 65300 agent-ops@<SERVER_IP> "hostname"
+- 优先只读命令
+- 每步先说明意图
+- 修改前先展示当前状态
+
+### 4.2 第二层：受限 OS 用户
+
+`agent-ops` 不是 root，因此就算 Skill 指令有误，大部分危险操作也不会直接成功。
+
+### 4.3 第三层：sudo 白名单
+
+`references/sudoers_whitelist.md` 定义可免密提权的命令集合。Skill 要求：
+
+- 第一次使用 `sudo` 前必须先读取白名单。
+- 不在白名单中的命令一律不加 `sudo`。
+
+这把真正的高风险拦截放在操作系统层，而不是只依赖模型自觉。
+
+## 5. 标准工作流
+
+```text
+用户提供目标主机
+  -> 建立 SSH 连接
+  -> 先执行只读命令收集状态
+  -> 如需系统级信息，再在白名单内使用 sudo
+  -> 基于证据输出结论
+  -> 若需要写操作，先说明影响并征求确认
 ```
 
-### 4. 重启后端
+典型只读动作包括：
 
-Agent 会自动加载 `skills/remote-ops/` 目录下的 SKILL.md，获得远程运维能力。
+- `hostname`
+- `df` / `free`
+- `ps`
+- `tail` / `grep`
+- `systemctl status`
 
-## Agent 使用方式
+## 6. 依赖资产
 
-直接用自然语言描述你的运维需求：
+该 Skill 当前依赖：
 
-- "帮我看下 10.0.0.1 这台机器的磁盘使用情况"
-- "检查一下 prod-web-01 的 Nginx 状态和最近的错误日志"
-- "排查下 K8s 集群里 payment-service 这个 Pod 为什么一直重启"
+- `backend/skills/remote-ops/SKILL.md`
+- `backend/skills/remote-ops/references/sudoers_whitelist.md`
 
-Agent 会自动 SSH 到目标服务器，逐步执行命令，分析输出，给出诊断结论。
+SSH 私钥路径在 Skill 设计中是强约定，但密钥本身通常不提交到仓库，需要部署侧单独提供。
 
-## 为什么不用 HTTP Agent？
+## 7. 与其他 Skill 的关系
 
-| 对比 | SSH Skill | HTTP Agent（mTLS） |
-|------|----------|-------------------|
-| 开发量 | 零代码，只写 Markdown | 需要新服务 + 证书体系 |
-| 远程改动 | 仅需创建用户 + 部署公钥 | 需部署 Agent 进程 |
-| 多主机 | 天然支持 `ssh user@host` | 每台主机部署服务 |
-| 安全性 | sudoers 硬限制 | API 层面限制 |
-| 维护成本 | 几乎为零 | 证书续期 + 服务监控 |
+`remote-ops` 是更底层的远程主机能力，和 `docker`、`kubernetes` 的关系是：
 
-SSH Skill 方案足够满足绝大多数运维场景，当需要企业级审计或多团队权限隔离时再考虑 HTTP Agent。
+- `remote-ops` 更偏通用 Linux 主机排障。
+- `docker` 聚焦容器引擎。
+- `kubernetes` 聚焦集群和工作负载。
+
+当问题本质是系统服务、磁盘、日志或主机资源时，应优先使用 `remote-ops`。
+
+## 8. 写操作边界
+
+涉及以下动作时必须二次确认：
+
+- `systemctl restart`
+- `kill` / `pkill`
+- 配置文件修改
+- 任何有状态服务重启或数据路径操作
+
+确认前应说明：
+
+- 将执行什么命令
+- 影响哪些进程或服务
+- 是否有回滚方案
+
+## 9. 失败场景与回退
+
+- SSH 65300 失败则回退 22。
+- 无法连接时应回报连接问题，而不是继续猜测业务异常。
+- 白名单外命令即便逻辑上有帮助，也不应强行提权执行。
+- 如果问题已明确属于 Docker/Kubernetes，应切换到更专门的 Skill。
+
+## 10. 设计取舍
+
+- SSH Skill 零额外服务依赖，部署成本低，但审计和权限粒度不如专用远程控制服务。
+- 用 sudo 白名单做硬隔离，安全性强，但可执行动作集合会受限。
