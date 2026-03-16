@@ -24,6 +24,7 @@ kubeconfig
 nginx-es-analyzer-design.md
 agents/__pycache__/**
 backend/data/conversation_attachments/*
+agents/
 
 # Celery
 celerybeat-schedule
