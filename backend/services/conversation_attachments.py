@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import re
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, update
@@ -14,8 +17,12 @@ from models import Conversation, ConversationAttachment
 
 
 ATTACHMENTS_ROOT = (BASE_DIR / "data" / "conversation_attachments").resolve()
-ALLOWED_ATTACHMENT_EXTENSIONS = frozenset(
+TEXT_ATTACHMENT_EXTENSIONS = frozenset(
     {".txt", ".md", ".markdown", ".csv", ".json", ".sql", ".log"}
+)
+IMAGE_ATTACHMENT_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+ALLOWED_ATTACHMENT_EXTENSIONS = frozenset(
+    {*TEXT_ATTACHMENT_EXTENSIONS, *IMAGE_ATTACHMENT_EXTENSIONS}
 )
 ATTACHMENT_MIME_TYPE_BY_EXTENSION = {
     ".txt": "text/plain",
@@ -25,10 +32,15 @@ ATTACHMENT_MIME_TYPE_BY_EXTENSION = {
     ".json": "application/json",
     ".sql": "application/sql",
     ".log": "text/plain",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
 }
 TEXT_DECODING_CANDIDATES = ("utf-8", "utf-8-sig", "gb18030")
 MAX_ATTACHMENT_SIZE_BYTES = 1024 * 1024
 MAX_CONVERSATION_ATTACHMENTS = 50
+OCR_RESULT_DIRNAME = "_ocr"
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
@@ -74,6 +86,20 @@ def _normalize_mime_type(original_name: str, mime_type: str | None) -> str:
     return _infer_mime_type(original_name)
 
 
+def is_image_attachment(*, original_name: str, mime_type: str | None = None) -> bool:
+    _, suffix = _attachment_name_parts(original_name)
+    normalized_mime_type = _normalize_mime_type(original_name, mime_type)
+    return suffix in IMAGE_ATTACHMENT_EXTENSIONS or normalized_mime_type.startswith("image/")
+
+
+def is_image_attachment_record(attachment: ConversationAttachment | dict[str, Any]) -> bool:
+    original_name = str(getattr(attachment, "original_name", None) or attachment.get("original_name") or "")
+    mime_type = getattr(attachment, "mime_type", None) or attachment.get("mime_type")
+    if not original_name:
+        return False
+    return is_image_attachment(original_name=original_name, mime_type=mime_type)
+
+
 def _decode_attachment_content(content_bytes: bytes) -> str:
     if not content_bytes:
         return ""
@@ -94,6 +120,25 @@ def _attachment_directory(conversation_id: str) -> Path:
     return ATTACHMENTS_ROOT / conversation_id
 
 
+def _ocr_directory(conversation_id: str) -> Path:
+    return _attachment_directory(conversation_id) / OCR_RESULT_DIRNAME
+
+
+def _write_attachment_file(
+    stored_file_path: Path,
+    *,
+    original_name: str,
+    mime_type: str,
+    content_bytes: bytes,
+) -> None:
+    if is_image_attachment(original_name=original_name, mime_type=mime_type):
+        stored_file_path.write_bytes(content_bytes)
+        return
+
+    decoded_content = _decode_attachment_content(content_bytes)
+    stored_file_path.write_text(decoded_content, encoding="utf-8")
+
+
 def validate_attachment_upload(
     *,
     original_name: str,
@@ -104,7 +149,10 @@ def validate_attachment_upload(
         raise HTTPException(status_code=400, detail="Attachment is too large")
 
     _attachment_name_parts(original_name)
-    _normalize_mime_type(original_name, mime_type)
+    normalized_mime_type = _normalize_mime_type(original_name, mime_type)
+    if is_image_attachment(original_name=original_name, mime_type=normalized_mime_type):
+        return
+
     _decode_attachment_content(content_bytes)
 
 
@@ -123,7 +171,6 @@ async def create_attachment_record(
     )
     normalized_name, stored_name = _normalize_attachment_name(original_name)
     normalized_mime_type = _normalize_mime_type(normalized_name, mime_type)
-    decoded_content = _decode_attachment_content(content_bytes)
 
     attachment_dir = _attachment_directory(conversation_id)
     attachment_dir.mkdir(parents=True, exist_ok=True)
@@ -146,7 +193,12 @@ async def create_attachment_record(
             raise HTTPException(status_code=400, detail="Too many attachments in conversation")
 
         stored_file_path = attachment_dir / stored_name
-        stored_file_path.write_text(decoded_content, encoding="utf-8")
+        _write_attachment_file(
+            stored_file_path,
+            original_name=normalized_name,
+            mime_type=normalized_mime_type,
+            content_bytes=content_bytes,
+        )
 
         attachment = ConversationAttachment(
             conversation_id=conversation_id,
@@ -213,6 +265,101 @@ async def build_attachment_snapshot(
         for attachment_id in ordered_ids
         if attachment_id in attachments
     ]
+
+
+def save_ocr_result(
+    conversation_id: str,
+    source_attachments: Sequence[ConversationAttachment | dict[str, Any]],
+    content: str,
+) -> str:
+    ocr_dir = _ocr_directory(conversation_id)
+    ocr_dir.mkdir(parents=True, exist_ok=True)
+    stored_name = f"ocr-{uuid.uuid4().hex[:8]}.md"
+    relative_path = (
+        Path("data")
+        / "conversation_attachments"
+        / conversation_id
+        / OCR_RESULT_DIRNAME
+        / stored_name
+    ).as_posix()
+
+    source_names = [
+        str(getattr(attachment, "original_name", None) or attachment.get("original_name") or "").strip()
+        for attachment in source_attachments
+    ]
+    source_names = [name for name in source_names if name]
+
+    lines = ["# OCR Result", ""]
+    if source_names:
+        lines.append("## Source Attachments")
+        lines.extend(f"- {name}" for name in source_names)
+        lines.append("")
+    lines.append("## Extracted Text")
+    lines.append("")
+    lines.append((content or "").strip() or "(empty)")
+
+    (ocr_dir / stored_name).write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    return relative_path
+
+
+def list_saved_ocr_results(conversation_id: str) -> list[str]:
+    ocr_dir = _ocr_directory(conversation_id)
+    if not ocr_dir.exists():
+        return []
+
+    return sorted(
+        (
+            (
+                Path("data")
+                / "conversation_attachments"
+                / conversation_id
+                / OCR_RESULT_DIRNAME
+                / path.name
+            ).as_posix()
+            for path in ocr_dir.glob("*.md")
+            if path.is_file()
+        )
+    )
+
+
+def build_image_attachment_blocks(
+    conversation_id: str,
+    attachments: Sequence[ConversationAttachment | dict[str, Any]],
+) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+
+    for attachment in attachments:
+        original_name = str(
+            getattr(attachment, "original_name", None) or attachment.get("original_name") or ""
+        )
+        mime_type = str(
+            getattr(attachment, "mime_type", None) or attachment.get("mime_type") or ""
+        )
+        stored_name = str(
+            getattr(attachment, "stored_name", None) or attachment.get("stored_name") or ""
+        )
+        if not stored_name or not is_image_attachment(
+            original_name=original_name,
+            mime_type=mime_type,
+        ):
+            continue
+
+        stored_file_path = (_attachment_directory(conversation_id) / stored_name).resolve()
+        if not stored_file_path.is_file():
+            continue
+
+        blocks.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": _normalize_mime_type(original_name, mime_type),
+                    "data": base64.b64encode(stored_file_path.read_bytes()).decode("ascii"),
+                },
+            }
+        )
+
+    return blocks
 
 
 async def delete_conversation_attachment(
@@ -285,13 +432,41 @@ async def build_attachment_context(
         "- 不要只根据文件名猜测附件内容。",
     ]
 
+    has_image_attachments = False
     for attachment in attachments:
+        if is_image_attachment(
+            original_name=attachment.original_name,
+            mime_type=attachment.mime_type,
+        ):
+            has_image_attachments = True
+            lines.append(
+                "- "
+                f"`{attachment.original_name}` | "
+                "type: 图片附件 | "
+                f"path: `{attachment.relative_path}` | "
+                f"mime: `{attachment.mime_type}` | "
+                f"size: {attachment.size_bytes} bytes"
+            )
+            continue
+
         lines.append(
             "- "
             f"`{attachment.original_name}` | "
+            "type: 文本附件 | "
             f"path: `{attachment.relative_path}` | "
             f"mime: `{attachment.mime_type}` | "
             f"size: {attachment.size_bytes} bytes"
         )
+
+    if has_image_attachments:
+        lines.append(
+            "- 图片附件不能直接按文本读取；需要识别其中内容时，优先调用 OCR agent。"
+        )
+
+    saved_ocr_results = list_saved_ocr_results(conversation_id)
+    if saved_ocr_results:
+        lines.append("- 已保存的 OCR 结果如下，后续分析优先复用这些结果：")
+        for result_path in saved_ocr_results:
+            lines.append(f"- OCR result: `{result_path}`")
 
     return "\n".join(lines)

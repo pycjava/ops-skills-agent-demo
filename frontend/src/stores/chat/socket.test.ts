@@ -147,7 +147,7 @@ describe('createSocketDomain', () => {
       expect.objectContaining({
         role: 'assistant',
         content: '已定位到慢查询 SQL。',
-        agentId: 'dba',
+        agentId: 'db-runtime',
       }),
     ])
 
@@ -391,6 +391,122 @@ describe('createSocketDomain', () => {
     } as MessageEvent<string>)
 
     expect(handleTaskNotificationEvent).toHaveBeenCalledWith(notification, 3)
+    vi.unstubAllGlobals()
+  })
+
+  test('adds OCR status and result messages from websocket events', () => {
+    const messages: Array<Record<string, unknown>> = []
+    const conversations = ref<ConversationItem[]>([])
+    const currentConversationId = ref<string | null>('conv-1')
+    const draftAgentId = ref('router')
+    const agents = ref<AgentInfo[]>([
+      {
+        id: 'router',
+        label: '智能编排助手',
+        description: '',
+        capabilities: [],
+        is_default: true,
+      },
+      {
+        id: 'ocr',
+        label: 'OCR 助手',
+        description: '',
+        capabilities: [],
+        is_default: false,
+      },
+    ])
+    const isConnected = ref(false)
+    const isLoading = ref(false)
+    const handleTaskNotificationEvent = vi.fn()
+    const wsInstances: Array<{
+      onopen: null | (() => void)
+      onmessage: null | ((event: MessageEvent<string>) => void)
+      onclose: null | (() => void)
+      onerror: null | (() => void)
+      readyState: number
+      send: ReturnType<typeof vi.fn>
+    }> = []
+
+    class FakeWebSocket {
+      static readonly CONNECTING = 0
+      static readonly OPEN = 1
+      static readonly CLOSING = 2
+      static readonly CLOSED = 3
+
+      onopen: null | (() => void) = null
+      onmessage: null | ((event: MessageEvent<string>) => void) = null
+      onclose: null | (() => void) = null
+      onerror: null | (() => void) = null
+      readyState = FakeWebSocket.OPEN
+      send = vi.fn()
+
+      constructor(_url: string) {
+        wsInstances.push(this)
+      }
+    }
+
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+
+    const wsState = { current: null as WebSocket | null }
+    const domain = createSocketDomain({
+      wsUrl: 'ws://localhost/ws/chat',
+      messages: messages as never[],
+      conversations,
+      currentConversationId,
+      draftAgentId,
+      activeAgentId: computed(() => 'router'),
+      agents,
+      isConnected,
+      isLoading,
+      wsState,
+      genId: (() => {
+        let id = 0
+        return () => `msg-${++id}`
+      })(),
+      fetchConversations: vi.fn(async () => {}),
+      handleMemoryArtifact: vi.fn(),
+      handleTaskNotificationEvent,
+    })
+
+    domain.connect()
+
+    const socket = wsInstances[0]
+    if (!socket?.onmessage) {
+      throw new Error('socket onmessage handler was not registered')
+    }
+
+    socket.onmessage({
+      data: JSON.stringify({
+        type: 'ocr_status',
+        status: 'processing',
+        content: 'OCR 正在分析 1 张图片附件…',
+        agent_id: 'ocr',
+      }),
+    } as MessageEvent<string>)
+
+    socket.onmessage({
+      data: JSON.stringify({
+        type: 'ocr_result',
+        content: '## OCR Result\n\n- text: mysql error 1045',
+        agent_id: 'ocr',
+      }),
+    } as MessageEvent<string>)
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        role: 'system',
+        type: 'text',
+        content: 'OCR 正在分析 1 张图片附件…',
+        agentId: 'ocr',
+      }),
+      expect.objectContaining({
+        role: 'system',
+        type: 'text',
+        content: '## OCR Result\n\n- text: mysql error 1045',
+        agentId: 'ocr',
+      }),
+    ])
+
     vi.unstubAllGlobals()
   })
 })

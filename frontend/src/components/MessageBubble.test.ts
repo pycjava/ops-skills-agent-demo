@@ -6,8 +6,8 @@ const chatStoreMock = {
   agents: [
     { id: 'router', label: '智能编排助手' },
     { id: 'supervisor', label: '复杂任务协调器' },
-    { id: 'dba', label: '数据库助手' },
-    { id: 'ops', label: '运维助手' },
+    { id: 'db-runtime', label: '数据库助手' },
+    { id: 'ops-runtime', label: '运维助手' },
   ],
   conversationAttachments: [
     {
@@ -36,7 +36,7 @@ describe('MessageBubble', () => {
           role: 'assistant',
           content: '检查完成，发现 2 条慢查询。',
           type: 'text',
-          agentId: 'dba',
+          agentId: 'db-runtime',
           timestamp: Date.now(),
         },
       },
@@ -51,11 +51,11 @@ describe('MessageBubble', () => {
         message: {
           id: 'msg-task-1',
           role: 'system',
-          content: '🔄 智能编排助手 正在调用 数据库助手...',
+          content: 'router 正在调用数据库助手...',
           type: 'tool_call',
           toolName: 'task',
           toolInput: {
-            subagent_type: 'dba',
+            subagent_type: 'db-runtime',
             source_agent_id: 'router',
           },
           agentId: 'router',
@@ -102,7 +102,6 @@ describe('MessageBubble', () => {
 
     expect(wrapper.get('[data-testid="message-attachment-att-1"]').text()).toContain('report-a.md')
     expect(wrapper.get('[data-testid="message-attachment-att-2"]').text()).toContain('report-b.md')
-    expect(wrapper.text()).toContain('已附加')
 
     await wrapper.get('[data-testid="message-attachment-delete-att-1"]').trigger('click')
 

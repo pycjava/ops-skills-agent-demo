@@ -4,7 +4,7 @@ from services.agent_event_identity import resolve_event_agent_id
 def test_resolve_event_agent_id_prefers_explicit_agent_id():
     assert (
         resolve_event_agent_id({"agent_id": "dba"}, fallback_agent_id="router")
-        == "dba"
+        == "db-runtime"
     )
 
 
@@ -14,7 +14,7 @@ def test_resolve_event_agent_id_uses_langchain_agent_metadata():
             {"metadata": {"lc_agent_name": "ops"}},
             fallback_agent_id="router",
         )
-        == "ops"
+        == "ops-runtime"
     )
 
 

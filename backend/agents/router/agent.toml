@@ -9,6 +9,7 @@ skills = ["using-superpowers"]
 capabilities = ["意图识别", "轻量路由", "升级判断"]
 allowed_handoffs = [
   "general",
+  "ocr",
   "backend",
   "frontend",
   "db-schema",
@@ -20,6 +21,7 @@ allowed_handoffs = [
 ]
 subagent_configs = [
   "general",
+  "ocr",
   "backend",
   "frontend",
   "db-schema",

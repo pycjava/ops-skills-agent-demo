@@ -20,7 +20,7 @@ const emit = defineEmits<{
 }>()
 
 const fileInput = ref<HTMLInputElement | null>(null)
-const attachmentHint = `仅识别附件中的文字，单会话最多 ${MAX_CONVERSATION_ATTACHMENTS} 个附件`
+const attachmentHint = `支持文本和图片附件，单会话最多 ${MAX_CONVERSATION_ATTACHMENTS} 个附件`
 
 function triggerFileSelect() {
   if (props.disabled || props.isUploading) {
@@ -74,7 +74,7 @@ defineExpose({
       class="attachment-input"
       type="file"
       multiple
-      accept=".txt,.md,.markdown,.csv,.json,.sql,.log,text/plain,text/markdown,text/csv,application/json,application/sql,application/x-sql"
+      accept=".txt,.md,.markdown,.csv,.json,.sql,.log,.png,.jpg,.jpeg,.webp,text/plain,text/markdown,text/csv,application/json,application/sql,application/x-sql,image/png,image/jpeg,image/webp"
       :disabled="disabled || isUploading"
       @change="handleFileChange"
     />

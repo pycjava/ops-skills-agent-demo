@@ -34,7 +34,7 @@ def test_upload_attachment_creates_conversation_and_supports_list_and_delete(
     conversation = payload["conversation"]
     attachment = payload["attachment"]
 
-    assert conversation["agent_id"] == "dba"
+    assert conversation["agent_id"] == "db-runtime"
     assert attachment["conversation_id"] == conversation["id"]
     assert attachment["original_name"] == "sample.csv"
     assert attachment["mime_type"] == "text/csv"
@@ -128,6 +128,38 @@ def test_upload_attachment_accepts_noncanonical_csv_mime(
     payload = response.json()
     assert payload["attachment"]["original_name"] == "report.csv"
     assert payload["attachment"]["mime_type"] == "application/vnd.ms-excel"
+
+
+def test_upload_attachment_accepts_png_binary_content(
+    session_factory, tmp_path, monkeypatch
+):
+    client = create_test_client(session_factory)
+    monkeypatch.setattr(attachment_service, "ATTACHMENTS_ROOT", tmp_path)
+
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR"
+        b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00"
+        b"\x90wS\xde"
+        b"\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01"
+        b"\xe2!\xbc3"
+        b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+    response = client.post(
+        "/api/conversations/attachments",
+        data={"agent_id": "general"},
+        files={"file": ("console.png", png_bytes, "image/png")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    attachment = payload["attachment"]
+    stored_file = tmp_path / payload["conversation"]["id"] / attachment["stored_name"]
+
+    assert attachment["original_name"] == "console.png"
+    assert attachment["mime_type"] == "image/png"
+    assert stored_file.read_bytes() == png_bytes
 
 
 def test_upload_attachment_rejects_supported_extension_with_binary_content(
