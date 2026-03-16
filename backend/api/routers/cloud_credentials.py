@@ -32,7 +32,7 @@ class CloudCredentialRegistryUpdateRequest(BaseModel):
 
 class CloudCredentialResolveRequest(BaseModel):
     message: str = Field(..., description="User message to resolve")
-    agent_id: str = Field("dba", description="Agent id for memory scope")
+    agent_id: str = Field("db-runtime", description="Agent id for memory scope")
     credential_ref: str | None = Field(
         default=None, description="Optional explicit credential ref"
     )

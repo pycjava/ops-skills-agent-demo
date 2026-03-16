@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useChatStore } from '../stores/chat'
+import { resolveKnownAgentLabel } from '../stores/chat/helpers'
 
 const chatStore = useChatStore()
 const rawConfig = ref('')
@@ -8,6 +9,9 @@ const formError = ref('')
 
 const activeAgent = computed(
   () => chatStore.agents.find((agent) => agent.id === chatStore.activeAgentId) ?? null,
+)
+const activeAgentLabel = computed(
+  () => activeAgent.value?.label || resolveKnownAgentLabel(chatStore.activeAgentId) || chatStore.activeAgentId,
 )
 
 const sortedServers = computed(() =>
@@ -82,7 +86,7 @@ function connectionSummary(server: {
         <div class="title">MCP Config</div>
         <div class="subtitle">
           Current agent:
-          <strong>{{ activeAgent?.label || chatStore.activeAgentId }}</strong>
+          <strong>{{ activeAgentLabel }}</strong>
         </div>
       </div>
       <button class="action-btn primary save-config" @click="saveConfig">Save Config</button>

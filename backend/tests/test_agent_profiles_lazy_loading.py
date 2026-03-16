@@ -162,6 +162,43 @@ def test_agent_profiles_successful_registry_load_is_cached(monkeypatch):
     assert load_calls == 1
 
 
+def test_get_agent_memory_roots_uses_registry_aliases(monkeypatch):
+    def load_registry():
+        return SimpleNamespace(
+            config=SimpleNamespace(
+                default_agent_id="router",
+                aliases={
+                    "general-purpose": "general",
+                    "dba": "db-runtime",
+                },
+                public_agent_ids=("router",),
+            ),
+            manifests={
+                "router": _make_manifest("router"),
+                "general": _make_manifest("general"),
+                "db-runtime": _make_manifest("db-runtime"),
+            },
+        )
+
+    module = _load_probe_module(monkeypatch, load_registry)
+
+    assert module.get_agent_memory_roots("general") == (
+        "/memories/agents/general/",
+        "/memories/agents/general-purpose/",
+    )
+    assert module.get_agent_memory_roots("general-purpose") == (
+        "/memories/agents/general/",
+        "/memories/agents/general-purpose/",
+    )
+    assert module.get_agent_memory_roots("dba") == (
+        "/memories/agents/db-runtime/",
+        "/memories/agents/dba/",
+    )
+    assert module.get_agent_memory_roots("custom-agent") == (
+        "/memories/agents/custom-agent/",
+    )
+
+
 def test_get_agent_profile_uses_resolved_key_in_error_message(monkeypatch):
     def load_registry():
         return SimpleNamespace(

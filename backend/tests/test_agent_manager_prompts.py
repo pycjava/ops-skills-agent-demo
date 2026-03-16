@@ -9,13 +9,36 @@ FLOWCHART_AUTHORITY_MARKER = "【DOT流程图权威规则】"
 MANUAL_TESTING_EXCUSE = "我已经手动测试过了"
 GUESS_AND_PATCH_EXCUSE = "我先大概改一下再看"
 
+ROUTER_LEAF_AGENTS = [
+    "general",
+    "backend",
+    "frontend",
+    "db-schema",
+    "db-runtime",
+    "ops-runtime",
+    "platform",
+    "security",
+    "supervisor",
+]
+
+SUPERVISOR_LEAF_AGENTS = [
+    "general",
+    "backend",
+    "frontend",
+    "db-schema",
+    "db-runtime",
+    "ops-runtime",
+    "platform",
+    "security",
+]
+
 
 def test_composed_system_prompts_repeat_anti_excuse_rule_in_base_and_role_prompts():
     manager = AgentManager()
     role_headers = {
         "general": "你是“通用助手”。",
-        "dba": "你是“数据库助手”",
-        "ops": "你是“运维助手”。",
+        "db-runtime": "你是“数据库运行态助手”",
+        "ops-runtime": "你是“运行时运维助手”",
     }
 
     for agent_id, role_header in role_headers.items():
@@ -37,13 +60,13 @@ def test_router_and_supervisor_prompts_are_composed_with_runtime_hints():
     assert "Router Agent Prompt" in router_prompt
     assert "只做一次路由决策" in router_prompt
     assert "Supervisor Agent Prompt" in supervisor_prompt
-    assert "只处理 router 升级上来的复杂任务" in supervisor_prompt
+    assert "仅处理由 `router` 升级上来的复杂问题" in supervisor_prompt
 
 
-def test_public_agent_profiles_match_router_supervisor_topology():
+def test_public_agent_profiles_match_router_only_topology():
     public_ids = [profile.id for profile in list_public_agent_profiles()]
 
-    assert public_ids == ["router", "supervisor", "general", "dba", "ops"]
+    assert public_ids == ["router"]
 
 
 def test_unknown_agent_profile_raises_for_removed_orchestrator_id():
@@ -51,17 +74,23 @@ def test_unknown_agent_profile_raises_for_removed_orchestrator_id():
         get_agent_profile("orchestrator")
 
 
+def test_legacy_aliases_resolve_to_runtime_agents():
+    assert get_agent_profile("dba").id == "db-runtime"
+    assert get_agent_profile("ops").id == "ops-runtime"
+    assert get_agent_profile("general-purpose").id == "general"
+
+
 def test_router_and_supervisor_profiles_have_expected_subagent_layout():
     router_profile = get_agent_profile("router")
     supervisor_profile = get_agent_profile("supervisor")
 
     assert router_profile.execution_mode == "router"
-    assert router_profile.allowed_handoffs == ("general", "dba", "ops", "supervisor")
-    assert router_profile.subagent_configs == ("general", "dba", "ops", "supervisor")
+    assert list(router_profile.allowed_handoffs) == ROUTER_LEAF_AGENTS
+    assert list(router_profile.subagent_configs) == ROUTER_LEAF_AGENTS
 
     assert supervisor_profile.execution_mode == "supervisor"
-    assert supervisor_profile.allowed_handoffs == ("general", "dba", "ops")
-    assert supervisor_profile.subagent_configs == ("general", "dba", "ops")
+    assert list(supervisor_profile.allowed_handoffs) == SUPERVISOR_LEAF_AGENTS
+    assert list(supervisor_profile.subagent_configs) == SUPERVISOR_LEAF_AGENTS
 
 
 def test_build_subagents_supports_router_and_supervisor_hierarchy():
@@ -70,18 +99,11 @@ def test_build_subagents_supports_router_and_supervisor_hierarchy():
 
     router_subagents = manager._build_subagents(get_agent_profile("router"))
 
-    assert [subagent["name"] for subagent in router_subagents] == [
-        "general",
-        "dba",
-        "ops",
-        "supervisor",
-    ]
+    assert [subagent["name"] for subagent in router_subagents] == ROUTER_LEAF_AGENTS
 
     supervisor_subagent = next(
         subagent for subagent in router_subagents if subagent["name"] == "supervisor"
     )
-    assert [subagent["name"] for subagent in supervisor_subagent["subagents"]] == [
-        "general",
-        "dba",
-        "ops",
-    ]
+    assert [subagent["name"] for subagent in supervisor_subagent["subagents"]] == (
+        SUPERVISOR_LEAF_AGENTS
+    )

@@ -8,6 +8,7 @@ import {
   apiFetch,
   getDefaultAgentId,
   resolveAgentId,
+  resolveConversationAgentId,
 } from './chat/helpers'
 import { createMcpDomain } from './chat/mcp'
 import { createMemoryDomain } from './chat/memory'
@@ -93,17 +94,12 @@ export const useChatStore = defineStore('chat', () => {
       isMemoryDeleting.value,
   )
 
-  const currentConversation = computed(
-    () =>
-      conversations.value.find(
-        (conversation) => conversation.id === currentConversationId.value,
-      ) ?? null,
-  )
-
   const activeAgentId = computed(
     () =>
-      resolveAgentId(
-        currentConversation.value?.agent_id || draftAgentId.value || CHAT_ENTRY_AGENT_ID,
+      resolveConversationAgentId(
+        currentConversationId.value,
+        conversations.value,
+        draftAgentId.value || CHAT_ENTRY_AGENT_ID,
         agents.value,
       ),
   )
@@ -173,7 +169,9 @@ export const useChatStore = defineStore('chat', () => {
 
   async function fetchSkills(agentId?: string) {
     try {
-      const targetAgentId = resolveAgentId(agentId || activeAgentId.value, agents.value)
+      const targetAgentId = resolveAgentId(agentId || activeAgentId.value, agents.value, {
+        preserveKnownInternal: true,
+      })
       const res = await apiFetch(
         `${backendUrl}/api/skills?agent_id=${encodeURIComponent(targetAgentId)}`,
       )
@@ -194,7 +192,7 @@ export const useChatStore = defineStore('chat', () => {
       },
       body: JSON.stringify({
         message,
-        agent_id: isMysqlInspectionIntent(message) ? 'dba' : CHAT_ENTRY_AGENT_ID,
+        agent_id: isMysqlInspectionIntent(message) ? 'db-runtime' : CHAT_ENTRY_AGENT_ID,
         credential_ref: credentialRef ?? null,
       }),
     })

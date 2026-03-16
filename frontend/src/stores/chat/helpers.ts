@@ -10,6 +10,30 @@ export const CHAT_ENTRY_AGENT_ID = 'router'
 
 const AGENT_ID_ALIASES: Record<string, string> = {
   'general-purpose': 'general',
+  dba: 'db-runtime',
+  ops: 'ops-runtime',
+  dev: 'backend',
+  ui: 'frontend',
+  sec: 'security',
+}
+
+export const KNOWN_AGENT_LABELS: Record<string, string> = {
+  router: '智能编排助手',
+  supervisor: '复杂任务协调器',
+  general: '通用助手',
+  'general-purpose': '通用助手',
+  backend: '后端工程助手',
+  frontend: '前端工程助手',
+  'db-schema': '数据库设计助手',
+  'db-runtime': '数据库运行态助手',
+  dba: '数据库运行态助手',
+  'ops-runtime': '运行时运维助手',
+  ops: '运行时运维助手',
+  platform: '平台交付助手',
+  security: '安全与权限助手',
+  dev: '后端工程助手',
+  ui: '前端工程助手',
+  sec: '安全与权限助手',
 }
 
 export function normalizeAgentId(value: unknown): string | undefined {
@@ -56,7 +80,21 @@ export function getDefaultAgentId(agents: AgentInfo[]): string {
   return agents.find((agent) => agent.is_default)?.id || CHAT_ENTRY_AGENT_ID
 }
 
-export function resolveAgentId(agentId: string | null | undefined, agents: AgentInfo[]): string {
+function isKnownInternalAgentId(agentId: string): boolean {
+  return Boolean(KNOWN_AGENT_LABELS[agentId])
+}
+
+export function resolveKnownAgentLabel(agentId: string | null | undefined): string | undefined {
+  const normalizedAgentId = normalizeAgentId(agentId)
+  if (!normalizedAgentId) return undefined
+  return KNOWN_AGENT_LABELS[normalizedAgentId]
+}
+
+export function resolveAgentId(
+  agentId: string | null | undefined,
+  agents: AgentInfo[],
+  options: { preserveKnownInternal?: boolean } = {},
+): string {
   const candidate = normalizeAgentId(agentId) || ''
   if (!candidate) {
     return getDefaultAgentId(agents)
@@ -66,7 +104,15 @@ export function resolveAgentId(agentId: string | null | undefined, agents: Agent
     return candidate
   }
 
-  return agents.some((agent) => agent.id === candidate) ? candidate : getDefaultAgentId(agents)
+  if (agents.some((agent) => agent.id === candidate)) {
+    return candidate
+  }
+
+  if (options.preserveKnownInternal && isKnownInternalAgentId(candidate)) {
+    return candidate
+  }
+
+  return getDefaultAgentId(agents)
 }
 
 export function resolveConversationAgentId(
@@ -80,7 +126,9 @@ export function resolveConversationAgentId(
   }
 
   const conversationAgentId = conversations.find((conversation) => conversation.id === convId)?.agent_id
-  return resolveAgentId(conversationAgentId || draftAgentId, agents)
+  return resolveAgentId(conversationAgentId || draftAgentId, agents, {
+    preserveKnownInternal: true,
+  })
 }
 
 export function findRecentToolInput(

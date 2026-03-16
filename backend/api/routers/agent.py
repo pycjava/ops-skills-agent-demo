@@ -96,7 +96,9 @@ async def agent_chat(req: ChatRequest):
     if req.skill:
         user_message = f"@{req.skill} {user_message}"
 
-    if resolved_agent_id == "dba" and contains_plaintext_cloud_credentials(user_message):
+    if resolved_agent_id == "db-runtime" and contains_plaintext_cloud_credentials(
+        user_message
+    ):
         raise HTTPException(status_code=400, detail=cloud_credentials_rejection_message())
 
     await save_message(

@@ -22,7 +22,7 @@ import {
   type TaskNotification,
 } from './stores/chat'
 import type { TaskStreamEvent } from './stores/chat/tasks'
-import { toAttachmentSnapshot } from './stores/chat/helpers'
+import { KNOWN_AGENT_LABELS, toAttachmentSnapshot } from './stores/chat/helpers'
 import {
   buildMysqlSelectionSystemHint,
   isMysqlInspectionIntent,
@@ -52,7 +52,10 @@ const pendingTaskCreation = ref<{
 
 const hasMessages = computed(() => chatStore.messages.length > 0)
 const agentLabels = computed(() =>
-  Object.fromEntries(chatStore.agents.map((agent) => [agent.id, agent.label])),
+  ({
+    ...KNOWN_AGENT_LABELS,
+    ...Object.fromEntries(chatStore.agents.map((agent) => [agent.id, agent.label])),
+  }),
 )
 const activeAgentLabel = computed(
   () =>

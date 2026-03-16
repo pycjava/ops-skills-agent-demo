@@ -1,2 +1,10 @@
 default_agent_id = "router"
-public_agent_ids = ["router", "supervisor", "general", "dba", "ops"]
+public_agent_ids = ["router"]
+
+[aliases]
+general-purpose = "general"
+dba = "db-runtime"
+ops = "ops-runtime"
+dev = "backend"
+ui = "frontend"
+sec = "security"

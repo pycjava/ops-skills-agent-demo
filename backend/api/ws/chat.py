@@ -44,6 +44,28 @@ SUBAGENT_LABELS = {
 }
 
 
+SUBAGENT_LABELS.update(
+    {
+        "router": "智能编排助手",
+        "supervisor": "复杂任务协调器",
+        "general": "通用助手",
+        "general-purpose": "通用助手",
+        "backend": "后端工程助手",
+        "frontend": "前端工程助手",
+        "db-schema": "数据库设计助手",
+        "db-runtime": "数据库运行态助手",
+        "dba": "数据库运行态助手",
+        "ops-runtime": "运行时运维助手",
+        "ops": "运行时运维助手",
+        "platform": "平台交付助手",
+        "security": "安全与权限助手",
+        "dev": "后端工程助手",
+        "ui": "前端工程助手",
+        "sec": "安全与权限助手",
+    }
+)
+
+
 @router.websocket("/chat")
 async def websocket_chat(ws: WebSocket):
     if get_auth_settings().enabled:
@@ -383,7 +405,7 @@ async def websocket_chat(ws: WebSocket):
                         )
                     )
 
-                if current_agent_id == "dba" and contains_plaintext_cloud_credentials(
+                if current_agent_id == "db-runtime" and contains_plaintext_cloud_credentials(
                     content
                 ):
                     await ws.send_text(

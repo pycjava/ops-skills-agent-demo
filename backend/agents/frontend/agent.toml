@@ -1,0 +1,11 @@
+id = "frontend"
+label = "前端工程助手"
+description = "负责 Vue 3 界面、状态管理、聊天交互与前端体验优化。"
+execution_mode = "direct"
+risk_level = "low"
+
+prompt_paths = ["prompts/base.md", "prompts/frontend.md"]
+skills = ["file_reader", "code_explainer", "obsidian-markdown", "using-superpowers"]
+capabilities = ["Vue 3 开发", "状态管理", "聊天 UI 与交互"]
+allowed_handoffs = []
+subagent_configs = []

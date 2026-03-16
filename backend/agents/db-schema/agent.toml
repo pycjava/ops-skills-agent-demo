@@ -1,0 +1,11 @@
+id = "db-schema"
+label = "数据库设计助手"
+description = "负责数据建模、DDL、索引设计、迁移方案与数据库结构评审。"
+execution_mode = "direct"
+risk_level = "medium"
+
+prompt_paths = ["prompts/base.md", "prompts/db-schema.md"]
+skills = ["mysql-sql-analyzer", "using-superpowers"]
+capabilities = ["数据建模", "DDL 与迁移", "索引设计"]
+allowed_handoffs = []
+subagent_configs = []

@@ -6,6 +6,7 @@ from typing import Any
 from dotenv import dotenv_values
 from fastapi import HTTPException
 
+from agent_profiles import get_agent_memory_roots
 from config import BASE_DIR
 from services.cloud_instance_candidates import (
     extract_keywords,
@@ -246,7 +247,7 @@ def resolve_credential_ref(
 async def resolve_cloud_request_context(
     user_message: str,
     *,
-    agent_id: str = "dba",
+    agent_id: str = "db-runtime",
     credential_ref: str | None = None,
 ) -> dict[str, Any]:
     registry, _updated_at = await load_cloud_credentials_registry()
@@ -256,10 +257,11 @@ async def resolve_cloud_request_context(
 
     tree = await list_memory_tree()
     all_paths = _flatten_memory_nodes(tree)
+    agent_roots = get_agent_memory_roots(agent_id)
     memory_paths = [
         path
         for path in all_paths
-        if path.startswith(f"/memories/agents/{agent_id}/")
+        if any(path.startswith(root) for root in agent_roots)
         and path.endswith(".md")
         and not path.endswith("cloud_credentials_registry.json")
     ]

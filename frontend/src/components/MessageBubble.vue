@@ -8,6 +8,7 @@ import type {
   ConversationAttachmentSnapshot,
 } from '../stores/chat'
 import { useChatStore } from '../stores/chat'
+import { resolveKnownAgentLabel } from '../stores/chat/helpers'
 
 const chatStore = useChatStore()
 
@@ -169,7 +170,7 @@ function resolveAgentLabel(agentId?: string): string | null {
   if (!normalizedAgentId) return null
 
   const matchingAgent = chatStore.agents.find((agent) => agent.id === normalizedAgentId)
-  return matchingAgent?.label || null
+  return matchingAgent?.label || resolveKnownAgentLabel(normalizedAgentId) || null
 }
 
 const messageAgentLabel = computed(() => {

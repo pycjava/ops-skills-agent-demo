@@ -7,5 +7,23 @@ risk_level = "low"
 prompt_paths = ["prompts/base.md", "prompts/supervisor.md"]
 skills = ["using-superpowers"]
 capabilities = ["复杂任务编排", "跨域诊断", "结果整合"]
-allowed_handoffs = ["general", "dba", "ops"]
-subagent_configs = ["general", "dba", "ops"]
+allowed_handoffs = [
+  "general",
+  "backend",
+  "frontend",
+  "db-schema",
+  "db-runtime",
+  "ops-runtime",
+  "platform",
+  "security",
+]
+subagent_configs = [
+  "general",
+  "backend",
+  "frontend",
+  "db-schema",
+  "db-runtime",
+  "ops-runtime",
+  "platform",
+  "security",
+]

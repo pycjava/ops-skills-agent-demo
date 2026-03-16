@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable
 from langchain_core.messages import HumanMessage
 
 from agent_manager import AgentManager
-from agent_profiles import canonicalize_agent_id
+from agent_profiles import canonicalize_agent_id, get_agent_memory_roots
 from config import MAX_TURNS
 from services.agent_event_identity import resolve_event_agent_id
 from utils.logger import logger
@@ -30,8 +30,6 @@ DBA_CLOUD_REGISTRY_PATH = "/memories/agents/dba/cloud_credentials_registry.json"
 MEMORY_EXCERPT_MAX_LINES = 24
 MEMORY_EXCERPT_MAX_CHARS = 1600
 MEMORY_MATCH_LIMIT = 3
-
-
 _manager = AgentManager()
 
 
@@ -133,7 +131,7 @@ async def _build_memory_context(user_message: str, agent_id: str) -> str | None:
             return None
 
         keywords = _extract_message_keywords(user_message)
-        agent_root = f"/memories/agents/{agent_id}/"
+        agent_roots = get_agent_memory_roots(agent_id)
 
         selected_docs: list[tuple[str, str, int]] = []
 
@@ -143,17 +141,20 @@ async def _build_memory_context(user_message: str, agent_id: str) -> str | None:
             if isinstance(content, str) and content.strip():
                 selected_docs.append((MEMORY_INSTRUCTIONS_PATH, content, 10_000))
 
-        if agent_id == "dba" and DBA_CLOUD_REGISTRY_PATH in all_paths:
+        if agent_id == "db-runtime" and DBA_CLOUD_REGISTRY_PATH in all_paths:
             registry = await read_memory_document(DBA_CLOUD_REGISTRY_PATH)
             content = registry.get("content", "")
             if isinstance(content, str) and content.strip():
                 selected_docs.append((DBA_CLOUD_REGISTRY_PATH, content, 9_500))
 
-        agent_paths = [path for path in all_paths if path.startswith(agent_root)]
+        agent_paths = [
+            path for path in all_paths if any(path.startswith(root) for root in agent_roots)
+        ]
         fallback_paths = [
             path
             for path in all_paths
-            if path.startswith("/memories/agents/") and not path.startswith(agent_root)
+            if path.startswith("/memories/agents/")
+            and not any(path.startswith(root) for root in agent_roots)
         ]
 
         async def load_ranked(paths: list[str]) -> list[tuple[str, str, int]]:

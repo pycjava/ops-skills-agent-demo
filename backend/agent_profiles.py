@@ -150,6 +150,33 @@ def canonicalize_agent_id(agent_id: str | None) -> str:
     return _get_registry_snapshot().legacy_agent_aliases.get(candidate, candidate)
 
 
+def get_agent_memory_roots(agent_id: str | None) -> tuple[str, ...]:
+    snapshot = _get_registry_snapshot()
+    candidate = str(agent_id or "").strip()
+    resolved_agent_id = (
+        snapshot.legacy_agent_aliases.get(candidate, candidate)
+        if candidate
+        else snapshot.default_agent_id
+    )
+
+    directory_names = [resolved_agent_id]
+    directory_names.extend(
+        legacy_agent_id
+        for legacy_agent_id, canonical_agent_id in snapshot.legacy_agent_aliases.items()
+        if canonical_agent_id == resolved_agent_id
+    )
+
+    roots: list[str] = []
+    seen: set[str] = set()
+    for directory_name in directory_names:
+        root = f"/memories/agents/{directory_name}/"
+        if root in seen:
+            continue
+        seen.add(root)
+        roots.append(root)
+    return tuple(roots)
+
+
 def resolve_known_agent_id(
     agent_id: str | None,
     *,
