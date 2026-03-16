@@ -1,0 +1,11 @@
+id = "ocr"
+label = "OCR 助手"
+description = "负责图片文字识别、截图内容结构化和 OCR 结果整理。"
+execution_mode = "direct"
+risk_level = "low"
+
+prompt_paths = ["prompts/base.md", "prompts/ocr.md"]
+skills = ["using-superpowers"]
+capabilities = ["图片文字识别", "截图结构化", "OCR 结果整理"]
+allowed_handoffs = []
+subagent_configs = []
