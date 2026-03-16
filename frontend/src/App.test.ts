@@ -36,6 +36,41 @@ const chromeHarness = vi.hoisted(() => ({
   showInspector: null as null | { value: boolean },
 }))
 
+type ClipboardItemStub = {
+  kind: string
+  type: string
+  getAsFile: () => File | null
+}
+
+function createClipboardFileItem(file: File): ClipboardItemStub {
+  return {
+    kind: 'file',
+    type: file.type,
+    getAsFile: () => file,
+  }
+}
+
+function createClipboardTextItem(): ClipboardItemStub {
+  return {
+    kind: 'string',
+    type: 'text/plain',
+    getAsFile: () => null,
+  }
+}
+
+async function dispatchPasteEvent(target: Element, items: ClipboardItemStub[]) {
+  const event = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'clipboardData', {
+    value: { items },
+    configurable: true,
+  })
+
+  target.dispatchEvent(event)
+  await flushPromises()
+
+  return event
+}
+
 function createCloudResolution(
   overrides: Partial<CloudContextResolution> = {},
 ): CloudContextResolution {
@@ -268,6 +303,9 @@ describe('App', () => {
       label: '智能编排助手',
       execution_mode: 'router',
     }
+    chatStoreMock.isConnected = true
+    chatStoreMock.isLoading = false
+    chatStoreMock.isAttachmentUploading = false
     chatStoreMock.currentConversationId = null
     chatStoreMock.draftAgentId = 'router'
     chatStoreMock.messages = []
@@ -282,6 +320,7 @@ describe('App', () => {
     chatStoreMock.taskNotificationToast = null
     chatStoreMock.taskNotificationError = null
     chatStoreMock.resolveCloudRequestContext.mockResolvedValue(createCloudResolution())
+    chatStoreMock.hasPermission.mockImplementation(() => true)
   })
 
   test('renders readable toolbar labels and stable icons', () => {
@@ -1032,6 +1071,105 @@ describe('App', () => {
 
     expect(chatStoreMock.uploadConversationAttachment).toHaveBeenCalledWith(file)
     expect(chatStoreMock.deleteConversationAttachment).toHaveBeenCalledWith('att-1')
+  })
+
+  test('does not intercept plain text paste in the home composer', async () => {
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+
+    const textarea = wrapper.get('textarea.composer-input-home')
+    const event = await dispatchPasteEvent(textarea.element, [createClipboardTextItem()])
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(chatStoreMock.uploadConversationAttachment).not.toHaveBeenCalled()
+  })
+
+  test('uploads a pasted image from the home composer and prevents the default paste', async () => {
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+    const textarea = wrapper.get('textarea.composer-input-home')
+    const image = new File(['image-bytes'], 'clipboard.png', { type: 'image/png' })
+
+    const event = await dispatchPasteEvent(textarea.element, [createClipboardFileItem(image)])
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(chatStoreMock.uploadConversationAttachment).toHaveBeenCalledTimes(1)
+    expect(chatStoreMock.uploadConversationAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'image/png',
+        name: expect.stringMatching(/^pasted-image-\d+-0\.png$/),
+      }),
+    )
+  })
+
+  test('uploads all pasted images from the chat composer', async () => {
+    chatStoreMock.messages = [
+      {
+        id: 'msg-1',
+        role: 'user',
+        content: 'existing message',
+        type: 'text',
+        timestamp: 1,
+      },
+    ]
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+    const textarea = wrapper.get('textarea.composer-input-chat')
+    const firstImage = new File(['one'], 'first.png', { type: 'image/png' })
+    const secondImage = new File(['two'], 'second.png', { type: 'image/png' })
+
+    const event = await dispatchPasteEvent(textarea.element, [
+      createClipboardFileItem(firstImage),
+      createClipboardFileItem(secondImage),
+    ])
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(chatStoreMock.uploadConversationAttachment).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not upload pasted images when attachments are already at the limit', async () => {
+    chatStoreMock.conversationAttachments = Array.from({ length: 50 }, (_, index) => ({
+      id: `att-${index}`,
+      conversation_id: 'conv-1',
+      original_name: `notes-${index}.txt`,
+      stored_name: `notes-${index}.txt`,
+      relative_path: `data/conversation_attachments/conv-1/notes-${index}.txt`,
+      mime_type: 'text/plain',
+      size_bytes: 5,
+      created_at: '2026-03-10T10:00:00.000',
+    }))
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+    const textarea = wrapper.get('textarea.composer-input-home')
+    const image = new File(['overflow'], 'overflow.png', { type: 'image/png' })
+
+    const event = await dispatchPasteEvent(textarea.element, [createClipboardFileItem(image)])
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(chatStoreMock.uploadConversationAttachment).not.toHaveBeenCalled()
+    expect(chatStoreMock.attachmentError).toBe('当前会话最多 50 个附件')
+  })
+
+  test('does not upload pasted images when attachment uploads are disabled', async () => {
+    chatStoreMock.isLoading = true
+
+    const wrapper = mount(App, {
+      shallow: true,
+    })
+    const textarea = wrapper.get('textarea.composer-input-home')
+    const image = new File(['busy'], 'busy.png', { type: 'image/png' })
+
+    const event = await dispatchPasteEvent(textarea.element, [createClipboardFileItem(image)])
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(chatStoreMock.uploadConversationAttachment).not.toHaveBeenCalled()
+    expect(chatStoreMock.attachmentError).toBeNull()
   })
 
   test('sends pending attachments together with the next user message', async () => {

@@ -704,6 +704,40 @@ function buildAttachmentLimitError(remainingSlots: number) {
   return `当前会话最多 ${MAX_CONVERSATION_ATTACHMENTS} 个附件，还可上传 ${remainingSlots} 个`
 }
 
+function inferClipboardImageExtension(mimeType: string) {
+  const normalizedMimeType = mimeType.trim().toLowerCase()
+  switch (normalizedMimeType) {
+    case 'image/jpeg':
+      return 'jpg'
+    case 'image/svg+xml':
+      return 'svg'
+    default: {
+      const [, subtype] = normalizedMimeType.split('/', 2)
+      if (!subtype) return 'png'
+      return subtype.replace(/[^a-z0-9]+/g, '') || 'png'
+    }
+  }
+}
+
+function extractClipboardImageFiles(event: ClipboardEvent): File[] {
+  const clipboardItems = Array.from(event.clipboardData?.items || [])
+  const timestamp = Date.now()
+
+  return clipboardItems
+    .filter((item) => item.type.toLowerCase().startsWith('image/'))
+    .map((item, index) => {
+      const file = item.getAsFile()
+      if (!file) return null
+
+      const extension = inferClipboardImageExtension(file.type)
+      return new File([file], `pasted-image-${timestamp}-${index}.${extension}`, {
+        type: file.type || `image/${extension}`,
+        lastModified: timestamp,
+      })
+    })
+    .filter((file): file is File => file instanceof File)
+}
+
 async function handleAttachmentUpload(files: File[]) {
   if (!canManageAttachments.value) return
   chatStore.attachmentError = null
@@ -727,6 +761,16 @@ async function handleAttachmentUpload(files: File[]) {
   if (failedCount > 0) {
     chatStore.attachmentError = `${files.length} 个文件中 ${failedCount} 个上传失败`
   }
+}
+
+async function handleComposerPaste(event: ClipboardEvent) {
+  const files = extractClipboardImageFiles(event)
+  if (files.length === 0 || uploadDisabled.value) {
+    return
+  }
+
+  event.preventDefault()
+  await handleAttachmentUpload(files)
 }
 
 async function handleAttachmentDelete(attachmentId: string) {
@@ -909,6 +953,7 @@ async function handleConversationTitleSave(title: string) {
               :disabled="composerDisabled"
               @keydown="handleKeyDown"
               @input="handleInput"
+              @paste="handleComposerPaste"
             />
 
             <div class="composer-footer">
@@ -1039,6 +1084,7 @@ async function handleConversationTitleSave(title: string) {
               :disabled="composerDisabled"
               @keydown="handleKeyDown"
               @input="handleInput"
+              @paste="handleComposerPaste"
             />
 
             <div class="composer-footer">
