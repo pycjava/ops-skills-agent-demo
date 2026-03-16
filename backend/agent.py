@@ -8,8 +8,12 @@ from langchain_core.messages import HumanMessage
 
 from agent_manager import AgentManager
 from agent_profiles import canonicalize_agent_id, get_agent_memory_roots
-from config import MAX_TURNS
+from config import ANTHROPIC_API_KEY, MAX_TURNS
 from services.agent_event_identity import resolve_event_agent_id
+from services.multimodal_ocr import (
+    build_multimodal_capability_context,
+    should_attach_multimodal_images,
+)
 from utils.logger import logger
 
 
@@ -225,12 +229,61 @@ async def _build_attachment_context(conv_id: str) -> str | None:
         return None
 
 
+async def _build_image_attachment_blocks(
+    conv_id: str,
+    agent_id: str,
+) -> list[dict[str, Any]]:
+    if not conv_id or not should_attach_multimodal_images(agent_id):
+        return []
+
+    try:
+        from services.conversation_attachments import (
+            build_image_attachment_blocks,
+            list_conversation_attachments,
+        )
+
+        attachments = await list_conversation_attachments(conv_id)
+        return build_image_attachment_blocks(conv_id, attachments)
+    except Exception as exc:
+        logger.warning(
+            f"Failed to build image attachment blocks for conversation {conv_id}: {exc}"
+        )
+        return []
+
+
+async def _build_multimodal_context(conv_id: str, agent_id: str) -> str | None:
+    if not conv_id:
+        return None
+
+    try:
+        from services.conversation_attachments import (
+            is_image_attachment_record,
+            list_conversation_attachments,
+        )
+
+        attachments = await list_conversation_attachments(conv_id)
+        has_image_attachments = any(
+            is_image_attachment_record(attachment) for attachment in attachments
+        )
+        return build_multimodal_capability_context(
+            agent_id=agent_id,
+            has_image_attachments=has_image_attachments,
+            api_key_configured=bool(ANTHROPIC_API_KEY),
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Failed to build multimodal context for conversation {conv_id}: {exc}"
+        )
+        return None
+
+
 def _compose_user_message_with_contexts(
     user_message: str,
     memory_context: str | None,
     attachment_context: str | None,
+    multimodal_context: str | None,
 ) -> str:
-    if not memory_context and not attachment_context:
+    if not memory_context and not attachment_context and not multimodal_context:
         return user_message
 
     sections: list[str] = []
@@ -246,6 +299,12 @@ def _compose_user_message_with_contexts(
             f"{attachment_context}\n"
             "</attachment_context>"
         )
+    if multimodal_context:
+        sections.append(
+            "<multimodal_context>\n"
+            f"{multimodal_context}\n"
+            "</multimodal_context>"
+        )
 
     sections.append(
         "以上是本轮请求可复用的上下文；长期记忆里已有的实例、区域、环境或别名映射优先复用，"
@@ -253,6 +312,18 @@ def _compose_user_message_with_contexts(
     )
     sections.append(user_message)
     return "\n\n".join(sections)
+
+
+def _build_human_message_content(
+    composed_user_message: str,
+    image_blocks: list[dict[str, Any]] | None = None,
+    *,
+    allow_image_blocks: bool = True,
+) -> str | list[dict[str, Any]]:
+    if not allow_image_blocks or not image_blocks:
+        return composed_user_message
+
+    return [{"type": "text", "text": composed_user_message}, *image_blocks]
 
 
 def classify_artifact_kind(
@@ -291,12 +362,23 @@ async def run_agent(
     runtime = await get_runtime(resolved_agent_id)
     memory_context = await _build_memory_context(user_message, resolved_agent_id)
     attachment_context = await _build_attachment_context(conv_id)
+    multimodal_context = await _build_multimodal_context(conv_id, resolved_agent_id)
+    image_blocks = await _build_image_attachment_blocks(conv_id, resolved_agent_id)
     composed_user_message = _compose_user_message_with_contexts(
         user_message,
         memory_context,
         attachment_context,
+        multimodal_context,
     )
-    messages: list[Any] = [HumanMessage(content=composed_user_message)]
+    messages: list[Any] = [
+        HumanMessage(
+            content=_build_human_message_content(
+                composed_user_message,
+                image_blocks,
+                allow_image_blocks=should_attach_multimodal_images(resolved_agent_id),
+            )
+        )
+    ]
     inputs = {"messages": messages}
     pending_tool_inputs: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
 

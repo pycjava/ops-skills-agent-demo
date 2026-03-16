@@ -1,3 +1,5 @@
+import sys
+import types
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -119,6 +121,16 @@ def test_test_mcp_server_uses_server_name_from_mcp_config(tmp_path, monkeypatch)
             assert server_name == "weather"
             assert self.connections["weather"]["url"] == "https://example.com/mcp"
             return [SimpleNamespace(name="forecast", description="Show forecast")]
+
+    if "langchain_mcp_adapters" not in sys.modules:
+        adapters_module = types.ModuleType("langchain_mcp_adapters")
+        adapters_module.__path__ = []
+        sys.modules["langchain_mcp_adapters"] = adapters_module
+    if "langchain_mcp_adapters.client" not in sys.modules:
+        client_module = types.ModuleType("langchain_mcp_adapters.client")
+        client_module.MultiServerMCPClient = FakeMultiServerMCPClient
+        sys.modules["langchain_mcp_adapters.client"] = client_module
+    sys.modules["langchain_mcp_adapters"].client = sys.modules["langchain_mcp_adapters.client"]
 
     monkeypatch.setattr(
         "langchain_mcp_adapters.client.MultiServerMCPClient",

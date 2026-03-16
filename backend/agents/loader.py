@@ -1,6 +1,10 @@
 from pathlib import Path
-import tomllib
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 compatibility
+    import tomli as tomllib
 
 from .schema import (
     AgentManifest,

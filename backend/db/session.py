@@ -35,6 +35,8 @@ AsyncSessionLocal = async_sessionmaker(
 
 def _has_column(sync_conn, table_name: str, column_name: str) -> bool:
     inspector = inspect(sync_conn)
+    if not inspector.has_table(table_name):
+        return False
     columns = inspector.get_columns(table_name)
     return any(column["name"] == column_name for column in columns)
 
@@ -98,15 +100,16 @@ def _bootstrap_sqlite_compat_columns(sync_conn):
         )
     )
 
-    if not _has_column(sync_conn, "inspection_task_runs", "report_name"):
-        sync_conn.execute(
-            text("ALTER TABLE inspection_task_runs ADD COLUMN report_name VARCHAR(255)")
-        )
+    if _has_table(sync_conn, "inspection_task_runs"):
+        if not _has_column(sync_conn, "inspection_task_runs", "report_name"):
+            sync_conn.execute(
+                text("ALTER TABLE inspection_task_runs ADD COLUMN report_name VARCHAR(255)")
+            )
 
-    if not _has_column(sync_conn, "inspection_task_runs", "report_path"):
-        sync_conn.execute(
-            text("ALTER TABLE inspection_task_runs ADD COLUMN report_path VARCHAR(500)")
-        )
+        if not _has_column(sync_conn, "inspection_task_runs", "report_path"):
+            sync_conn.execute(
+                text("ALTER TABLE inspection_task_runs ADD COLUMN report_path VARCHAR(500)")
+            )
 
     if _has_table(sync_conn, "mcp_servers"):
         if not _has_column(sync_conn, "mcp_servers", "command"):

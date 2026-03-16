@@ -1,4 +1,55 @@
+import sys
+import types
+
 import pytest
+import tomli
+
+
+def _install_agent_dependency_stubs() -> None:
+    if "deepagents" not in sys.modules:
+        deepagents_module = types.ModuleType("deepagents")
+        deepagents_module.create_deep_agent = lambda *args, **kwargs: None
+        deepagents_module.SubAgent = dict
+        deepagents_module.__path__ = []
+        sys.modules["deepagents"] = deepagents_module
+    elif not hasattr(sys.modules["deepagents"], "SubAgent"):
+        sys.modules["deepagents"].SubAgent = dict
+
+    if "deepagents.backends" not in sys.modules:
+        backends_module = types.ModuleType("deepagents.backends")
+        backends_module.CompositeBackend = type("CompositeBackend", (), {})
+        backends_module.StoreBackend = type("StoreBackend", (), {})
+        backends_module.__path__ = []
+        sys.modules["deepagents.backends"] = backends_module
+
+    if "deepagents.backends.local_shell" not in sys.modules:
+        local_shell_module = types.ModuleType("deepagents.backends.local_shell")
+        local_shell_module.LocalShellBackend = type("LocalShellBackend", (), {})
+        sys.modules["deepagents.backends.local_shell"] = local_shell_module
+
+    if "deepagents.backends.protocol" not in sys.modules:
+        protocol_module = types.ModuleType("deepagents.backends.protocol")
+        protocol_module.ExecuteResponse = type("ExecuteResponse", (), {})
+        sys.modules["deepagents.backends.protocol"] = protocol_module
+
+    if "langchain_anthropic" not in sys.modules:
+        anthropic_module = types.ModuleType("langchain_anthropic")
+        anthropic_module.ChatAnthropic = type("ChatAnthropic", (), {})
+        sys.modules["langchain_anthropic"] = anthropic_module
+
+    if "langgraph.checkpoint.sqlite.aio" not in sys.modules:
+        checkpoint_module = types.ModuleType("langgraph.checkpoint.sqlite.aio")
+        checkpoint_module.AsyncSqliteSaver = type("AsyncSqliteSaver", (), {})
+        sys.modules["langgraph.checkpoint.sqlite.aio"] = checkpoint_module
+
+    if "langgraph.store.sqlite.aio" not in sys.modules:
+        store_module = types.ModuleType("langgraph.store.sqlite.aio")
+        store_module.AsyncSqliteStore = type("AsyncSqliteStore", (), {})
+        sys.modules["langgraph.store.sqlite.aio"] = store_module
+
+
+_install_agent_dependency_stubs()
+sys.modules.setdefault("tomllib", tomli)
 
 from agent_manager import AgentManager
 from agent_profiles import get_agent_profile, list_public_agent_profiles
@@ -113,3 +164,15 @@ def test_build_subagents_supports_router_and_supervisor_hierarchy():
     assert [subagent["name"] for subagent in supervisor_subagent["subagents"]] == (
         SUPERVISOR_LEAF_AGENTS
     )
+
+
+def test_router_supervisor_and_ocr_prompts_define_multimodal_ocr_boundaries():
+    manager = AgentManager()
+
+    router_prompt = manager._compose_system_prompt(get_agent_profile("router"))
+    supervisor_prompt = manager._compose_system_prompt(get_agent_profile("supervisor"))
+    ocr_prompt = manager._compose_system_prompt(get_agent_profile("ocr"))
+
+    assert "route image-only OCR requests to `ocr`" in router_prompt
+    assert "call `ocr` first for image extraction before domain analysis" in supervisor_prompt
+    assert "If image input is unavailable, say so explicitly and do not guess." in ocr_prompt

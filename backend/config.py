@@ -24,6 +24,20 @@ SKILLS_DIR = str(BASE_DIR / "skills")
 
 # Agent 配置
 MODEL_NAME = os.getenv("MODEL_NAME", "claude-sonnet-4-5-20250929")
+MULTIMODAL_ENABLED = os.getenv("MULTIMODAL_ENABLED", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+VISION_MODEL_ALLOWLIST = tuple(
+    item.strip()
+    for item in os.getenv(
+        "VISION_MODEL_ALLOWLIST",
+        "claude-sonnet-4-5-20250929",
+    ).split(",")
+    if item.strip()
+)
 MAX_TURNS = int(os.getenv("MAX_TURNS", "10"))
 MCP_DEFAULT_TIMEOUT_SECONDS = 15.0
 MCP_CONFIG_PATH = str((Path(WORKSPACE_DIR) / "mcp.json").resolve())

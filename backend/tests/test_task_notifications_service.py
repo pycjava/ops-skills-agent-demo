@@ -27,7 +27,7 @@ async def test_execute_inspection_task_creates_success_notification_with_latest_
 
     async def fake_agent_runner(*, user_message, conv_id, on_event, agent_id=None):
         assert user_message == "Inspect peets-prod-pos-mysql for the last 7 days"
-        assert agent_id == "dba"
+        assert agent_id == "db-runtime"
         await on_event(
             {
                 "type": "tool_result",
@@ -38,7 +38,7 @@ async def test_execute_inspection_task_creates_success_notification_with_latest_
                 },
                 "artifact_kind": "report",
                 "result": "Saved report A",
-                "agent_id": "dba",
+                "agent_id": "db-runtime",
             }
         )
         await on_event(
@@ -51,17 +51,17 @@ async def test_execute_inspection_task_creates_success_notification_with_latest_
                 },
                 "artifact_kind": "report",
                 "result": "Saved report B",
-                "agent_id": "dba",
+                "agent_id": "db-runtime",
             }
         )
         await on_event(
             {
                 "type": "text_delta",
                 "content": "Summary line 1\nSummary line 2\nSummary line 3\nSummary line 4",
-                "agent_id": "dba",
+                "agent_id": "db-runtime",
             }
         )
-        await on_event({"type": "done", "agent_id": "dba"})
+        await on_event({"type": "done", "agent_id": "db-runtime"})
 
     async def fake_notification_publisher(event: dict):
         published_events.append(event)

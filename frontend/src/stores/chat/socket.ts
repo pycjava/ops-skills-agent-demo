@@ -291,6 +291,28 @@ export function createSocketDomain({
             )
           }
           break
+
+        case 'ocr_status':
+          messages.push({
+            id: genId(),
+            role: 'system',
+            content: data.content,
+            type: 'text',
+            agentId: normalizeAgentId(data.agent_id) || 'ocr',
+            timestamp: Date.now(),
+          })
+          break
+
+        case 'ocr_result':
+          messages.push({
+            id: genId(),
+            role: 'system',
+            content: data.content,
+            type: 'text',
+            agentId: normalizeAgentId(data.agent_id) || 'ocr',
+            timestamp: Date.now(),
+          })
+          break
       }
     }
 

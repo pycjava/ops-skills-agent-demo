@@ -532,7 +532,7 @@ async def test_run_conversation_stream_route_replays_history_and_finishes(sessio
         "done",
     ]
     assert events[0]["conversation_id"] is not None
-    assert events[0]["agent_id"] == "dba"
+    assert events[0]["agent_id"] == "db-runtime"
     assert events[0]["title"] == "Peets Daily Inspection 路 03-11 08:30"
     assert events[1]["message"]["id"] == "msg-1"
     assert events[2]["message"]["content"] == "Inspection complete"

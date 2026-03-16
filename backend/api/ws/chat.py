@@ -11,7 +11,12 @@ from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
 from models import Message
 from services.agent_event_state import AgentEventState
-from services.conversation_attachments import build_attachment_snapshot
+from services.conversation_attachments import (
+    build_attachment_snapshot,
+    is_image_attachment_record,
+    save_ocr_result,
+)
+from services.multimodal_ocr import resolve_ocr_availability
 from services.conversation_messages import (
     auto_title,
     is_default_conversation_title,
@@ -66,6 +71,44 @@ SUBAGENT_LABELS.update(
 )
 
 
+def _should_suppress_normalized_event(normalized_event: dict) -> bool:
+    tool_name = normalized_event.get("tool_name")
+    tool_input = normalized_event.get("tool_input")
+    return (
+        normalized_event.get("type") == "tool_result"
+        and tool_name == "task"
+        and isinstance(tool_input, dict)
+        and tool_input.get("subagent_type") == "ocr"
+    )
+
+
+def _build_ocr_status_payload(
+    current_turn_attachments: list[dict],
+) -> tuple[dict[str, str], bool]:
+    image_count = len(
+        [
+            attachment
+            for attachment in current_turn_attachments
+            if is_image_attachment_record(attachment)
+        ]
+    )
+    available, reason = resolve_ocr_availability(
+        has_image_attachments=image_count > 0,
+        api_key_configured=bool(ANTHROPIC_API_KEY),
+    )
+    payload = {
+        "type": "ocr_status",
+        "status": "processing" if available else "failed",
+        "content": (
+            f"OCR is analyzing {max(1, image_count)} image attachment(s)..."
+            if available
+            else str(reason or "OCR is unavailable.")
+        ),
+        "agent_id": "ocr",
+    }
+    return payload, not available
+
+
 @router.websocket("/chat")
 async def websocket_chat(ws: WebSocket):
     if get_auth_settings().enabled:
@@ -82,6 +125,8 @@ async def websocket_chat(ws: WebSocket):
     event_state = AgentEventState()
     delta_buffer = ""
     flush_task: asyncio.Task | None = None
+    current_turn_attachments: list[dict] = []
+    suppress_ocr_tool_result = False
 
     async def flush_delta():
         nonlocal delta_buffer
@@ -104,7 +149,7 @@ async def websocket_chat(ws: WebSocket):
         await flush_delta()
 
     async def on_event(event: dict):
-        nonlocal delta_buffer, flush_task, current_agent_id
+        nonlocal delta_buffer, flush_task, current_agent_id, suppress_ocr_tool_result
 
         if abort_event.is_set():
             raise asyncio.CancelledError("用户中断")
@@ -129,7 +174,8 @@ async def websocket_chat(ws: WebSocket):
             if flush_task and not flush_task.done():
                 flush_task.cancel()
 
-        await ws.send_text(json.dumps(normalized_event, ensure_ascii=False))
+        if not _should_suppress_normalized_event(normalized_event):
+            await ws.send_text(json.dumps(normalized_event, ensure_ascii=False))
 
         if etype == "tool_call":
             tool_name = normalized_event.get("tool_name", "")
@@ -137,11 +183,48 @@ async def websocket_chat(ws: WebSocket):
             desc = normalized_event.get(
                 "tool_desc", f"执行 Tool: {tool_name}"
             )
-            
+
             if tool_name == "task":
                 subagent_type = tool_input.get("subagent_type", "unknown") if tool_input else "unknown"
                 subagent_label = SUBAGENT_LABELS.get(subagent_type, subagent_type)
                 source_agent_label = SUBAGENT_LABELS.get(event_agent_id, event_agent_id)
+                if subagent_type == "ocr":
+                    image_count = len(
+                        [
+                            attachment
+                            for attachment in current_turn_attachments
+                            if is_image_attachment_record(attachment)
+                        ]
+                    )
+                    available, reason = resolve_ocr_availability(
+                        has_image_attachments=image_count > 0,
+                        api_key_configured=bool(ANTHROPIC_API_KEY),
+                    )
+                    suppress_ocr_tool_result = not available
+                    if available:
+                        await ws.send_text(
+                        json.dumps(
+                            {
+                                "type": "ocr_status",
+                                "status": "processing",
+                                "content": f"OCR 正在分析 {max(1, image_count)} 张图片附件…",
+                                "agent_id": "ocr",
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                    else:
+                        await ws.send_text(
+                            json.dumps(
+                                {
+                                    "type": "ocr_status",
+                                    "status": "failed",
+                                    "content": reason,
+                                    "agent_id": "ocr",
+                                },
+                                ensure_ascii=False,
+                            )
+                        )
                 await ws.send_text(
                     json.dumps(
                         {
@@ -155,7 +238,7 @@ async def websocket_chat(ws: WebSocket):
                         ensure_ascii=False,
                     )
                 )
-            
+
             await save_message(
                 current_conv_id,
                 "system",
@@ -167,17 +250,88 @@ async def websocket_chat(ws: WebSocket):
                 thinking=event_state.pop_step_thinking(),
             )
         elif etype == "tool_result":
+            tool_name = normalized_event.get("tool_name")
+            tool_input = normalized_event.get("tool_input")
+            if (
+                tool_name == "task"
+                and isinstance(tool_input, dict)
+                and tool_input.get("subagent_type") == "ocr"
+            ):
+                if suppress_ocr_tool_result:
+                    suppress_ocr_tool_result = False
+                    await save_message(
+                        current_conv_id,
+                        "system",
+                        normalized_event.get("result", ""),
+                        "tool_result",
+                        agent_id=event_agent_id,
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                    )
+                    return
+
+                image_attachments = [
+                    attachment
+                    for attachment in current_turn_attachments
+                    if is_image_attachment_record(attachment)
+                ]
+                ocr_result_path = (
+                    save_ocr_result(
+                        current_conv_id,
+                        image_attachments,
+                        normalized_event.get("result", ""),
+                    )
+                    if current_conv_id and image_attachments
+                    else None
+                )
+                ocr_message = "OCR 已完成，结果已加入会话上下文。"
+                if ocr_result_path:
+                    ocr_message += f"\n\nSaved OCR result: `{ocr_result_path}`"
+                ocr_message += f"\n\n{normalized_event.get('result', '')}"
+
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "ocr_result",
+                            "content": ocr_message,
+                            "agent_id": "ocr",
+                            "ocr_path": ocr_result_path,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                await save_message(
+                    current_conv_id,
+                    "system",
+                    ocr_message,
+                    "text",
+                    agent_id="ocr",
+                )
+
             await save_message(
                 current_conv_id,
                 "system",
                 normalized_event.get("result", ""),
                 "tool_result",
                 agent_id=event_agent_id,
-                tool_name=normalized_event.get("tool_name"),
-                tool_input=normalized_event.get("tool_input"),
+                tool_name=tool_name,
+                tool_input=tool_input,
             )
+            suppress_ocr_tool_result = False
         elif etype == "error":
             logger.error(f"Agent 报错事件: {normalized_event.get('content')}")
+            if event_agent_id == "ocr":
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "type": "ocr_status",
+                            "status": "failed",
+                            "content": "OCR 分析失败，请稍后重试。",
+                            "agent_id": "ocr",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
             await save_message(
                 current_conv_id,
                 "system",
@@ -425,6 +579,7 @@ async def websocket_chat(ws: WebSocket):
                     attachment_ids if isinstance(attachment_ids, list) else [],
                     session_factory=AsyncSessionLocal,
                 )
+                current_turn_attachments = attachments_snapshot or []
 
                 await save_message(
                     current_conv_id,

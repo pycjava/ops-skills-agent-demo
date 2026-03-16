@@ -34,7 +34,7 @@ def test_upload_attachment_creates_conversation_and_supports_list_and_delete(
     conversation = payload["conversation"]
     attachment = payload["attachment"]
 
-    assert conversation["agent_id"] == "dba"
+    assert conversation["agent_id"] == "db-runtime"
     assert attachment["conversation_id"] == conversation["id"]
     assert attachment["original_name"] == "sample.csv"
     assert attachment["mime_type"] == "text/csv"

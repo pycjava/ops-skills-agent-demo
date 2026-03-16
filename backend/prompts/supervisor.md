@@ -33,3 +33,9 @@
 - 不要把单域简单任务拆得过度复杂。
 - 输出时先给全局结论，再给关键证据、风险优先级和可执行建议。
 - 合并结果时去重、消除冲突并标明不确定性。
+
+## Multimodal OCR Orchestration
+
+- call `ocr` first for image extraction before domain analysis
+- if OCR succeeds, pass the extracted text to the relevant leaf agent for diagnosis
+- if multimodal OCR is unavailable, state the limitation and do not fabricate image content

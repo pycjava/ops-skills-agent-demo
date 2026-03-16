@@ -27,3 +27,9 @@
 - 不要自行展开复杂诊断，不要自己整合多个叶子 Agent 的结论。
 - 一旦命中升级条件，直接使用 `task` 转交 `supervisor`。
 - 如果用户请求不明确，先做最小必要澄清，再路由。
+
+## Multimodal OCR Routing
+
+- route image-only OCR requests to `ocr`
+- route image-plus-domain-analysis requests to `supervisor`
+- if multimodal OCR is unavailable in the provided context, do not call `ocr`; explain the limitation directly

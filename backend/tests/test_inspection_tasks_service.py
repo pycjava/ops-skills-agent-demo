@@ -60,7 +60,7 @@ async def test_build_inspection_task_draft_uses_latest_non_task_user_message(ses
     )
 
     assert draft["source_conversation_id"] == conversation.id
-    assert draft["agent_id"] == "dba"
+    assert draft["agent_id"] == "db-runtime"
     assert draft["name"] == "Peets POS Inspection"
     assert draft["prompt_template"] == "Please inspect peets-prod-pos-mysql for the last 7 days"
 
@@ -477,9 +477,15 @@ async def test_execute_inspection_task_creates_conversation_and_run_record(
 
     async def fake_agent_runner(*, user_message, conv_id, on_event, agent_id=None):
         assert user_message == "Inspect peets-prod-pos-mysql for the last 7 days"
-        assert agent_id == "dba"
-        await on_event({"type": "text_delta", "content": "Inspection complete", "agent_id": "dba"})
-        await on_event({"type": "done", "agent_id": "dba"})
+        assert agent_id == "db-runtime"
+        await on_event(
+            {
+                "type": "text_delta",
+                "content": "Inspection complete",
+                "agent_id": "db-runtime",
+            }
+        )
+        await on_event({"type": "done", "agent_id": "db-runtime"})
 
     run = await execute_inspection_task(
         task.id,

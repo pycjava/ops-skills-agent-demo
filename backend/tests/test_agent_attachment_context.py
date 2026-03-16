@@ -1,6 +1,8 @@
 import sys
 import types
 
+import tomli
+
 
 def _install_agent_dependency_stubs() -> None:
     if "deepagents" not in sys.modules:
@@ -50,23 +52,81 @@ def _install_agent_dependency_stubs() -> None:
 
 
 _install_agent_dependency_stubs()
+sys.modules.setdefault("tomllib", tomli)
 
-from agent import _compose_user_message_with_contexts
+from agent import _build_human_message_content, _compose_user_message_with_contexts
 
 
 def test_compose_user_message_with_contexts_includes_memory_and_attachment_blocks():
     composed = _compose_user_message_with_contexts(
-        "请分析附件里的 SQL 结果",
+        "Please analyze the SQL result in the attachment",
         "memory summary",
         "attachment summary",
+        None,
     )
 
     assert "<memory_context>" in composed
     assert "memory summary" in composed
     assert "<attachment_context>" in composed
     assert "attachment summary" in composed
-    assert composed.endswith("请分析附件里的 SQL 结果")
+    assert composed.endswith("Please analyze the SQL result in the attachment")
 
 
 def test_compose_user_message_with_contexts_returns_original_message_without_context():
-    assert _compose_user_message_with_contexts("hello", None, None) == "hello"
+    assert _compose_user_message_with_contexts("hello", None, None, None) == "hello"
+
+
+def test_compose_user_message_with_contexts_includes_multimodal_context_block():
+    composed = _compose_user_message_with_contexts(
+        "Please inspect this screenshot",
+        None,
+        "attachment summary",
+        "vision enabled",
+    )
+
+    assert "<multimodal_context>" in composed
+    assert "vision enabled" in composed
+
+
+def test_build_human_message_content_wraps_image_blocks_for_multimodal_input():
+    content = _build_human_message_content(
+        "Please extract the text from the screenshot",
+        [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "ZmFrZS1wbmc=",
+                },
+            }
+        ],
+        allow_image_blocks=True,
+    )
+
+    assert isinstance(content, list)
+    assert content[0] == {
+        "type": "text",
+        "text": "Please extract the text from the screenshot",
+    }
+    assert content[1]["type"] == "image"
+    assert content[1]["source"]["media_type"] == "image/png"
+
+
+def test_build_human_message_content_omits_image_blocks_when_not_allowed():
+    content = _build_human_message_content(
+        "Please extract the text from the screenshot",
+        [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "ZmFrZS1wbmc=",
+                },
+            }
+        ],
+        allow_image_blocks=False,
+    )
+
+    assert content == "Please extract the text from the screenshot"

@@ -279,13 +279,13 @@ describe('createConversationDomain', () => {
     await domain.streamInspectionTaskRunConversation('run-1', 'conv-1')
 
     expect(currentConversationId.value).toBe('conv-1')
-    expect(draftAgentId.value).toBe('dba')
-    expect(fetchSkills).toHaveBeenCalledWith('dba')
+    expect(draftAgentId.value).toBe('db-runtime')
+    expect(fetchSkills).toHaveBeenCalledWith('db-runtime')
     expect(wsState.current?.send).toHaveBeenCalledWith(
       JSON.stringify({
         type: 'init',
         conversation_id: 'conv-1',
-        agent_id: 'dba',
+        agent_id: 'db-runtime',
       }),
     )
     expect(conversations.value).toEqual([
@@ -293,7 +293,7 @@ describe('createConversationDomain', () => {
         id: 'conv-1',
         title: 'Peets Daily Inspection | 03-11 08:30',
         source: 'task',
-        agent_id: 'dba',
+        agent_id: 'db-runtime',
       }),
     ])
     expect(messages).toEqual([

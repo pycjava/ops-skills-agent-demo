@@ -147,7 +147,7 @@ describe('createSocketDomain', () => {
       expect.objectContaining({
         role: 'assistant',
         content: '已定位到慢查询 SQL。',
-        agentId: 'dba',
+        agentId: 'db-runtime',
       }),
     ])
 
