@@ -50,6 +50,7 @@ backend/metric_data/
 
 # Optional: Claude
 .claude/
+.worktrees/
 
 # othe
 todo/
