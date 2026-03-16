@@ -11,6 +11,7 @@ GUESS_AND_PATCH_EXCUSE = "我先大概改一下再看"
 
 ROUTER_LEAF_AGENTS = [
     "general",
+    "ocr",
     "backend",
     "frontend",
     "db-schema",
@@ -23,6 +24,7 @@ ROUTER_LEAF_AGENTS = [
 
 SUPERVISOR_LEAF_AGENTS = [
     "general",
+    "ocr",
     "backend",
     "frontend",
     "db-schema",
@@ -78,6 +80,10 @@ def test_legacy_aliases_resolve_to_runtime_agents():
     assert get_agent_profile("dba").id == "db-runtime"
     assert get_agent_profile("ops").id == "ops-runtime"
     assert get_agent_profile("general-purpose").id == "general"
+
+
+def test_ocr_agent_profile_is_registered():
+    assert get_agent_profile("ocr").id == "ocr"
 
 
 def test_router_and_supervisor_profiles_have_expected_subagent_layout():

@@ -23,7 +23,7 @@ describe('ConversationAttachmentBar', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('仅识别附件中的文字，单会话最多 50 个附件')
+    expect(wrapper.text()).toContain('支持文本和图片附件')
     expect(wrapper.text()).toContain('peets-prod-cdp-wecom.md')
     expect(wrapper.text()).toContain('MD 8.73KB')
     expect(wrapper.get('[data-testid="attachment-delete-att-1"]').attributes('aria-label')).toBe(
@@ -59,6 +59,22 @@ describe('ConversationAttachmentBar', () => {
     await input.trigger('change')
 
     expect(wrapper.emitted('upload')).toEqual([[[file, fileTwo]]])
+  })
+
+  test('accepts image uploads for OCR scenarios', () => {
+    const wrapper = mount(ConversationAttachmentBar, {
+      props: {
+        attachments: [],
+        isUploading: false,
+        error: null,
+        disabled: false,
+      },
+    })
+
+    const input = wrapper.get<HTMLInputElement>('[data-testid="attachment-input"]')
+    expect(input.attributes('accept')).toContain('image/png')
+    expect(input.attributes('accept')).toContain('image/jpeg')
+    expect(input.attributes('accept')).toContain('image/webp')
   })
 
   test('exposes file picker trigger for parent composer controls', () => {
