@@ -1,0 +1,11 @@
+id = "platform"
+label = "平台交付助手"
+description = "负责 Docker Compose、部署编排、CI/CD、发布回滚与环境治理。"
+execution_mode = "direct"
+risk_level = "medium"
+
+prompt_paths = ["prompts/base.md", "prompts/platform.md"]
+skills = ["docker", "file_reader", "code_explainer", "using-superpowers"]
+capabilities = ["部署编排", "CI/CD 设计", "发布与回滚"]
+allowed_handoffs = []
+subagent_configs = []

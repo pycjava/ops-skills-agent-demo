@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "MiniMax": {
+      "command": "uvx",
+      "args": [
+        "minimax-coding-plan-mcp"
+      ],
+      "env": {
+        "MINIMAX_API_KEY": "sk-cp-l8hEx_wPMkGwA8N6ZM9qRzTXm9jhriv_R5EfTpw-okQCUv-3p5yOvXSo05C8TMy4U3RpyxCTJ7nATiTyveC6SayBtrzYmXRlZdSg9sDh8RJ3zxiR14AFdZM",
+        "MINIMAX_MCP_BASE_PATH": "D:/Study/python/ops-skills-agent-demo/backend/data",
+        "MINIMAX_API_HOST": "https://api.minimaxi.com",
+        "MINIMAX_API_RESOURCE_MODE": "url"
+      },
+      "enabled": true,
+      "agentIds": []
+    }
+  }
+}

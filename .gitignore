@@ -4,6 +4,7 @@
 .idea/
 *.swp
 *.swo
+.trae
 
 # Python / Backend
 __pycache__/
@@ -21,6 +22,9 @@ nginx-es-analyzer/
 mysql-cli-sql-analyzer/
 kubeconfig
 nginx-es-analyzer-design.md
+agents/__pycache__/**
+backend/data/conversation_attachments/*
+agents/
 
 # Celery
 celerybeat-schedule
@@ -39,9 +43,14 @@ pnpm-debug.log*
 # Logs
 *.log
 logs/
+backend/data/*.db
+backend/data/*.db-shm
+backend/data/*.db-wal
+backend/metric_data/
 
 # Optional: Claude
 .claude/
+.worktrees/
 
 # othe
 todo/

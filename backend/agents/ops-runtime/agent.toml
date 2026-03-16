@@ -1,0 +1,11 @@
+id = "ops-runtime"
+label = "运行时运维助手"
+description = "负责主机、日志、Docker、Kubernetes 与线上运行态故障排查。"
+execution_mode = "direct"
+risk_level = "high"
+
+prompt_paths = ["prompts/base.md", "prompts/ops-runtime.md"]
+skills = ["remote-ops", "docker", "kubernetes", "using-superpowers"]
+capabilities = ["远程运维", "Docker 排障", "Kubernetes 运行态诊断"]
+allowed_handoffs = []
+subagent_configs = []

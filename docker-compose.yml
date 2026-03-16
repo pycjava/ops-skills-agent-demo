@@ -1,64 +1,36 @@
-version: '3.8'
-
 services:
-  # ==========================================
-  # 数据库服务: PostgreSQL 14
-  # ==========================================
-  postgres:
-    image: postgres:14-bookworm
-    container_name: demo-agent-postgres
-    restart: always
-    environment:
-      # 设置时区为上海
-      TZ: Asia/Shanghai
-      # ⚠️ 注意: 请与 backend/.env 中的参数保持一致
-      POSTGRES_USER: ${DB_USER:-root}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-root123456}
-      POSTGRES_DB: ${DB_NAME:-claude_agent}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - agent-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-root} -d ${DB_NAME:-claude_agent}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
-  # ==========================================
-  # 后端服务: FastAPI Agent
-  # ==========================================
+  # Backend service for deployment/demo mode
   backend:
-    build: 
+    build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: demo-agent-backend
     restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
+    env_file:
+      - ./backend/.env
     environment:
       - TZ=Asia/Shanghai
-      # 容器内通过服务名连接 PostgreSQL
-      - DB_IP=postgres
-      - DB_PORT=5432
-      - DB_PASSWORD=${DB_PASSWORD:-root123456}
+      - SQLITE_PATH=/app/data/app.db
     ports:
       - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health').read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     volumes:
-      # 将 skills 挂载出来，方便在宿主机随时实时修改 MD 文件并热加载
-      - ./backend/skills:/app/skills
-      # 将 AGENTS.md 挂载，方便热修改提示词
-      - ./backend/AGENTS.md:/app/AGENTS.md
+      - ./backend/data:/app/data
     networks:
       - agent-network
 
-  # ==========================================
-  # 前端服务: Vue 3 + Nginx
-  # ==========================================
+  # Frontend service for deployment/demo mode
   frontend:
     build:
       context: ./frontend
@@ -68,14 +40,10 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - agent-network
-    # 如果 frontend 镜像构建时需要 API 地址的环境变量，可通过 args 注入，并在 Dockerfile 处理。
-    # 这里通过 Nginx 运行，对于前端环境变量的控制如果写死在打包静态文件里，建议在宿主机先打好包。
-
-volumes:
-  postgres_data:
 
 networks:
   agent-network:

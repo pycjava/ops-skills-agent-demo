@@ -1,221 +1,420 @@
-# Claude Agent Web Service — DeepAgents 进阶版
+# AgentWeave
 
-基于 **FastAPI + Vue 3 + DeepAgents** 构建的 Web 对话 Agent。已支持完整的长时记忆对话上下文、多组件 UI 及基于 Markdown 零代码的 Skill 加载能力。
+> 2026-03 架构更新：默认入口为 `router`，`supervisor` 负责复杂任务协调与跨域整合。
 
-## ✨ 核心特性
+AgentWeave 是一个基于 **FastAPI + Vue 3 + DeepAgents/LangGraph** 的多 Agent 智能编排与运维平台示例。它提供 Web 对话入口，并围绕 Agent 路由、Skills 白名单装配、定时巡检任务、任务提醒、会话附件、MCP Server、云凭证解析和长期记忆构建了一套可运行的工作台。
 
-- **DeepAgents & LangGraph**：底层抛弃基础调用，转用 LangGraph 架构，原生支持复杂 Agent 循环并提供安全的 LocalShellBackend。
-- **打字机流式输出 (Streaming)**：真正的逐 Token 细粒度推流（通过 WebSocket），前端实时回显思考及回答过程。
-- **全自动零代码技能 (Skills)**：后端取消硬编码，仅需丢入 Markdown 技能描述（`backend/skills/`），Agent 热插拔即可拥有系统级能力。
-- **原生上下文记忆**：集成 `MemorySaver`，数据库与图状态协同，真正记住你在历史会话里聊了什么。
-- **持久化存储 (PostgreSQL)**：彻底从内存切到数据库，持久化你的全部对话列表与消息，前端随时加载漫游。
-- **高颜值纯享 UI**：分离左右双侧边栏（会话列表与动态技能表），黑暗/明亮模式无缝切换，参数结果代码块高亮。
+当前仓库更适合被理解为“开发中的平台骨架 + 已落地的核心流程”，而不是单一聊天 Demo。
 
-## 📸 界面预览
+## 核心能力
 
-### 浅色模式 & 技能热插拔展示
+- **默认入口是 `router`**：新会话默认进入智能编排助手，由它负责轻量意图识别、单域分流与复杂问题升级。
+- **5 个内置 Agent**：`router`、`supervisor`、`general`、`dba`、`ops`。
+- **Skills 白名单装配**：Skills 统一放在 [backend/skills](backend/skills)，Agent 运行时按白名单注入，而不是靠前端隐藏。
+- **WebSocket 流式对话**：主聊天链路走 `/ws/chat`，支持文本增量推流、思考过程、工具调用结果和子 Agent 路由事件。
+- **定时巡检任务**：支持从会话生成定时任务、查看任务列表、执行记录和任务运行会话流式回放。
+- **任务提醒中心**：任务执行成功或失败后生成通知，并可携带巡检报告下载信息。
+- **会话附件**：支持在会话中上传文本类附件，当前支持 `.txt`、`.md`、`.csv`、`.json`、`.sql`、`.log`，单文件最大 1 MB。
+- **MCP Server 管理**：支持使用项目根目录 `mcp.json` 进行 Cursor 风格配置、保存、测试并按 Agent 绑定 MCP Server。
+- **云凭证与上下文解析**：支持根据消息内容解析云实例上下文，服务于 MySQL 巡检等场景。
+- **SQLite + LangGraph 持久化**：对话、消息、任务、MCP 配置等业务数据落库，长期记忆通过 `/memories/` 暴露。
+
+## 界面预览
+
+### 浅色模式
 
 ![浅色模式主界面](docs/assets/main_light_mode.png)
 
-### 深色模式 & 沉浸式终端交互
+### 深色模式
 
 ![深色模式主界面](docs/assets/main_dark_mode.png)
 
-### 动态技能面板加载
+### Skills 面板
 
 ![动态技能面板](docs/assets/skills_panel.png)
 
-### 流式对话与 Markdown 富文本渲染
+### 流式对话
 
 ![流式对话演示](docs/assets/active_conversation.png)
 
-## 🚀 快速开始
+## 快速开始
 
-### 环境依赖
+启动路径总览：
 
-- Python >= 3.10
-- Node.js >= 18
-- PostgreSQL >= 14
-
-### 1. 配置数据库与环境变量
-
-```bash
-cd backend
-cp .env.example .env
-# 编辑 .env：填入你的 ANTHROPIC_API_KEY 以及 PostgreSQL 的 DB_USER/DB_PASSWORD
+```mermaid
+flowchart TD
+    A[配置 backend/.env] --> B[启动后端<br/>python main.py]
+    B --> C[验证健康检查<br/>GET /api/health]
+    C --> D[安装前端依赖<br/>npm install]
+    D --> E[配置前端地址<br/>VITE_API_BASE_URL / VITE_WS_URL<br/>可选]
+    E --> F[启动前端<br/>npm run dev]
+    F --> G[打开工作台<br/>http://127.0.0.1:5173]
+    G --> H[加载 Agent 列表并开始对话]
 ```
 
-### 2. 初始化与启动后端
+### 环境要求
 
-#### 方法 A：使用 Docker Compose（推荐）
+- Python 3.10+
+- Node.js 18+
+- SQLite
 
-项目根目录提供了 `docker-compose.yml` 文件，可通过容器方式一键启动 PostgreSQL 数据库与后端服务。
+### 1. 启动后端
 
-```bash
-# 在项目根目录执行
-docker-compose up -d --build
-```
-
-> **提示**：如果使用 Docker 启动，您不需要在本地安装 Python 依赖或配置单独的 PostgreSQL 服务。第一次启动时会自动创建数据库及表结构。
-> 后端服务运行在 `http://127.0.0.1:8000`。
-> 注意：环境变量文件 `.env` 依然需要配置，特别提供 `ANTHROPIC_API_KEY`。
-
-#### 方法 B：本地环境运行
-
-```bash
+```powershell
 cd backend
 python -m venv .venv
-source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
 
-# 初次运行时，代码中的 init_db 会自动在 PostgreSQL 里创建表格
+在 `backend/.env` 中至少配置：
+
+```dotenv
+ANTHROPIC_API_KEY=your-api-key
+
+# 可选
+MODEL_NAME=claude-sonnet-4-5-20250929
+SQLITE_PATH=data/app.db
+LOG_LEVEL=INFO
+```
+
+可直接参考 `backend/.env.example` 创建 `backend/.env`。如需启用 OIDC 登录认证与本地 RBAC，请继续追加：
+
+```dotenv
+AUTH_ENABLED=true
+OIDC_ISSUER_URL=https://keycloak.example.com/realms/agentweave
+OIDC_CLIENT_ID=agentweave-web
+OIDC_CLIENT_SECRET=change-me
+OIDC_REDIRECT_URI=http://127.0.0.1:8000/api/auth/callback
+OIDC_SCOPE=openid profile email
+OIDC_ROLE_CLAIM=roles
+OIDC_ROLE_MAP=viewer=viewer,operator=operator,admin=admin
+AUTH_DEFAULT_ROLE=viewer
+SESSION_SECRET=replace-with-a-random-secret
+SESSION_COOKIE_NAME=agentweave_session
+SESSION_COOKIE_SAMESITE=lax
+SESSION_COOKIE_SECURE=false
+CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:4173,http://localhost:4173
+```
+
+- `OIDC_ROLE_CLAIM=roles` 默认兼容 Keycloak `realm_access.roles`；如果角色来自其他 claim，也可以改成 `realm_access.roles` 或类似点路径。
+- `OIDC_ROLE_MAP` 用于把外部角色映射到本地 `viewer` / `operator` / `admin`。
+- `AUTH_DEFAULT_ROLE` 会在外部身份没有匹配角色时兜底。
+- `SESSION_COOKIE_SECURE=true` 适合 HTTPS 部署；本地 HTTP 开发通常保持 `false`。
+
+如需同时启用本地固定管理员账号密码登录，请继续追加：
+
+```dotenv
+LOCAL_AUTH_ENABLED=true
+LOCAL_ADMIN_USERNAME=admin
+LOCAL_ADMIN_PASSWORD=change-me
+LOCAL_ADMIN_DISPLAY_NAME=Platform Admin
+```
+
+- 本地登录与 OIDC/SSO 可以并存，前端 `/login` 页面会同时显示两种入口。
+- 本地管理员登录成功后会映射到本地 `admin` 角色。
+- 当前版本的本地账号密码来自 `backend/.env`，适合启动期或内网场景，不建议长期以明文密码方式用于生产环境。
+
+登录流程总览：
+```mermaid
+flowchart LR
+    A[打开 AgentWeave 页面] --> B[GET /api/auth/me]
+    B -->|AUTH_ENABLED=false| C[直接进入工作台]
+    B -->|AUTH_ENABLED=true 且未登录| D[跳转到 /login]
+    D --> E{选择登录方式}
+    E -->|本地账号密码| F[POST /api/auth/login/password]
+    E -->|OIDC / SSO| G[GET /api/auth/login?next=当前页面]
+    G --> H[OIDC Provider / Keycloak]
+    H --> I[GET /api/auth/callback]
+    F --> J[后端写入会话 Cookie]
+    I --> J
+    J --> K[前端重新加载认证状态]
+```
+
+然后启动后端：
+
+```powershell
 python main.py
 ```
 
-> 后端默认运行在 `http://127.0.0.1:8000`
-
-### 3. 配置前端环境变量并构建/启动
-
-在启动前端或者构建 Docker 镜像前往，**必须要设置生产环境变量配置**。
-
-```bash
-cd frontend
-cp .env.production.example .env.production
-# 编辑 .env.production 文件，配置好后端/WebSocket 接口的对应访问地址和端口
-
-# 本地调试启动：
-npm install
-npm run dev
-
-# 如需构建生产版本：
-# npm run build
-```
-
-> 前端本地运行默认在 `http://127.0.0.1:5173`
-
-打开浏览器访问，开启你的 Agent 会话。
-
-## 📂 项目结构
+默认监听 `http://127.0.0.1:8000`。健康检查接口：
 
 ```text
-demo-agent/
-├── backend/                  # FastAPI 核心处理层
-│   ├── main.py               # 路由入口与静态挂载
-│   ├── agent.py              # Deepagent Graph 定义与流式解析
-│   ├── config.py             # 配置模块（含 PostgreSQL, 目录等）
-│   ├── AGENTS.md             # ⭐️ 核心 Agent 系统提示词/人设注入
-│   ├── api/
-│   │   ├── routers/skills.py # Restful 技能查询接口
-│   │   └── ws/chat.py        # WebSocket 连接、增量推流分发、数据库写库
-│   ├── db/
-│   │   ├── session.py        # SQLAlchemy 异步引擎
-│   │   └── base_class.py     # Base
-│   ├── models/               # ORM 表模型 (Conversation, Message)
-│   └── skills/               # ⭐️ Markdown 格式的指令集
-│       ├── shell_command.md
-│       ├── file_reader.md
-│       └── code_explainer.md
-└── frontend/                 # Vue 3 前端界面
-    ├── index.html
-    ├── src/
-    │   ├── App.vue           # 布局框架 (左会话、中聊天、右技能)
-    │   ├── stores/chat.ts    # 基于 Pinia 的状态流转器 & WebSocket 控制中心
-    │   └── components/
-    │       ├── MessageBubble.vue     # Markdown 富文本渲染与指令折腾
-    │       ├── ConversationList.vue  # 历史会话漫游
-    │       └── SkillPanel.vue        # 技能卡片
+GET /api/health
 ```
 
-## 🛠️ 关于自定义技能开发
+如果 `ANTHROPIC_API_KEY` 未配置，健康检查仍会返回 `status=ok`，但 Agent 对话能力不可用。
 
-无需修改任意一行 Python 代码，只需在 `backend/skills/` 目录下创建一个新的 `.md` 文件（参照已有的格式，包含 yaml metadata 描述和正文指导即可）。后端会自动装载该 Skill，同时前端右上角 `⚡` 面板会实时展示出你的扩建能力。
+### 2. 启动前端
 
-> 💡 **快速生成 Skill**：`backend/skills/` 下的所有技能均可通过官方的 **skill-creator** 工具自动生成，只需描述你想要的能力，它就能帮你产出完整的 Skill Markdown 文件。
->
-> 👉 [skill-creator — Anthropic 官方技能生成器](https://github.com/anthropics/skills/tree/main/skills/skill-creator)
-
-## 🔌 HTTP API（程序调用）
-
-除了 WebSocket 前端交互之外，项目提供了 **HTTP POST 接口**，供外部程序（告警系统、CI/CD、运维脚本等）直接调用 Agent 并获取最终结果。
-
-### 接口地址
-
-```http
-POST http://localhost:8000/api/agent/chat
-Content-Type: application/json
+```powershell
+cd frontend
+npm install
 ```
 
-### 请求参数
+可直接参考 `frontend/.env.example` 创建 `frontend/.env`。
 
-| 参数 | 类型 | 必填 | 说明 |
+如果前端开发服务器和后端不在同一 Origin，启动前设置：
+
+```text
+VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_WS_URL=ws://127.0.0.1:8000/ws/chat
+```
+
+启用登录后，页面会先请求 `/api/auth/me`；当 `AUTH_ENABLED=true` 且当前未认证时，页面右上角会显示 `Sign In`，点击后跳转到 `${VITE_API_BASE_URL}/api/auth/login`。因此前端访问的后端地址、`OIDC_REDIRECT_URI` 与 `CORS_ALLOW_ORIGINS` 需要保持一致。
+
+当前前端还提供独立登录页：
+
+- `GET /login`：独立登录页，支持本地账号密码和 OIDC / SSO 并存
+- 未登录访问工作台路径时，会先跳到 `/login?next=原路径`
+- 已登录再次访问 `/login` 时，会自动跳回 `next` 或 `/`
+
+然后启动开发服务器：
+
+```powershell
+npm run dev
+```
+
+默认地址是 `http://127.0.0.1:5173`。
+
+如果不设置环境变量，前端会默认使用“同域 REST + 当前 Host 的 `/ws/chat`”。
+
+### 3. 使用 Docker Compose（部署 / 演示模式）
+
+仓库根目录的 [docker-compose.yml](docker-compose.yml) 用于一键启动前后端的部署 / 演示环境：
+
+```powershell
+docker compose up -d --build
+```
+
+默认暴露：
+
+- 前端：`http://127.0.0.1`
+- 后端：`http://127.0.0.1:8000`
+
+健康检查与依赖关系：
+
+- `backend` 会通过 `GET /api/health` 做容器内健康检查
+- `frontend` 会等待 `backend` 进入 healthy 后再启动
+
+持久化目录：
+
+- `./backend/data -> /app/data`
+
+说明：
+
+- 这套 Compose 面向部署 / 演示，不承担本地开发热更新职责
+- `skills`、`prompts` 等内容会随镜像一起构建；修改后需要重新执行 `docker compose up -d --build`
+- 本地开发仍推荐使用上面的 `python main.py` + `npm run dev` 启动方式
+
+### 4. 运行测试
+
+前端测试：
+
+```powershell
+cd frontend
+npm run test
+```
+
+后端测试：
+
+```powershell
+cd backend
+pytest
+```
+
+## Agent 与使用方式
+
+用户使用路径总览：
+
+```mermaid
+flowchart TD
+    A[打开页面] --> B[新建对话]
+    B --> C[默认进入 router]
+    C --> D{识别任务类型}
+    D -->|通用问答| E[general]
+    D -->|数据库分析 / 巡检| F[dba]
+    D -->|运维诊断| G[ops]
+    D -->|多域 / 复杂 / 异常升级| J[supervisor]
+    J --> E
+    J --> F
+    J --> G
+    E --> H[流式对话与工具调用]
+    F --> H
+    G --> H
+    H --> I[上传附件 / 创建定时任务 / 查看提醒]
+```
+
+### 当前内置 Agent
+
+| Agent | 用途 | 说明 | 默认可用 Skills |
 | --- | --- | --- | --- |
-| `message` | string | ✅ | 用户问题 |
-| `conversation_id` | string | ❌ | 会话 ID，传入可继续上下文对话 |
-| `skill` | string | ❌ | 指定使用的 Skill 名称 |
+| `router` | 默认入口 | 轻量路由、升级判断、单域分流 | `using-superpowers` |
+| `supervisor` | 复杂任务协调 | 多域编排、并行调度、结果整合 | `using-superpowers` |
+| `general` | 通用问答 | 文档阅读、代码解释、Markdown 整理 | `file_reader`、`code_explainer`、`obsidian-markdown`、`using-superpowers` |
+| `dba` | 数据库分析 | MySQL SQL 分析、RDS 巡检、报告摘要 | `mysql-sql-analyzer`、`volcengine-rds-health-analyzer`、`volcengine-rds-report-summarizer`、`using-superpowers` |
+| `ops` | 运维诊断 | 远程运维、Docker 排查、Kubernetes 诊断 | `remote-ops`、`docker`、`kubernetes`、`using-superpowers` |
 
-### 响应格式
+### 推荐使用路径
 
-```json
-{
-  "conversation_id": "uuid",
-  "content": "Agent 最终回复（Markdown 文本）",
-  "thinking": "Agent 思考过程",
-  "tool_calls": [
-    {
-      "tool_name": "execute",
-      "tool_input": {"command": "df -h"},
-      "result": "Filesystem  Size  Used  ..."
-    }
-  ]
-}
+- 新对话默认从 `router` 开始。
+- 明确知道任务属于数据库或运维领域时，可以直接切到 `dba` 或 `ops`。
+- `general` 更适合通用问答、文档处理和代码解释。
+- `supervisor` 主要用于多域、复杂、异常升级任务，不作为普通用户默认入口。
+- 会话一旦创建，会固定绑定 `agent_id`；新开会话才会重新回到默认入口 `router`。
+
+### 当前前端工作台包含的面板
+
+- 会话列表与标题编辑
+- 主聊天区与流式消息渲染
+- Skills 面板
+- MCP 面板
+- 记忆面板
+- 会话附件条
+- 定时任务抽屉
+- 任务提醒中心
+
+## 关键子系统
+
+系统架构与请求流：
+
+```mermaid
+flowchart LR
+    subgraph Browser[Browser / Frontend]
+        A[Vue 3 UI]
+        B[Pinia Chat Store]
+    end
+
+    subgraph FastAPI[FastAPI Service]
+        C[REST Routers]
+        D[WS /ws/chat]
+    end
+
+    subgraph Runtime[Agent Runtime]
+        E[AgentManager]
+        F[router / supervisor / general / dba / ops]
+    end
+
+    subgraph Extensions[Extensions]
+        G[Skills]
+        H[MCP Servers]
+        I[Cloud Context / Memories]
+    end
+
+    subgraph Data[Persistence]
+        J[SQLite]
+        K[/memories/]
+    end
+
+    A --> B
+    B --> C
+    B --> D
+    C --> E
+    D --> E
+    E --> F
+    F --> G
+    F --> H
+    F --> I
+    C --> J
+    D --> J
+    I --> K
 ```
 
-### 调用示例
+### 1. Agent 编排
 
-**单轮调用**：
+- Agent 定义位于 [backend/agent_profiles.py](backend/agent_profiles.py)。
+- 运行时由 [backend/agent_manager.py](backend/agent_manager.py) 负责初始化、缓存和按需加载。
+- 默认 Agent 是 `router`，配置来源于 `DEFAULT_AGENT_ID = "router"`。
 
-```bash
-curl -X POST http://localhost:8000/api/agent/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "帮我分析下 10.0.0.1 的磁盘使用情况", "skill": "remote-ops"}'
+### 2. 会话与消息流
+
+- FastAPI 在 [backend/main.py](backend/main.py) 注册 REST 和 WebSocket 路由。
+- 主对话通道在 [backend/api/ws/chat.py](backend/api/ws/chat.py)。
+- 会话、消息、标题和 Agent 绑定逻辑主要在 `services/conversation_*` 中实现。
+
+### 3. 定时任务与提醒
+
+定时巡检任务链路：
+
+```mermaid
+flowchart TD
+    A[会话中提出巡检需求] --> B[生成任务草稿<br/>或直接创建任务]
+    B --> C[保存 InspectionTask]
+    C --> D[inspection_scheduler<br/>按 cron 调度]
+    D --> E[创建任务运行记录<br/>和运行会话]
+    E --> F[调用 dba / ops Agent 执行巡检]
+    F --> G[生成结果消息 / 巡检报告]
+    G --> H[写入 TaskNotification]
+    H --> I[前端查看执行记录<br/>会话回放 / 报告下载]
 ```
 
-**多轮对话**（传入上一轮返回的 `conversation_id`）：
+- 定时任务 API 位于 [backend/api/routers/inspection_tasks.py](backend/api/routers/inspection_tasks.py)。
+- 任务调度与执行逻辑位于 `services/inspection_scheduler.py` 和 `services/inspection_tasks.py`。
+- 提醒中心由 `task_notifications` 路由和服务层提供。
 
-```bash
-curl -X POST http://localhost:8000/api/agent/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "继续看一下内存", "conversation_id": "上一轮返回的 uuid"}'
+### 4. 扩展能力
+
+- Skills 元数据通过 [backend/skill_catalog.py](backend/skill_catalog.py) 扫描。
+- MCP Server 注册与测试由 `services/mcp_registry.py` 提供。
+- 云凭证解析接口位于 `api/routers/cloud_credentials.py`。
+- 会话附件上传与持久化位于 `conversation_attachments` 路由与服务。
+
+### 5. 持久化与记忆
+
+- SQLite 连接配置在 [backend/config.py](backend/config.py) 和 `db/session.py`。
+- 业务表包括 `Conversation`、`Message`、`InspectionTask`、`InspectionTaskRun`、`TaskNotification`、`McpServer`、`ConversationAttachment`。
+- 长期记忆通过 `/api/memories` 暴露，底层使用 LangGraph Store。
+
+## 主要接口
+
+| 接口 | 作用 |
+| --- | --- |
+| `GET /api/health` | 健康检查和 API Key 配置状态 |
+| `GET /api/agents` | 获取 Agent 列表和默认 Agent |
+| `GET/POST/PATCH/DELETE /api/conversations` | 会话列表、创建、重命名、删除 |
+| `POST /api/conversations/attachments` | 上传会话附件 |
+| `GET /api/skills?agent_id=...` | 获取某个 Agent 可见的 Skills |
+| `GET/POST/... /api/inspection-tasks` | 定时任务、草稿生成、执行记录与流式回放 |
+| `GET/POST /api/task-notifications` | 任务提醒列表和已读状态 |
+| `GET /api/mcp/config` | 读取项目根目录 `mcp.json` 和解析后的 MCP Server 列表 |
+| `PUT /api/mcp/config` | 保存整份 `mcp.json` 配置 |
+| `POST /api/mcp/servers/{server_name}/test` | 按 server 名称测试单个 MCP Server |
+| `GET/PUT/POST /api/cloud-credentials/...` | 云凭证注册表与上下文解析 |
+| `GET/DELETE /api/memories/...` | 记忆树、记忆内容读取与删除 |
+| `WS /ws/chat` | 主对话通道 |
+
+## 项目结构
+
+```text
+ops-skills-agent-demo/
+├── backend/
+│   ├── main.py                  # FastAPI 入口
+│   ├── agent.py                 # AgentWeave 运行入口
+│   ├── agent_profiles.py        # Agent 配置与默认 Agent
+│   ├── agent_manager.py         # Runtime 初始化与缓存
+│   ├── api/
+│   │   ├── routers/             # REST 路由
+│   │   └── ws/chat.py           # WebSocket 对话入口
+│   ├── services/                # 会话、任务、提醒、MCP、记忆等服务
+│   ├── models/                  # ORM 模型
+│   ├── skills/                  # Markdown Skills 仓库
+│   ├── prompts/                 # base/router/supervisor/general/dba/ops 提示词
+│   ├── db/                      # SQLAlchemy 会话与基类
+│   └── tests/                   # 后端测试
+├── frontend/
+│   ├── src/App.vue              # 主工作台布局
+│   ├── src/components/          # 会话、任务、提醒、MCP、记忆等组件
+│   ├── src/stores/chat/         # Pinia 聊天域状态
+│   └── src/utils/               # 标题、任务意图、MySQL 巡检等工具
+├── docs/                        # 设计文档和界面截图
+└── docker-compose.yml           # 前后端容器编排
 ```
 
-**Python 调用**：
+## 进一步阅读
 
-```python
-import requests
-
-resp = requests.post("http://localhost:8000/api/agent/chat", json={
-    "message": "SELECT * FROM orders WHERE status='pending' 这条 SQL 为什么慢",
-    "skill": "sql-analyzer"
-}, timeout=300)
-
-result = resp.json()
-print(result["content"])      # 最终分析结果
-print(result["tool_calls"])   # 工具调用过程
-```
-
-> ⚠️ **超时提示**：Agent 执行可能较耗时（SSH 排查、多轮工具调用），建议客户端设置 **5 分钟超时**。
-
-## 🇨🇳 国产替代：MiniMax-M2.5
-
-如果你没有 Claude API Key 或者希望使用国产大模型，本项目兼容 **MiniMax-M2.5**（海螺 AI）。MiniMax 提供了与 Anthropic 完全兼容的 API 接口，只需修改 `backend/.env` 中的 API 配置即可无缝切换：
-
-```bash
-# backend/.env
-ANTHROPIC_API_KEY=你的MiniMax_API_Key
-ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
-MODEL_NAME=MiniMax-M2.5
-```
-
-> 🎁 **新用户福利**：注册并完成实名认证后即可获得 **15 元体验券**，足够深度测试。
->
-> 👉 [MiniMax Anthropic 兼容 API 文档](https://platform.minimaxi.com/docs/api-reference/text-anthropic-api)
+- [docs/skills-overview.md](docs/skills-overview.md)
+- [docs/builtin-skills-design.md](docs/builtin-skills-design.md)
+- [docs/docker-design.md](docs/docker-design.md)
+- [docs/kubernetes-design.md](docs/kubernetes-design.md)
+- [docs/mysql-sql-analyzer-design.md](docs/mysql-sql-analyzer-design.md)
+- [docs/remote-ops-design.md](docs/remote-ops-design.md)

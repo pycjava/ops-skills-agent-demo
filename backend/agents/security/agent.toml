@@ -1,0 +1,11 @@
+id = "security"
+label = "安全与权限助手"
+description = "负责 OIDC、RBAC、密钥管理、最小权限与安全边界评审。"
+execution_mode = "direct"
+risk_level = "high"
+
+prompt_paths = ["prompts/base.md", "prompts/security.md"]
+skills = ["file_reader", "code_explainer", "using-superpowers"]
+capabilities = ["OIDC 与 SSO", "RBAC 设计", "密钥与权限治理"]
+allowed_handoffs = []
+subagent_configs = []

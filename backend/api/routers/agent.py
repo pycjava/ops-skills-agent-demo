@@ -4,14 +4,24 @@ POST /api/agent/chat
 程序发送问题，等待 Agent 完整执行后返回最终结果。
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from agent import run_agent
+from auth.dependencies import require_permission
 from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
-from models import Conversation
-from agent import run_agent
-from api.ws.chat import save_message
+from services.agent_event_state import AgentEventState
+from services.conversation_messages import save_message
+from services.conversation_state import (
+    create_conversation,
+    get_conversation,
+    get_conversation_agent_id,
+)
+from utils.credential_safety import (
+    cloud_credentials_rejection_message,
+    contains_plaintext_cloud_credentials,
+)
 from utils.logger import logger
 
 
@@ -24,16 +34,19 @@ class ChatRequest(BaseModel):
     skill: str | None = Field(
         None, description="指定使用的 Skill 名称，如 mysql-sql-analyzer"
     )
+    agent_id: str | None = Field(None, description="指定目标 Agent，如 dba / ops")
 
 
 class ToolCallRecord(BaseModel):
     tool_name: str
     tool_input: dict | None = None
+    artifact_kind: str | None = None
     result: str = ""
 
 
 class ChatResponse(BaseModel):
     conversation_id: str
+    agent_id: str
     content: str = Field("", description="Agent 最终回复文本")
     thinking: str = Field("", description="Agent 思考过程")
     tool_calls: list[ToolCallRecord] = Field(
@@ -41,7 +54,11 @@ class ChatResponse(BaseModel):
     )
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    dependencies=[Depends(require_permission("conversations:write"))],
+)
 async def agent_chat(req: ChatRequest):
     """
     同步调用 Agent，等待完整执行后返回最终结果。
@@ -51,85 +68,119 @@ async def agent_chat(req: ChatRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=503, detail="未配置 ANTHROPIC_API_KEY")
 
-    # 获取或创建会话
     conv_id = req.conversation_id
-    if not conv_id:
-        async with AsyncSessionLocal() as session:
-            conv = Conversation(source="api")
-            session.add(conv)
-            await session.commit()
-            await session.refresh(conv)
-            conv_id = conv.id
-            logger.info(f"[HTTP API] 新建对话 {conv_id}")
+    resolved_agent_id = req.agent_id
 
-    # 如果指定了 skill，将 @skill 前缀加入消息
+    async with AsyncSessionLocal() as session:
+        if conv_id:
+            conversation = await get_conversation(session, conv_id)
+            if conversation is None:
+                raise HTTPException(status_code=404, detail="会话不存在")
+            resolved_agent_id = get_conversation_agent_id(conversation)
+        else:
+            try:
+                conversation = await create_conversation(
+                    session,
+                    source="api",
+                    agent_id=req.agent_id,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            conv_id = conversation.id
+            resolved_agent_id = conversation.agent_id
+            logger.info(
+                f"[HTTP API] 新建对话 {conv_id}, agent_id={resolved_agent_id}"
+            )
+
     user_message = req.message
     if req.skill:
         user_message = f"@{req.skill} {user_message}"
 
-    # 保存用户消息
-    await save_message(conv_id, "user", user_message, "text")
+    if resolved_agent_id == "db-runtime" and contains_plaintext_cloud_credentials(
+        user_message
+    ):
+        raise HTTPException(status_code=400, detail=cloud_credentials_rejection_message())
 
-    # 收集 Agent 执行结果
-    result_text = ""
-    result_thinking = ""
+    await save_message(
+        conv_id,
+        "user",
+        user_message,
+        "text",
+        agent_id=resolved_agent_id,
+    )
+
+    event_state = AgentEventState()
     tool_calls: list[ToolCallRecord] = []
-    current_tool: dict | None = None
 
     async def on_event(event: dict):
-        nonlocal result_text, result_thinking, current_tool
-
-        etype = event.get("type")
+        normalized_event = event_state.apply_event(event)
+        etype = normalized_event.get("type")
+        tool_name = normalized_event.get("tool_name", "")
+        event_agent_id = event.get("agent_id") or resolved_agent_id
 
         if etype == "text_delta":
-            result_text += event.get("content", "")
+            return
 
         elif etype == "thinking_delta":
-            result_thinking += event.get("content", "")
+            return
 
         elif etype == "tool_call":
-            current_tool = {
-                "tool_name": event.get("tool_name", ""),
-                "tool_input": event.get("tool_input"),
-                "result": "",
-            }
+            return
 
         elif etype == "tool_result":
-            if current_tool:
-                current_tool["result"] = event.get("result", "")
-                tool_calls.append(ToolCallRecord(**current_tool))
-                current_tool = None
-            # 持久化工具消息
+            tool_calls.append(
+                ToolCallRecord(
+                    tool_name=tool_name,
+                    tool_input=normalized_event.get("tool_input")
+                    if isinstance(normalized_event.get("tool_input"), dict)
+                    else None,
+                    artifact_kind=normalized_event.get("artifact_kind"),
+                    result=normalized_event.get("result", ""),
+                )
+            )
             await save_message(
                 conv_id,
                 "system",
-                event.get("result", ""),
+                normalized_event.get("result", ""),
                 "tool_result",
-                tool_name=event.get("tool_name"),
+                agent_id=event_agent_id,
+                tool_name=tool_name,
+                tool_input=normalized_event.get("tool_input")
+                if isinstance(normalized_event.get("tool_input"), dict)
+                else None,
             )
 
         elif etype == "error":
             raise HTTPException(
-                status_code=500, detail=event.get("content", "Agent 执行出错")
+                status_code=500, detail=normalized_event.get("content", "Agent 执行出错")
             )
 
         elif etype == "done":
-            # 持久化最终回复
-            if result_text:
+            snapshot = event_state.snapshot()
+            if snapshot.text:
                 await save_message(
                     conv_id,
                     "assistant",
-                    result_text,
+                    snapshot.text,
                     "text",
-                    thinking=result_thinking or None,
+                    agent_id=event_agent_id,
+                    thinking=snapshot.thinking or None,
                 )
 
-    logger.info(f"[HTTP API] 对话 {conv_id} 开始执行 Agent")
-    await run_agent(user_message=user_message, conv_id=conv_id, on_event=on_event)
+    logger.info(
+        f"[HTTP API] 对话 {conv_id} 开始执行 Agent, agent_id={resolved_agent_id}"
+    )
+    await run_agent(
+        user_message=user_message,
+        conv_id=conv_id,
+        on_event=on_event,
+        agent_id=resolved_agent_id,
+    )
 
     return ChatResponse(
         conversation_id=conv_id,
-        content=result_text,
-        thinking=result_thinking,
+        agent_id=resolved_agent_id or "",
+        content=event_state.snapshot().text,
+        thinking=event_state.snapshot().thinking,
         tool_calls=tool_calls,
     )

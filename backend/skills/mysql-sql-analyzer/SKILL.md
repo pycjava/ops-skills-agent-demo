@@ -14,6 +14,12 @@ description: "基于 MySQL 与 SQLAlchemy 的 SQL 执行过程分析技能。用
 - 禁止在回答中回显数据库密码或完整连接串。
 - 需要在可访问目标 MySQL 的环境中运行脚本。
 
+## 输入与缺参处理
+
+- 进入分析前，先拿到单条完整 SQL，以及目标库的 `host` / `port` / `database`。
+- 如果缺少上述关键信息，先追问缺失项，不要自行猜测连接信息，也不要擅自修改用户提供的 SQL。
+- 如果用户要求直接执行原 SQL、修改索引或变更数据库配置，明确说明本技能只做只读分析，并先给出诊断结论或优化建议。
+
 ## 环境变量
 
 必需：
@@ -43,7 +49,7 @@ description: "基于 MySQL 与 SQLAlchemy 的 SQL 执行过程分析技能。用
 2. 运行分析脚本（默认不执行 `EXPLAIN ANALYZE`）：
 
 ```bash
-python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
+python ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
   --host "<db_host>" \
   --port 3306 \
   --database "<db_name>" \
@@ -54,7 +60,7 @@ python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
 或：
 
 ```bash
-python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
+python ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
   --host "<db_host>" \
   --port 3306 \
   --database "<db_name>" \
@@ -66,7 +72,7 @@ python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
 3. 仅在用户明确要求并可接受额外开销时，增加真实执行信息：
 
 ```bash
-python3 ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
+python ./backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py \
   --host "<db_host>" \
   --port 3306 \
   --database "<db_name>" \

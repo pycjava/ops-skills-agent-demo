@@ -1,43 +1,80 @@
-"""FastAPI 应用入口
+"""FastAPI 应用入口。
 
 提供 WebSocket 端点用于对话，REST API 用于会话管理。
 """
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
-from config import ANTHROPIC_API_KEY, SKILLS_DIR
-from db.session import init_db
+from agent import init_agent_runtime, list_agent_profiles
+from api.routers import (
+    agent,
+    agents,
+    auth,
+    cloud_credentials,
+    conversation_attachments,
+    conversations,
+    inspection_tasks,
+    mcp,
+    memories,
+    skills,
+    task_notifications,
+)
+from api.ws import chat
+from auth.config import get_auth_settings
+from config import ANTHROPIC_API_KEY, BASE_DIR, SKILLS_DIR, get_cors_allowed_origins
+from db.session import close_db, init_db
+from services.inspection_scheduler import InspectionSchedulerRuntime
 from utils.logger import logger
 
-# Import API routers
-from api.routers import conversations, skills, agent
-from api.ws import chat
+app = FastAPI(title="AgentWeave Demo", version="0.2.0")
+inspection_scheduler = InspectionSchedulerRuntime()
+auth_settings = get_auth_settings()
 
-# ─── 初始化 ─────────────────────────────────────────────
-
-app = FastAPI(title="Claude Agent Demo", version="0.2.0")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=auth_settings.session_secret,
+    session_cookie=auth_settings.session_cookie_name,
+    same_site=auth_settings.session_cookie_same_site,
+    https_only=auth_settings.session_cookie_secure,
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+RELOAD_EXCLUDE_DIRS = ("tmp", "metric_data", "logs", "data", "memories")
+
+
+def build_uvicorn_reload_kwargs() -> dict[str, object]:
+    current_working_directory = Path.cwd()
+    reload_excludes = [
+        Path(
+            os.path.relpath((BASE_DIR / directory).resolve(), current_working_directory)
+        ).as_posix()
+        for directory in RELOAD_EXCLUDE_DIRS
+    ]
+    return {
+        "reload": True,
+        "reload_dirs": [str(BASE_DIR)],
+        "reload_excludes": reload_excludes,
+        "app_dir": str(BASE_DIR),
+    }
+
 
 @app.on_event("startup")
 async def startup():
-    # 初始化数据库
     await init_db()
-
-    # 初始化 PostgresSaver + PostgresStore + Agent
-    from agent import init_pg
-
-    await init_pg()
+    await init_agent_runtime()
+    await inspection_scheduler.start()
 
     logger.info(f"Skills 目录: {SKILLS_DIR}")
     if ANTHROPIC_API_KEY:
@@ -48,18 +85,35 @@ async def startup():
     skills_path = Path(SKILLS_DIR)
     if skills_path.exists():
         skill_dirs = [
-            d.name
-            for d in skills_path.iterdir()
-            if d.is_dir() and (d / "SKILL.md").exists()
+            directory.name
+            for directory in skills_path.iterdir()
+            if directory.is_dir() and (directory / "SKILL.md").exists()
         ]
         logger.info(f"发现 {len(skill_dirs)} 个 Skills: {skill_dirs}")
 
+    logger.info(f"可用 Agents: {[profile.id for profile in list_agent_profiles()]}")
 
-# ─── 包含路由 ────────────────────────────────────────────
+
+@app.on_event("shutdown")
+async def shutdown():
+    from agent import close_agent_runtime
+
+    await inspection_scheduler.stop()
+    await close_agent_runtime()
+    await close_db()
+
 
 app.include_router(conversations.router)
+app.include_router(conversation_attachments.router)
+app.include_router(inspection_tasks.router)
+app.include_router(task_notifications.router)
+app.include_router(auth.router)
+app.include_router(agents.router)
 app.include_router(skills.router)
+app.include_router(mcp.router)
+app.include_router(cloud_credentials.router)
 app.include_router(agent.router)
+app.include_router(memories.router)
 app.include_router(chat.router)
 
 
@@ -71,22 +125,13 @@ async def health():
     }
 
 
-# ─── 静态文件服务（生产模式） ─────────────────────────────
-
-# FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
-# if FRONTEND_DIST.exists():
-#     logger.info(f"正在从目录挂载静态前端文件: {FRONTEND_DIST}")
-#     app.mount(
-#         "/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend"
-#     )
-# else:
-#     logger.debug(f"未能找到前端构建目录 {FRONTEND_DIST}，将不会提供静态文件服务。")
-
-
-# ─── 入口 ────────────────────────────────────────────────
-
 if __name__ == "__main__":
     import uvicorn
 
     logger.info("正在 http://0.0.0.0:8000 启动 Uvicorn 服务器")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        **build_uvicorn_reload_kwargs(),
+    )

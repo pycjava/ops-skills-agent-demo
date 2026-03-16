@@ -1,27 +1,22 @@
-"""Claude Agent 核心模块 (DeepAgents 版)
+"""AgentWeave 核心模块 (Multi-Agent 版)."""
 
-使用 langchain-ai/deepagents 的 create_deep_agent 实现 Agent 对话。
-提供了文件读写、Shell 执行、Skills 读取等能力，并支持真正的流式输出。
-"""
-
-import os
-from pathlib import Path
-from typing import Any, Callable, Awaitable
+from collections import defaultdict, deque
+import re
+from typing import Any, Awaitable, Callable
 
 from langchain_core.messages import HumanMessage
-from langchain_anthropic import ChatAnthropic
-from deepagents import create_deep_agent
-from deepagents.backends import LocalShellBackend, CompositeBackend, StoreBackend
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.store.postgres import AsyncPostgresStore
-from psycopg_pool import AsyncConnectionPool
 
-from config import MODEL_NAME, PROJECT_DIR, MAX_TURNS, DATABASE_URL_SYNC
+from agent_manager import AgentManager
+from agent_profiles import canonicalize_agent_id, get_agent_memory_roots
+from config import ANTHROPIC_API_KEY, MAX_TURNS
+from services.agent_event_identity import resolve_event_agent_id
+from services.multimodal_ocr import (
+    build_multimodal_capability_context,
+    should_attach_multimodal_images,
+)
 from utils.logger import logger
 
 
-# 用于推送给前端的事件类型
-EVENT_TEXT = "text"
 EVENT_TEXT_DELTA = "text_delta"
 EVENT_THINKING_DELTA = "thinking_delta"
 EVENT_TOOL_CALL = "tool_call"
@@ -29,138 +24,379 @@ EVENT_TOOL_RESULT = "tool_result"
 EVENT_DONE = "done"
 EVENT_ERROR = "error"
 
-
-# ─── 自定义本地 Tools ──────────────────────────────────────────
-
-# 根据 DeepAgents 的设计，我们不再需要自定义 skill 读取工具，
-# create_deep_agent 会通过 skills=["./skills/"] 参数原生自动加载和管理。
-
-# ─── 核心引擎 ──────────────────────────────────────────────────
-
-
-def _build_shell_env_overrides() -> dict[str, str]:
-    """为 LocalShellBackend 注入可复用环境:
-
-    1. 继承当前进程环境变量（含 .env 读取结果）
-    2. 优先把项目虚拟环境目录加入 PATH，确保 skills 里的 python 命令可用
-    """
-    overrides: dict[str, str] = {}
-    current_path = os.environ.get("PATH", "")
-    project_dir = Path(PROJECT_DIR)
-
-    candidate_bins = [
-        project_dir / ".venv" / "bin",  # backend/.venv/bin
-        project_dir.parent / ".venv" / "bin",  # repo/.venv/bin
-    ]
-    existing_bins = [str(p) for p in candidate_bins if p.exists()]
-
-    if existing_bins:
-        path_items = existing_bins + ([current_path] if current_path else [])
-        overrides["PATH"] = ":".join(path_items)
-        overrides["VIRTUAL_ENV"] = str(Path(existing_bins[0]).parent)
-
-    return overrides
+ARTIFACT_KIND_MEMORY = "memory"
+ARTIFACT_KIND_REPORT = "report"
+ARTIFACT_KIND_FILE = "file"
+REPORT_EXTENSIONS = (".md", ".html", ".pdf")
+REPORT_MEMORY_PREFIX = "/memories/reports/"
+MEMORY_INSTRUCTIONS_PATH = "/memories/instructions.txt"
+DBA_CLOUD_REGISTRY_PATH = "/memories/agents/dba/cloud_credentials_registry.json"
+MEMORY_EXCERPT_MAX_LINES = 24
+MEMORY_EXCERPT_MAX_CHARS = 1600
+MEMORY_MATCH_LIMIT = 3
+_manager = AgentManager()
 
 
-# ─── 持久化存储（延迟异步初始化） ──────────────────────────────
-
-# 异步版本需要在 async 上下文中初始化，在 FastAPI startup 中调用 init_pg()
-_pg_saver: AsyncPostgresSaver | None = None
-_pg_store: AsyncPostgresStore | None = None
-_agent = None
+def list_agent_profiles(*, include_legacy: bool = True):
+    return _manager.list_profiles(include_legacy=include_legacy)
 
 
-async def init_pg():
-    """在 FastAPI startup 中调用，异步初始化 PostgresSaver 和 PostgresStore"""
-    global _pg_saver, _pg_store, _agent
+def resolve_default_agent() -> str:
+    return _manager.resolve_default_agent()
 
-    # 手动创建连接池，由我们控制生命周期（不使用 from_conn_string 的上下文管理器）
-    # autocommit=True: LangGraph setup() 会执行 CREATE INDEX CONCURRENTLY，
-    # 该语句不能在事务块内运行，必须开启 autocommit
-    pool = AsyncConnectionPool(
-        conninfo=DATABASE_URL_SYNC,
-        open=False,
-        kwargs={"autocommit": True},
+
+def get_memory_store():
+    return _manager.get_memory_store()
+
+
+async def init_agent_runtime():
+    await _manager.init()
+
+
+async def close_agent_runtime():
+    await _manager.close()
+
+
+async def invalidate_runtime_cache():
+    await _manager.invalidate_runtime_cache()
+
+
+async def get_runtime(agent_id: str):
+    return await _manager.get_runtime(agent_id)
+
+
+def _flatten_memory_nodes(nodes: list[dict[str, Any]]) -> list[str]:
+    paths: list[str] = []
+    for node in nodes:
+        path = node.get("path")
+        kind = node.get("kind")
+        if kind == "file" and isinstance(path, str):
+            paths.append(path)
+        children = node.get("children")
+        if isinstance(children, list):
+            paths.extend(_flatten_memory_nodes(children))
+    return paths
+
+
+def _extract_message_keywords(user_message: str) -> list[str]:
+    raw_tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9._-]{1,}", user_message.lower())
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for token in raw_tokens:
+        if token in seen:
+            continue
+        seen.add(token)
+        tokens.append(token)
+    return tokens
+
+
+def _build_memory_excerpt(content: str) -> str:
+    lines = [line.rstrip() for line in content.splitlines()]
+    excerpt_lines: list[str] = []
+    char_count = 0
+
+    for line in lines:
+        if not line.strip() and excerpt_lines and not excerpt_lines[-1]:
+            continue
+        excerpt_lines.append(line)
+        char_count += len(line) + 1
+        if len(excerpt_lines) >= MEMORY_EXCERPT_MAX_LINES:
+            break
+        if char_count >= MEMORY_EXCERPT_MAX_CHARS:
+            break
+
+    excerpt = "\n".join(excerpt_lines).strip()
+    if len(content) > len(excerpt):
+        excerpt = f"{excerpt}\n..."
+    return excerpt
+
+
+def _score_memory_document(path: str, content: str, keywords: list[str]) -> int:
+    path_lower = path.lower()
+    content_lower = content.lower()
+    score = 0
+
+    for keyword in keywords:
+        if keyword in path_lower:
+            score += 8
+        if keyword in content_lower:
+            score += 4
+
+    return score
+
+
+async def _build_memory_context(user_message: str, agent_id: str) -> str | None:
+    try:
+        from services.memory import list_memory_tree, read_memory_document
+
+        tree = await list_memory_tree()
+        all_paths = _flatten_memory_nodes(tree)
+        if not all_paths:
+            return None
+
+        keywords = _extract_message_keywords(user_message)
+        agent_roots = get_agent_memory_roots(agent_id)
+
+        selected_docs: list[tuple[str, str, int]] = []
+
+        if MEMORY_INSTRUCTIONS_PATH in all_paths:
+            instructions = await read_memory_document(MEMORY_INSTRUCTIONS_PATH)
+            content = instructions.get("content", "")
+            if isinstance(content, str) and content.strip():
+                selected_docs.append((MEMORY_INSTRUCTIONS_PATH, content, 10_000))
+
+        if agent_id == "db-runtime" and DBA_CLOUD_REGISTRY_PATH in all_paths:
+            registry = await read_memory_document(DBA_CLOUD_REGISTRY_PATH)
+            content = registry.get("content", "")
+            if isinstance(content, str) and content.strip():
+                selected_docs.append((DBA_CLOUD_REGISTRY_PATH, content, 9_500))
+
+        agent_paths = [
+            path for path in all_paths if any(path.startswith(root) for root in agent_roots)
+        ]
+        fallback_paths = [
+            path
+            for path in all_paths
+            if path.startswith("/memories/agents/")
+            and not any(path.startswith(root) for root in agent_roots)
+        ]
+
+        async def load_ranked(paths: list[str]) -> list[tuple[str, str, int]]:
+            ranked: list[tuple[str, str, int]] = []
+            for path in paths:
+                document = await read_memory_document(path)
+                content = document.get("content", "")
+                if not isinstance(content, str) or not content.strip():
+                    continue
+                score = _score_memory_document(path, content, keywords)
+                ranked.append((path, content, score))
+            ranked.sort(key=lambda item: (item[2], item[0]), reverse=True)
+            return ranked
+
+        ranked_agent_docs = await load_ranked(agent_paths)
+        matched_agent_docs = [item for item in ranked_agent_docs if item[2] > 0]
+
+        if matched_agent_docs:
+            selected_docs.extend(matched_agent_docs[:MEMORY_MATCH_LIMIT])
+        else:
+            selected_docs.extend(ranked_agent_docs[:1])
+            ranked_fallback_docs = await load_ranked(fallback_paths)
+            selected_docs.extend(
+                [item for item in ranked_fallback_docs if item[2] > 0][
+                    : max(0, MEMORY_MATCH_LIMIT - len(selected_docs))
+                ]
+            )
+
+        deduped_docs: list[tuple[str, str, int]] = []
+        seen_paths: set[str] = set()
+        for path, content, score in selected_docs:
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            deduped_docs.append((path, content, score))
+
+        if not deduped_docs:
+            return None
+
+        matched_keywords_text = "、".join(keywords) if keywords else "无明确关键词"
+        sections = [
+            "以下是本轮请求可用的长期记忆摘要，来自 `/memories/`。",
+            f"- 当前 agent: `{agent_id}`",
+            f"- 当前消息命中关键词: {matched_keywords_text}",
+            "- 如果摘要里已经包含实例 ID、区域、环境或别名映射，不要再次向用户重复索取这些信息。",
+            "- 如果摘要里出现多个候选实例，先让用户在候选之间做确认，不要直接要求用户重新提供实例 ID。",
+        ]
+
+        for path, content, _score in deduped_docs:
+            sections.append(f"\n### {path}\n{_build_memory_excerpt(content)}")
+
+        return "\n".join(sections)
+    except Exception as exc:
+        logger.warning(f"Failed to build memory context for agent {agent_id}: {exc}")
+        return None
+
+
+async def _build_attachment_context(conv_id: str) -> str | None:
+    if not conv_id:
+        return None
+
+    try:
+        from services.conversation_attachments import build_attachment_context
+
+        return await build_attachment_context(conv_id)
+    except Exception as exc:
+        logger.warning(f"Failed to build attachment context for conversation {conv_id}: {exc}")
+        return None
+
+
+async def _build_image_attachment_blocks(
+    conv_id: str,
+    agent_id: str,
+) -> list[dict[str, Any]]:
+    if not conv_id or not should_attach_multimodal_images(agent_id):
+        return []
+
+    try:
+        from services.conversation_attachments import (
+            build_image_attachment_blocks,
+            list_conversation_attachments,
+        )
+
+        attachments = await list_conversation_attachments(conv_id)
+        return build_image_attachment_blocks(conv_id, attachments)
+    except Exception as exc:
+        logger.warning(
+            f"Failed to build image attachment blocks for conversation {conv_id}: {exc}"
+        )
+        return []
+
+
+async def _build_multimodal_context(conv_id: str, agent_id: str) -> str | None:
+    if not conv_id:
+        return None
+
+    try:
+        from services.conversation_attachments import (
+            is_image_attachment_record,
+            list_conversation_attachments,
+        )
+
+        attachments = await list_conversation_attachments(conv_id)
+        has_image_attachments = any(
+            is_image_attachment_record(attachment) for attachment in attachments
+        )
+        return build_multimodal_capability_context(
+            agent_id=agent_id,
+            has_image_attachments=has_image_attachments,
+            api_key_configured=bool(ANTHROPIC_API_KEY),
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Failed to build multimodal context for conversation {conv_id}: {exc}"
+        )
+        return None
+
+
+def _compose_user_message_with_contexts(
+    user_message: str,
+    memory_context: str | None,
+    attachment_context: str | None,
+    multimodal_context: str | None,
+) -> str:
+    if not memory_context and not attachment_context and not multimodal_context:
+        return user_message
+
+    sections: list[str] = []
+    if memory_context:
+        sections.append(
+            "<memory_context>\n"
+            f"{memory_context}\n"
+            "</memory_context>"
+        )
+    if attachment_context:
+        sections.append(
+            "<attachment_context>\n"
+            f"{attachment_context}\n"
+            "</attachment_context>"
+        )
+    if multimodal_context:
+        sections.append(
+            "<multimodal_context>\n"
+            f"{multimodal_context}\n"
+            "</multimodal_context>"
+        )
+
+    sections.append(
+        "以上是本轮请求可复用的上下文；长期记忆里已有的实例、区域、环境或别名映射优先复用，"
+        "如需基于附件分析，先读取相关附件内容再给出结论。"
     )
-    await pool.open()
-
-    # checkpointer: Agent 对话上下文跨重启保留
-    _pg_saver = AsyncPostgresSaver(pool)
-    await _pg_saver.setup()
-
-    # store: Agent 长期记忆，跨会话共享
-    _pg_store = AsyncPostgresStore(pool)
-    await _pg_store.setup()
-
-    logger.info("PostgresSaver + PostgresStore 初始化完成")
-
-    # ─── 初始化 Agent ──────────────────────────────────────────
-    _llm = ChatAnthropic(
-        model_name=MODEL_NAME,
-        temperature=1,  # extended thinking 要求 temperature=1
-        thinking={"type": "enabled", "budget_tokens": 10000},
-    )
-
-    _agent = create_deep_agent(
-        model=_llm,
-        memory=["./AGENTS.md"],
-        skills=["./skills/"],
-        store=_pg_store,
-        backend=_make_backend,
-        checkpointer=_pg_saver,
-    )
-    logger.info("Deep Agent 初始化完成")
+    sections.append(user_message)
+    return "\n\n".join(sections)
 
 
-# ─── Backend 路由 ──────────────────────────────────────────────
+def _build_human_message_content(
+    composed_user_message: str,
+    image_blocks: list[dict[str, Any]] | None = None,
+    *,
+    allow_image_blocks: bool = True,
+) -> str | list[dict[str, Any]]:
+    if not allow_image_blocks or not image_blocks:
+        return composed_user_message
+
+    return [{"type": "text", "text": composed_user_message}, *image_blocks]
 
 
-def _make_backend(runtime):
-    """CompositeBackend 路由:
-    - /memories/ 路径 → StoreBackend (持久化存储，跨会话共享)
-    - 其他路径 → LocalShellBackend (本地文件系统)
-    """
-    return CompositeBackend(
-        default=LocalShellBackend(
-            root_dir=PROJECT_DIR,
-            virtual_mode=False,
-            inherit_env=True,
-            env=_build_shell_env_overrides(),
-        ),
-        routes={
-            "/memories/": StoreBackend(runtime),
-        },
-    )
+def classify_artifact_kind(
+    tool_name: str, tool_input: dict[str, Any] | None
+) -> str | None:
+    if tool_name not in {"write_file", "edit_file"} or not isinstance(tool_input, dict):
+        return None
+
+    raw_path = tool_input.get("file_path") or tool_input.get("path")
+    if not isinstance(raw_path, str):
+        return None
+
+    normalized_path = raw_path.strip().lower()
+    if not normalized_path:
+        return None
+
+    if normalized_path.startswith(REPORT_MEMORY_PREFIX) and normalized_path.endswith(
+        REPORT_EXTENSIONS
+    ):
+        return ARTIFACT_KIND_REPORT
+    if normalized_path.startswith("/memories/"):
+        return ARTIFACT_KIND_MEMORY
+    if normalized_path.endswith(REPORT_EXTENSIONS):
+        return ARTIFACT_KIND_REPORT
+    return ARTIFACT_KIND_FILE
 
 
 async def run_agent(
     user_message: str,
     conv_id: str,
     on_event: Callable[[dict[str, Any]], Awaitable[None]],
+    agent_id: str | None = None,
 ):
-    """
-    使用 deepagents (LangGraph) 运行 Agent，并处理细粒度的流式事件。
-    """
-    inputs = {"messages": [HumanMessage(content=user_message)]}
+    """使用 deepagents (LangGraph) 运行指定 Agent，并处理流式事件。"""
+    resolved_agent_id = canonicalize_agent_id(agent_id)
+    runtime = await get_runtime(resolved_agent_id)
+    memory_context = await _build_memory_context(user_message, resolved_agent_id)
+    attachment_context = await _build_attachment_context(conv_id)
+    multimodal_context = await _build_multimodal_context(conv_id, resolved_agent_id)
+    image_blocks = await _build_image_attachment_blocks(conv_id, resolved_agent_id)
+    composed_user_message = _compose_user_message_with_contexts(
+        user_message,
+        memory_context,
+        attachment_context,
+        multimodal_context,
+    )
+    messages: list[Any] = [
+        HumanMessage(
+            content=_build_human_message_content(
+                composed_user_message,
+                image_blocks,
+                allow_image_blocks=should_attach_multimodal_images(resolved_agent_id),
+            )
+        )
+    ]
+    inputs = {"messages": messages}
+    pending_tool_inputs: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
 
     try:
-        # 传入带有 thread_id 的 config，让 MemorySaver 为同一个对话保持上下文
-        # recursion_limit 控制 LangGraph 图的最大递归步数（每轮 Agent 循环约消耗 2-4 步）
         config = {
             "configurable": {"thread_id": conv_id},
-            "recursion_limit": MAX_TURNS * 4,
+            "recursion_limit": MAX_TURNS * 20,
         }
-        # 使用 astream_events 获取逐 token 的细粒度流
-        async for event in _agent.astream_events(inputs, config=config, version="v2"):
+        event_agent_id = resolved_agent_id
+        async for event in runtime.astream_events(inputs, config=config, version="v2"):
             kind = event["event"]
             name = event.get("name", "")
+            event_agent_id = resolve_event_agent_id(event, resolved_agent_id)
 
-            # --- 文本 Token 流式输出 ---
             if kind == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
                 content = chunk.content
                 if content:
-                    # content 可能是字符串，也可能是包含 text block/thinking block 字典的列表
                     text_delta = ""
                     if isinstance(content, str):
                         text_delta = content
@@ -179,6 +415,7 @@ async def run_agent(
                                             {
                                                 "type": EVENT_THINKING_DELTA,
                                                 "content": thinking_text,
+                                                "agent_id": event_agent_id,
                                             }
                                         )
                             elif isinstance(block, str):
@@ -186,17 +423,35 @@ async def run_agent(
 
                     if text_delta:
                         await on_event(
-                            {"type": EVENT_TEXT_DELTA, "content": text_delta}
+                            {
+                                "type": EVENT_TEXT_DELTA,
+                                "content": text_delta,
+                                "agent_id": event_agent_id,
+                            }
                         )
 
-            # --- 工具调用开始 ---
             elif kind == "on_tool_start":
                 tool_input = event["data"].get("input", {})
+                if isinstance(tool_input, dict):
+                    pending_tool_inputs[name].append(tool_input)
                 tool_desc = f"正在调用工具: {name}..."
                 if name == "execute":
                     tool_desc = "正在打开终端执行 Shell 命令..."
                 elif name in ["read_file", "ls", "glob", "grep"]:
-                    tool_desc = "正在检索项目文件..."
+                    memory_path = ""
+                    if isinstance(tool_input, dict):
+                        raw_path = (
+                            tool_input.get("path")
+                            or tool_input.get("file_path")
+                            or tool_input.get("pattern")
+                        )
+                        if isinstance(raw_path, str):
+                            memory_path = raw_path
+                    tool_desc = (
+                        "正在检索长期记忆..."
+                        if memory_path.startswith("/memories/")
+                        else "正在检索项目文件..."
+                    )
                 elif name in ["write_file", "edit_file", "write_todos"]:
                     tool_desc = "正在修改本地代码/文件..."
 
@@ -206,14 +461,20 @@ async def run_agent(
                         "tool_name": name,
                         "tool_desc": tool_desc,
                         "tool_input": tool_input,
+                        "agent_id": event_agent_id,
                     }
                 )
 
-            # --- 工具调用结束 ---
             elif kind == "on_tool_end":
                 output = event["data"].get("output", "")
+                tool_input = None
+                queued_inputs = pending_tool_inputs.get(name)
+                if queued_inputs:
+                    tool_input = queued_inputs.popleft()
+                    if not queued_inputs:
+                        pending_tool_inputs.pop(name, None)
+                artifact_kind = classify_artifact_kind(name, tool_input)
 
-                # output 可能是一个 Langchain ToolMessage 对象
                 if hasattr(output, "content"):
                     result_text = str(output.content)
                 elif isinstance(output, dict) and "content" in output:
@@ -227,17 +488,20 @@ async def run_agent(
                         "tool_name": name,
                         "result": result_text[:2000]
                         + ("\n...[截断]" if len(result_text) > 2000 else ""),
+                        "tool_input": tool_input,
+                        "artifact_kind": artifact_kind,
+                        "agent_id": event_agent_id,
                     }
                 )
 
-        # 整个图执行完毕
-        await on_event({"type": EVENT_DONE})
+        await on_event({"type": EVENT_DONE, "agent_id": event_agent_id})
 
-    except Exception as e:
-        logger.exception(f"Agent 执行异常: {e}")
+    except Exception as exc:
+        logger.exception(f"Agent 执行异常: {exc}")
         await on_event(
             {
                 "type": EVENT_ERROR,
-                "content": f"Agent 执行出错: {str(e)}",
+                "content": f"Agent 执行出错: {str(exc)}",
+                "agent_id": resolved_agent_id,
             }
         )

@@ -1,0 +1,1 @@
+export const MAX_CONVERSATION_ATTACHMENTS = 50

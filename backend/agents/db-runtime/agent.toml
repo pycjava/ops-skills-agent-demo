@@ -1,0 +1,16 @@
+id = "db-runtime"
+label = "数据库运行态助手"
+description = "负责 SQL 分析、慢查询、RDS 巡检、备份恢复建议与数据库运行态诊断。"
+execution_mode = "direct"
+risk_level = "medium"
+
+prompt_paths = ["prompts/base.md", "prompts/db-runtime.md"]
+skills = [
+  "mysql-sql-analyzer",
+  "volcengine-rds-health-analyzer",
+  "volcengine-rds-report-summarizer",
+  "using-superpowers",
+]
+capabilities = ["SQL 分析", "RDS 巡检", "数据库运行态诊断"]
+allowed_handoffs = []
+subagent_configs = []

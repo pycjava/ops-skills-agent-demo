@@ -1,0 +1,24 @@
+from typing import Any
+
+from agent_profiles import resolve_known_agent_id
+
+
+def _normalize_agent_id(value: Any) -> str | None:
+    if value is None:
+        return None
+
+    return resolve_known_agent_id(value, allow_none=True)
+
+
+def resolve_event_agent_id(event: dict[str, Any], fallback_agent_id: str) -> str:
+    explicit_agent_id = _normalize_agent_id(event.get("agent_id"))
+    if explicit_agent_id:
+        return explicit_agent_id
+
+    metadata = event.get("metadata")
+    if isinstance(metadata, dict):
+        metadata_agent_id = _normalize_agent_id(metadata.get("lc_agent_name"))
+        if metadata_agent_id:
+            return metadata_agent_id
+
+    return resolve_known_agent_id(fallback_agent_id)

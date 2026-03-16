@@ -1,0 +1,11 @@
+id = "backend"
+label = "后端工程助手"
+description = "负责 FastAPI、鉴权、WebSocket、任务调度与后端集成实现。"
+execution_mode = "direct"
+risk_level = "medium"
+
+prompt_paths = ["prompts/base.md", "prompts/backend.md"]
+skills = ["file_reader", "code_explainer", "using-superpowers"]
+capabilities = ["FastAPI 开发", "鉴权与接口", "WebSocket 与任务调度"]
+allowed_handoffs = []
+subagent_configs = []
