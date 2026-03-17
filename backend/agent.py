@@ -229,6 +229,24 @@ async def _build_attachment_context(conv_id: str) -> str | None:
         return None
 
 
+async def _build_rag_context(
+    user_message: str,
+    conv_id: str,
+    agent_id: str,
+) -> str | None:
+    try:
+        from services.rag import build_rag_context
+
+        return await build_rag_context(
+            user_message,
+            conversation_id=conv_id or None,
+            agent_id=agent_id,
+        )
+    except Exception as exc:
+        logger.warning(f"Failed to build RAG context for conversation {conv_id}: {exc}")
+        return None
+
+
 async def _build_image_attachment_blocks(
     conv_id: str,
     agent_id: str,
@@ -282,11 +300,24 @@ def _compose_user_message_with_contexts(
     memory_context: str | None,
     attachment_context: str | None,
     multimodal_context: str | None,
+    *,
+    rag_context: str | None = None,
 ) -> str:
-    if not memory_context and not attachment_context and not multimodal_context:
+    if (
+        not rag_context
+        and not memory_context
+        and not attachment_context
+        and not multimodal_context
+    ):
         return user_message
 
     sections: list[str] = []
+    if rag_context:
+        sections.append(
+            "<rag_context>\n"
+            f"{rag_context}\n"
+            "</rag_context>"
+        )
     if memory_context:
         sections.append(
             "<memory_context>\n"
@@ -360,8 +391,12 @@ async def run_agent(
     """使用 deepagents (LangGraph) 运行指定 Agent，并处理流式事件。"""
     resolved_agent_id = canonicalize_agent_id(agent_id)
     runtime = await get_runtime(resolved_agent_id)
-    memory_context = await _build_memory_context(user_message, resolved_agent_id)
-    attachment_context = await _build_attachment_context(conv_id)
+    rag_context = await _build_rag_context(user_message, conv_id, resolved_agent_id)
+    memory_context = None
+    attachment_context = None
+    if rag_context is None:
+        memory_context = await _build_memory_context(user_message, resolved_agent_id)
+        attachment_context = await _build_attachment_context(conv_id)
     multimodal_context = await _build_multimodal_context(conv_id, resolved_agent_id)
     image_blocks = await _build_image_attachment_blocks(conv_id, resolved_agent_id)
     composed_user_message = _compose_user_message_with_contexts(
@@ -369,6 +404,7 @@ async def run_agent(
         memory_context,
         attachment_context,
         multimodal_context,
+        rag_context=rag_context,
     )
     messages: list[Any] = [
         HumanMessage(

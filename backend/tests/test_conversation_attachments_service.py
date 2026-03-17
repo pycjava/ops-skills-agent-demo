@@ -2,6 +2,7 @@ from models import Conversation
 from services.conversation_attachments import (
     build_attachment_context,
     create_attachment_record,
+    delete_conversation_attachment,
     save_ocr_result,
 )
 
@@ -118,3 +119,58 @@ async def test_build_attachment_context_mentions_image_attachments_and_saved_ocr
     assert "图片附件" in context
     assert "OCR" in context
     assert ocr_path in context
+
+
+async def test_attachment_lifecycle_syncs_rag_index(
+    session_factory,
+    tmp_path,
+    monkeypatch,
+):
+    async with session_factory() as session:
+        conversation = Conversation(source="web", agent_id="general")
+        session.add(conversation)
+        await session.commit()
+        await session.refresh(conversation)
+
+    monkeypatch.setattr(
+        "services.conversation_attachments.ATTACHMENTS_ROOT",
+        tmp_path,
+    )
+
+    synced_attachment_ids: list[str] = []
+    deleted_attachment_ids: list[str] = []
+
+    async def fake_sync_attachment_record(attachment):
+        synced_attachment_ids.append(attachment.id)
+        return 1
+
+    async def fake_delete_attachment_source(attachment_id: str):
+        deleted_attachment_ids.append(attachment_id)
+        return 1
+
+    monkeypatch.setattr(
+        "services.rag.sync_attachment_record",
+        fake_sync_attachment_record,
+    )
+    monkeypatch.setattr(
+        "services.rag.delete_attachment_source",
+        fake_delete_attachment_source,
+    )
+
+    attachment = await create_attachment_record(
+        conversation.id,
+        original_name="incident.md",
+        content_bytes=b"service outage summary\n",
+        mime_type="text/markdown",
+        session_factory=session_factory,
+    )
+
+    assert synced_attachment_ids == [attachment.id]
+
+    await delete_conversation_attachment(
+        conversation.id,
+        attachment.id,
+        session_factory=session_factory,
+    )
+
+    assert deleted_attachment_ids == [attachment.id]

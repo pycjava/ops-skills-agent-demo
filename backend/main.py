@@ -21,6 +21,7 @@ from api.routers import (
     inspection_tasks,
     mcp,
     memories,
+    rag,
     skills,
     task_notifications,
 )
@@ -114,6 +115,7 @@ app.include_router(mcp.router)
 app.include_router(cloud_credentials.router)
 app.include_router(agent.router)
 app.include_router(memories.router)
+app.include_router(rag.router)
 app.include_router(chat.router)
 
 

@@ -42,6 +42,30 @@ MAX_TURNS = int(os.getenv("MAX_TURNS", "10"))
 MCP_DEFAULT_TIMEOUT_SECONDS = 15.0
 MCP_CONFIG_PATH = str((Path(WORKSPACE_DIR) / "mcp.json").resolve())
 
+# RAG configuration
+RAG_ENABLED = os.getenv("RAG_ENABLED", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "4"))
+RAG_CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "1200"))
+RAG_CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "200"))
+RAG_COLLECTION_NAME = os.getenv("RAG_COLLECTION_NAME", "agentweave_rag")
+RAG_CHROMA_PATH = str(
+    (BASE_DIR / os.getenv("RAG_CHROMA_PATH", "data/rag/chroma")).resolve()
+)
+RAG_STATUS_PATH = str(
+    (BASE_DIR / os.getenv("RAG_STATUS_PATH", "data/rag/status.json")).resolve()
+)
+RAG_EMBEDDING_API_URL = os.getenv(
+    "RAG_EMBEDDING_API_URL",
+    "https://api.openai.com/v1/embeddings",
+).strip()
+RAG_EMBEDDING_API_KEY = os.getenv("RAG_EMBEDDING_API_KEY", "").strip()
+RAG_EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "").strip()
+
 # ─── SQLite 配置 ──────────────────────────────────────
 DEFAULT_SQLITE_PATH = "data/app.db"
 

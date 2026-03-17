@@ -76,6 +76,20 @@ def test_compose_user_message_with_contexts_returns_original_message_without_con
     assert _compose_user_message_with_contexts("hello", None, None, None) == "hello"
 
 
+def test_compose_user_message_with_contexts_includes_rag_context_block():
+    composed = _compose_user_message_with_contexts(
+        "Answer using the indexed knowledge base",
+        None,
+        None,
+        None,
+        rag_context="retrieved chunk summary",
+    )
+
+    assert "<rag_context>" in composed
+    assert "retrieved chunk summary" in composed
+    assert composed.endswith("Answer using the indexed knowledge base")
+
+
 def test_compose_user_message_with_contexts_includes_multimodal_context_block():
     composed = _compose_user_message_with_contexts(
         "Please inspect this screenshot",
