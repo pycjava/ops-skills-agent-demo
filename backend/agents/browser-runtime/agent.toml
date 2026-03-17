@@ -1,0 +1,11 @@
+id = "browser-runtime"
+label = "Browser Automation Assistant"
+description = "Handles live browser automation, page interaction, and screenshot evidence capture via agent-browser."
+execution_mode = "direct"
+risk_level = "low"
+
+prompt_paths = ["prompts/base.md", "prompts/browser-runtime.md"]
+skills = ["shell_command", "agent-browser", "using-superpowers"]
+capabilities = ["browser automation", "live webpage inspection", "screenshot evidence capture"]
+allowed_handoffs = []
+subagent_configs = []
