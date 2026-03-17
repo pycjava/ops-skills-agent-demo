@@ -5,7 +5,7 @@ execution_mode = "direct"
 risk_level = "low"
 
 prompt_paths = ["prompts/base.md", "prompts/browser-runtime.md"]
-skills = ["using-superpowers"]
+skills = ["agent-browser", "using-superpowers"]
 capabilities = ["browser automation", "live webpage inspection", "screenshot evidence capture"]
 allowed_handoffs = []
 subagent_configs = []

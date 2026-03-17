@@ -22,6 +22,17 @@ def test_skill_catalog_loads_volcengine_rds_report_summarizer():
     ]
 
 
+def test_skill_catalog_loads_existing_agent_browser():
+    catalog = load_skill_catalog()
+
+    assert "agent-browser" in catalog
+
+    skill = catalog["agent-browser"]
+    assert skill.name
+    assert skill.description
+    assert resolve_skill_paths(["agent-browser"]) == ["./skills/agent-browser"]
+
+
 def test_dba_agent_exposes_volcengine_rds_report_summarizer():
     profile = get_agent_profile("dba")
 
@@ -30,6 +41,13 @@ def test_dba_agent_exposes_volcengine_rds_report_summarizer():
         skill.id == "volcengine-rds-report-summarizer"
         for skill in list_skills("dba")
     )
+
+
+def test_browser_runtime_agent_exposes_existing_agent_browser_skill():
+    profile = get_agent_profile("browser-runtime")
+
+    assert "agent-browser" in profile.skills
+    assert any(skill.id == "agent-browser" for skill in list_skills("browser-runtime"))
 
 
 def test_volcengine_rds_report_summarizer_documents_actual_values():
