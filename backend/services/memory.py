@@ -171,6 +171,15 @@ async def write_memory_document(path: str, content: str) -> dict[str, Any]:
     }
     await store.aput(MEMORY_NAMESPACE, internal_path, payload)
 
+    try:
+        from services.rag import sync_memory_document
+
+        await sync_memory_document(_to_public_path(internal_path))
+    except Exception as exc:
+        from utils.logger import logger
+
+        logger.warning(f"Failed to sync memory document {internal_path} into RAG: {exc}")
+
     return {
         "path": _to_public_path(internal_path),
         "name": _path_name(internal_path),
@@ -188,4 +197,16 @@ async def delete_memory_document(path: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Memory document not found")
 
     await store.adelete(MEMORY_NAMESPACE, internal_path)
+
+    try:
+        from services.rag import delete_memory_source
+
+        await delete_memory_source(_to_public_path(internal_path))
+    except Exception as exc:
+        from utils.logger import logger
+
+        logger.warning(
+            f"Failed to delete memory document {internal_path} from RAG index: {exc}"
+        )
+
     return {"ok": True, "path": _to_public_path(internal_path)}

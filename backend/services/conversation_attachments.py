@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from config import BASE_DIR
 from db.session import AsyncSessionLocal
 from models import Conversation, ConversationAttachment
+from utils.logger import logger
 
 
 ATTACHMENTS_ROOT = (BASE_DIR / "data" / "conversation_attachments").resolve()
@@ -216,6 +217,16 @@ async def create_attachment_record(
         )
         await session.commit()
         await session.refresh(attachment)
+
+        try:
+            from services.rag import sync_attachment_record
+
+            await sync_attachment_record(attachment)
+        except Exception as exc:
+            logger.warning(
+                f"Failed to sync attachment {attachment.id} into RAG index: {exc}"
+            )
+
         return attachment
 
 
@@ -387,6 +398,7 @@ async def delete_conversation_attachment(
         if attachment_dir.exists() and not any(attachment_dir.iterdir()):
             attachment_dir.rmdir()
 
+        attachment_id = attachment.id
         await session.delete(attachment)
         await session.execute(
             update(Conversation)
@@ -394,6 +406,15 @@ async def delete_conversation_attachment(
             .values(updated_at=func.now())
         )
         await session.commit()
+
+        try:
+            from services.rag import delete_attachment_source
+
+            await delete_attachment_source(attachment_id)
+        except Exception as exc:
+            logger.warning(
+                f"Failed to delete attachment {attachment_id} from RAG index: {exc}"
+            )
 
 
 async def delete_all_conversation_attachments(
