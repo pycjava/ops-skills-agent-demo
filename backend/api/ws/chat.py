@@ -14,6 +14,7 @@ from auth.dependencies import ensure_websocket_permission
 from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
 from models import Message
+from services.agent_errors import resolve_error_event_content
 from services.agent_event_state import AgentEventState
 from services.assistant_images import persist_agent_browser_screenshot_asset
 from services.conversation_attachments import (
@@ -117,6 +118,10 @@ def _build_ocr_status_payload(
         "agent_id": "ocr",
     }
     return payload, not available
+
+
+def _resolve_error_event_content(normalized_event: Mapping[str, Any]) -> str:
+    return resolve_error_event_content(normalized_event)
 
 
 async def _persist_ocr_result_event(
@@ -514,7 +519,8 @@ async def websocket_chat(ws: WebSocket):
             )
             await ws.send_text(_dump_ws_payload(ocr_payload))
         elif etype == "error":
-            logger.error(f"Agent 报错事件: {normalized_event.get('content')}")
+            error_content = _resolve_error_event_content(normalized_event)
+            logger.error(f"Agent 报错事件: {error_content}")
             if event_agent_id == "ocr":
                 await ws.send_text(
                     _dump_ws_payload(
@@ -529,7 +535,7 @@ async def websocket_chat(ws: WebSocket):
             await save_message(
                 current_conv_id,
                 "system",
-                normalized_event.get("content", ""),
+                error_content,
                 "error",
                 agent_id=event_agent_id,
             )

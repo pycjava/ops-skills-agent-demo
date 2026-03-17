@@ -11,6 +11,7 @@ from agent_profiles import canonicalize_agent_id, get_agent_memory_roots
 from config import ANTHROPIC_API_KEY, MAX_TURNS
 from services.agent_event_state import AgentEventSnapshot, AgentEventState
 from services.agent_event_identity import resolve_event_agent_id
+from services.agent_errors import build_agent_error_event
 from services.browser_runtime import maybe_capture_followup_screenshot
 from services.conversation_attachments import save_ocr_result
 from services.message_preprocess import resolve_message_preprocess_plan
@@ -577,14 +578,14 @@ async def run_agent(
         return event_state.snapshot()
 
     except Exception as exc:
-        logger.exception(f"Agent 执行异常: {exc}")
-        await emit(
-            {
-                "type": EVENT_ERROR,
-                "content": f"Agent 执行出错: {str(exc)}",
-                "agent_id": resolved_agent_id,
-            }
+        error_event = build_agent_error_event(exc, agent_id=resolved_agent_id)
+        logger.exception(
+            "Agent execution failed: "
+            f"agent_id={resolved_agent_id}, "
+            f"error_type={error_event['error_type']}, "
+            f"empty_message={not bool(str(error_event['error_message']).strip())}"
         )
+        await emit(error_event)
         return event_state.snapshot()
 
 

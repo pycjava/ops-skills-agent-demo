@@ -130,6 +130,21 @@ def test_dump_ws_payload_preserves_plain_json_values():
     assert json.loads(chat_module._dump_ws_payload(payload)) == payload
 
 
+def test_resolve_error_event_content_uses_error_type_when_content_is_blank():
+    assert (
+        chat_module._resolve_error_event_content(
+            {
+                "type": "error",
+                "content": "",
+                "agent_id": "browser-runtime",
+                "error_type": "NotImplementedError",
+                "error_message": "",
+            }
+        )
+        == "Agent 执行出错: NotImplementedError"
+    )
+
+
 async def test_persist_ocr_result_event_saves_text_message(monkeypatch):
     saved_records = []
 
