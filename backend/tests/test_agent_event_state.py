@@ -52,3 +52,33 @@ def test_pop_step_thinking_clears_only_current_step():
     assert snapshot.thinking == "AB"
     assert state.pop_step_thinking() == "B"
 
+
+def test_agent_event_state_normalizes_execute_string_input_to_command_dict():
+    state = AgentEventState()
+
+    tool_call = state.apply_event(
+        {
+            "type": "tool_call",
+            "tool_name": "execute",
+            "tool_input": "agent-browser screenshot tmp/browser.png",
+        }
+    )
+    tool_result = state.apply_event(
+        {
+            "type": "tool_result",
+            "tool_name": "execute",
+            "tool_input": None,
+            "result": "Command succeeded with no stdout/stderr.",
+        }
+    )
+
+    assert tool_call["tool_input"] == {
+        "command": "agent-browser screenshot tmp/browser.png"
+    }
+    assert tool_result["tool_input"] == {
+        "command": "agent-browser screenshot tmp/browser.png"
+    }
+    assert state.snapshot().tool_results[0].tool_input == {
+        "command": "agent-browser screenshot tmp/browser.png"
+    }
+

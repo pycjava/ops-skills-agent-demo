@@ -46,14 +46,21 @@ class AgentEventState:
 
         if event_type == "tool_call":
             tool_name = str(normalized_event.get("tool_name", "") or "").strip()
-            tool_input = normalized_event.get("tool_input")
+            tool_input = self._normalize_tool_input(
+                tool_name,
+                normalized_event.get("tool_input"),
+            )
+            normalized_event["tool_input"] = tool_input
             if tool_name and isinstance(tool_input, dict):
                 self._pending_tool_inputs[tool_name].append(tool_input)
             return normalized_event
 
         if event_type == "tool_result":
             tool_name = str(normalized_event.get("tool_name", "") or "").strip()
-            tool_input = normalized_event.get("tool_input")
+            tool_input = self._normalize_tool_input(
+                tool_name,
+                normalized_event.get("tool_input"),
+            )
             resolved_input = self._resolve_tool_input(tool_name, tool_input)
             normalized_event["tool_input"] = resolved_input
             self._tool_results.append(
@@ -110,4 +117,11 @@ class AgentEventState:
             return None
         text = str(value).strip()
         return text or None
+
+    @staticmethod
+    def _normalize_tool_input(tool_name: str, tool_input: Any) -> dict[str, Any] | Any:
+        if tool_name == "execute" and isinstance(tool_input, str):
+            command = tool_input.strip()
+            return {"command": command} if command else None
+        return tool_input
 

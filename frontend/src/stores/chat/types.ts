@@ -11,11 +11,21 @@ export interface ConversationAttachmentSnapshot {
   created_at: string | null
 }
 
-export interface ChatMessage {
+export interface AssistantImageAsset {
+  assetPath?: string
+  assetUrl?: string
+  assetMimeType?: string
+  assetSource?: string
+  assetAlt?: string
+  assetWidth?: number
+  assetHeight?: number
+}
+
+export interface ChatMessage extends AssistantImageAsset {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
-  type: 'text' | 'tool_call' | 'tool_result' | 'error'
+  type: 'text' | 'image' | 'tool_call' | 'tool_result' | 'error'
   agentId?: string
   toolName?: string
   toolDesc?: string
@@ -177,6 +187,13 @@ export interface ConversationHistoryMessage {
   tool_input: Record<string, unknown> | null
   attachments_snapshot: ConversationAttachmentSnapshot[] | null
   thinking: string | null
+  asset_path?: string | null
+  asset_url?: string | null
+  asset_mime_type?: string | null
+  asset_source?: string | null
+  asset_alt?: string | null
+  asset_width?: number | null
+  asset_height?: number | null
   created_at: string | null
 }
 

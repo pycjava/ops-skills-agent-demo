@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from auth.dependencies import require_permission
 from db.session import AsyncSessionLocal
 from models import Conversation, Message
+from services.assistant_images import (
+    delete_all_assistant_image_assets,
+    resolve_assistant_image_asset_path,
+)
 from services.conversation_attachments import delete_all_conversation_attachments
 from services.conversation_messages import update_conversation_title
 from services.conversation_state import create_conversation
@@ -63,6 +67,37 @@ async def get_messages(conv_id: str):
         return JSONResponse([message.to_dict() for message in messages])
 
 
+@router.get(
+    "/{conv_id}/messages/{message_id}/asset",
+    dependencies=[Depends(require_permission("conversations:read"))],
+)
+async def get_message_asset(conv_id: str, message_id: str):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Message).where(
+                Message.id == message_id,
+                Message.conversation_id == conv_id,
+            )
+        )
+        message = result.scalar_one_or_none()
+
+    if message is None or not message.asset_path:
+        raise HTTPException(status_code=404, detail="message asset not found")
+
+    try:
+        asset_path = resolve_assistant_image_asset_path(message.asset_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="message asset not found") from exc
+
+    if not asset_path.is_file():
+        raise HTTPException(status_code=404, detail="message asset not found")
+
+    return FileResponse(
+        asset_path,
+        media_type=message.asset_mime_type or "application/octet-stream",
+    )
+
+
 @router.delete(
     "/{conv_id}",
     dependencies=[Depends(require_permission("conversations:delete"))],
@@ -82,6 +117,7 @@ async def delete_conversation(conv_id: str):
             conv_id,
             session_factory=AsyncSessionLocal,
         )
+        delete_all_assistant_image_assets(conv_id)
         await session.delete(conversation)
         await session.commit()
         return JSONResponse({"ok": True})

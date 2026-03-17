@@ -280,6 +280,7 @@ export const useChatStore = defineStore('chat', () => {
   )
 
   const socketDomain = createSocketDomain({
+    backendUrl,
     wsUrl,
     messages,
     conversations,

@@ -15,6 +15,7 @@ from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
 from models import Message
 from services.agent_event_state import AgentEventState
+from services.assistant_images import persist_agent_browser_screenshot_asset
 from services.conversation_attachments import (
     build_attachment_snapshot,
     is_image_attachment_record,
@@ -25,6 +26,7 @@ from services.conversation_messages import (
     auto_title,
     is_default_conversation_title,
     save_message,
+    update_message,
 )
 from services.realtime_events import realtime_event_manager
 from services.conversation_state import (
@@ -158,6 +160,51 @@ async def _persist_ocr_result_event(
     }
 
 
+async def _maybe_persist_assistant_image_message(
+    *,
+    current_conv_id: str | None,
+    event_agent_id: str,
+    tool_name: str | None,
+    tool_input: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not current_conv_id or tool_name != "execute" or not isinstance(tool_input, dict):
+        return None
+
+    command = str(tool_input.get("command") or "").strip()
+    if not command:
+        return None
+
+    asset_payload = persist_agent_browser_screenshot_asset(current_conv_id, command)
+    if not asset_payload:
+        return None
+
+    image_message = await save_message(
+        current_conv_id,
+        "assistant",
+        "",
+        "image",
+        agent_id=event_agent_id,
+        asset_path=str(asset_payload.get("asset_path") or ""),
+        asset_mime_type=str(asset_payload.get("asset_mime_type") or "") or None,
+        asset_source=str(asset_payload.get("asset_source") or "") or None,
+        asset_alt=str(asset_payload.get("asset_alt") or "") or None,
+        asset_width=(
+            int(asset_payload["asset_width"])
+            if isinstance(asset_payload.get("asset_width"), int)
+            else None
+        ),
+        asset_height=(
+            int(asset_payload["asset_height"])
+            if isinstance(asset_payload.get("asset_height"), int)
+            else None
+        ),
+    )
+    return {
+        "type": "message",
+        "message": image_message.to_dict(),
+    }
+
+
 def _json_safe_value(value: Any, *, depth: int = 0, max_depth: int = 5) -> Any:
     if depth >= max_depth:
         return str(value)
@@ -233,6 +280,7 @@ async def websocket_chat(ws: WebSocket):
     flush_task: asyncio.Task | None = None
     current_turn_attachments: list[dict] = []
     suppress_ocr_tool_result = False
+    current_turn_image_message_id: str | None = None
 
     async def flush_delta():
         nonlocal delta_buffer
@@ -254,7 +302,7 @@ async def websocket_chat(ws: WebSocket):
         await flush_delta()
 
     async def on_event(event: dict):
-        nonlocal delta_buffer, flush_task, current_agent_id, suppress_ocr_tool_result
+        nonlocal delta_buffer, flush_task, current_agent_id, suppress_ocr_tool_result, current_turn_image_message_id
 
         if abort_event.is_set():
             raise asyncio.CancelledError("用户中断")
@@ -426,6 +474,20 @@ async def websocket_chat(ws: WebSocket):
                     agent_id="ocr",
                 )
 
+            image_payload = await _maybe_persist_assistant_image_message(
+                current_conv_id=current_conv_id,
+                event_agent_id=event_agent_id,
+                tool_name=tool_name,
+                tool_input=tool_input,
+            )
+            if image_payload:
+                message_payload = image_payload.get("message")
+                if isinstance(message_payload, dict):
+                    current_turn_image_message_id = str(
+                        message_payload.get("id") or ""
+                    ) or None
+                await ws.send_text(_dump_ws_payload(image_payload))
+
             await save_message(
                 current_conv_id,
                 "system",
@@ -472,7 +534,13 @@ async def websocket_chat(ws: WebSocket):
             )
         elif etype == "done":
             snapshot = event_state.snapshot()
-            if snapshot.text:
+            if current_turn_image_message_id and (snapshot.text or snapshot.thinking):
+                await update_message(
+                    current_turn_image_message_id,
+                    content=snapshot.text,
+                    thinking=snapshot.thinking or None,
+                )
+            elif snapshot.text:
                 await save_message(
                     current_conv_id,
                     "assistant",
@@ -481,9 +549,10 @@ async def websocket_chat(ws: WebSocket):
                     agent_id=event_agent_id,
                     thinking=snapshot.thinking or None,
                 )
+            current_turn_image_message_id = None
 
     async def do_abort():
-        nonlocal agent_task
+        nonlocal agent_task, current_turn_image_message_id
         if agent_task and not agent_task.done():
             agent_task.cancel()
             try:
@@ -500,14 +569,21 @@ async def websocket_chat(ws: WebSocket):
         snapshot = event_state.snapshot()
         if snapshot.text and current_conv_id:
             partial = snapshot.text + "\n\n> ⚠️ *（回答被用户中断）*"
-            await save_message(
-                current_conv_id,
-                "assistant",
-                partial,
-                "text",
-                agent_id=current_agent_id,
-                thinking=snapshot.thinking or None,
-            )
+            if current_turn_image_message_id:
+                await update_message(
+                    current_turn_image_message_id,
+                    content=partial,
+                    thinking=snapshot.thinking or None,
+                )
+            else:
+                await save_message(
+                    current_conv_id,
+                    "assistant",
+                    partial,
+                    "text",
+                    agent_id=current_agent_id,
+                    thinking=snapshot.thinking or None,
+                )
 
         try:
             await ws.send_text(
@@ -520,6 +596,7 @@ async def websocket_chat(ws: WebSocket):
         await realtime_event_manager.unregister(ws)
 
         agent_task = None
+        current_turn_image_message_id = None
         logger.info(f"对话 {current_conv_id} 已被用户中断")
 
     try:
@@ -732,6 +809,7 @@ async def websocket_chat(ws: WebSocket):
                 event_state = AgentEventState()
                 delta_buffer = ""
                 abort_event.clear()
+                current_turn_image_message_id = None
 
                 logger.info(
                     f"正在为对话 {current_conv_id} 启动 Agent, agent_id={current_agent_id}"
