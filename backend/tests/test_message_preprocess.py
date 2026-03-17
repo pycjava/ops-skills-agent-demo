@@ -1,6 +1,7 @@
 import pytest
 
 import agent as agent_module
+import services.message_preprocess as message_preprocess
 from services.agent_event_state import AgentEventSnapshot
 from services.message_preprocess import resolve_message_preprocess_plan
 
@@ -17,7 +18,14 @@ IMAGE_ATTACHMENT = {
 }
 
 
-def test_resolve_message_preprocess_plan_routes_router_image_turns_to_supervisor_after_ocr():
+def test_resolve_message_preprocess_plan_routes_router_image_turns_to_supervisor_after_ocr(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        message_preprocess,
+        "resolve_ocr_availability",
+        lambda **_: (True, None),
+    )
     plan = resolve_message_preprocess_plan(
         user_message="帮我分析这张图里的报错原因",
         agent_id="router",
@@ -36,6 +44,11 @@ def test_resolve_message_preprocess_plan_routes_router_image_turns_to_supervisor
 async def test_run_agent_turn_runs_ocr_before_downstream_agent(monkeypatch):
     calls: list[dict] = []
     monkeypatch.setattr(agent_module, "ANTHROPIC_API_KEY", "test-api-key")
+    monkeypatch.setattr(
+        message_preprocess,
+        "resolve_ocr_availability",
+        lambda **_: (True, None),
+    )
 
     async def fake_run_agent(
         *,
@@ -108,6 +121,11 @@ async def test_run_agent_turn_runs_ocr_before_downstream_agent(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_agent_turn_stops_when_ocr_stage_fails(monkeypatch):
     monkeypatch.setattr(agent_module, "ANTHROPIC_API_KEY", "test-api-key")
+    monkeypatch.setattr(
+        message_preprocess,
+        "resolve_ocr_availability",
+        lambda **_: (True, None),
+    )
     calls: list[str] = []
     emitted_events: list[dict] = []
 
