@@ -1,5 +1,9 @@
 import asyncio
 import json
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime, time
+from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
@@ -109,6 +113,63 @@ def _build_ocr_status_payload(
     return payload, not available
 
 
+def _json_safe_value(value: Any, *, depth: int = 0, max_depth: int = 5) -> Any:
+    if depth >= max_depth:
+        return str(value)
+
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+
+    if isinstance(value, datetime | date | time | Path):
+        return str(value.isoformat() if hasattr(value, "isoformat") else value)
+
+    if isinstance(value, bytes | bytearray | memoryview):
+        return bytes(value).decode("utf-8", errors="replace")
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_safe_value(item, depth=depth + 1, max_depth=max_depth)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, Sequence) and not isinstance(
+        value, str | bytes | bytearray | memoryview
+    ):
+        return [
+            _json_safe_value(item, depth=depth + 1, max_depth=max_depth)
+            for item in value
+        ]
+
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return _json_safe_value(
+                model_dump(), depth=depth + 1, max_depth=max_depth
+            )
+        except Exception:
+            return str(value)
+
+    dict_method = getattr(value, "dict", None)
+    if callable(dict_method):
+        try:
+            return _json_safe_value(
+                dict_method(), depth=depth + 1, max_depth=max_depth
+            )
+        except Exception:
+            return str(value)
+
+    return str(value)
+
+
+def _json_safe_dict(value: Any) -> dict[str, Any] | None:
+    safe_value = _json_safe_value(value)
+    return safe_value if isinstance(safe_value, dict) else None
+
+
+def _dump_ws_payload(payload: Mapping[str, Any]) -> str:
+    return json.dumps(_json_safe_value(dict(payload)), ensure_ascii=False)
+
+
 @router.websocket("/chat")
 async def websocket_chat(ws: WebSocket):
     if get_auth_settings().enabled:
@@ -134,13 +195,12 @@ async def websocket_chat(ws: WebSocket):
             chunk = delta_buffer
             delta_buffer = ""
             await ws.send_text(
-                json.dumps(
+                _dump_ws_payload(
                     {
                         "type": "text_delta",
                         "content": chunk,
                         "agent_id": current_agent_id,
-                    },
-                    ensure_ascii=False,
+                    }
                 )
             )
 
@@ -166,7 +226,7 @@ async def websocket_chat(ws: WebSocket):
             return
 
         if etype == "thinking_delta":
-            await ws.send_text(json.dumps(normalized_event, ensure_ascii=False))
+            await ws.send_text(_dump_ws_payload(normalized_event))
             return
 
         if delta_buffer:
@@ -175,11 +235,11 @@ async def websocket_chat(ws: WebSocket):
                 flush_task.cancel()
 
         if not _should_suppress_normalized_event(normalized_event):
-            await ws.send_text(json.dumps(normalized_event, ensure_ascii=False))
+            await ws.send_text(_dump_ws_payload(normalized_event))
 
         if etype == "tool_call":
             tool_name = normalized_event.get("tool_name", "")
-            tool_input = normalized_event.get("tool_input", {})
+            tool_input = _json_safe_dict(normalized_event.get("tool_input")) or {}
             desc = normalized_event.get(
                 "tool_desc", f"执行 Tool: {tool_name}"
             )
@@ -203,30 +263,28 @@ async def websocket_chat(ws: WebSocket):
                     suppress_ocr_tool_result = not available
                     if available:
                         await ws.send_text(
-                        json.dumps(
+                        _dump_ws_payload(
                             {
                                 "type": "ocr_status",
                                 "status": "processing",
                                 "content": f"OCR 正在分析 {max(1, image_count)} 张图片附件…",
                                 "agent_id": "ocr",
                             },
-                            ensure_ascii=False,
                         )
                     )
                     else:
                         await ws.send_text(
-                            json.dumps(
+                            _dump_ws_payload(
                                 {
                                     "type": "ocr_status",
                                     "status": "failed",
                                     "content": reason,
                                     "agent_id": "ocr",
                                 },
-                                ensure_ascii=False,
                             )
                         )
                 await ws.send_text(
-                    json.dumps(
+                    _dump_ws_payload(
                         {
                             "type": "routing",
                             "subagent_type": subagent_type,
@@ -235,7 +293,6 @@ async def websocket_chat(ws: WebSocket):
                             "source_agent_label": source_agent_label,
                             "agent_id": event_agent_id,
                         },
-                        ensure_ascii=False,
                     )
                 )
 
@@ -251,7 +308,7 @@ async def websocket_chat(ws: WebSocket):
             )
         elif etype == "tool_result":
             tool_name = normalized_event.get("tool_name")
-            tool_input = normalized_event.get("tool_input")
+            tool_input = _json_safe_dict(normalized_event.get("tool_input"))
             if (
                 tool_name == "task"
                 and isinstance(tool_input, dict)
@@ -290,14 +347,13 @@ async def websocket_chat(ws: WebSocket):
                 ocr_message += f"\n\n{normalized_event.get('result', '')}"
 
                 await ws.send_text(
-                    json.dumps(
+                    _dump_ws_payload(
                         {
                             "type": "ocr_result",
                             "content": ocr_message,
                             "agent_id": "ocr",
                             "ocr_path": ocr_result_path,
                         },
-                        ensure_ascii=False,
                     )
                 )
                 await save_message(
@@ -322,14 +378,13 @@ async def websocket_chat(ws: WebSocket):
             logger.error(f"Agent 报错事件: {normalized_event.get('content')}")
             if event_agent_id == "ocr":
                 await ws.send_text(
-                    json.dumps(
+                    _dump_ws_payload(
                         {
                             "type": "ocr_status",
                             "status": "failed",
                             "content": "OCR 分析失败，请稍后重试。",
                             "agent_id": "ocr",
                         },
-                        ensure_ascii=False,
                     )
                 )
             await save_message(
@@ -380,9 +435,8 @@ async def websocket_chat(ws: WebSocket):
 
         try:
             await ws.send_text(
-                json.dumps(
+                _dump_ws_payload(
                     {"type": "done", "agent_id": current_agent_id},
-                    ensure_ascii=False,
                 )
             )
         except Exception:
@@ -467,14 +521,13 @@ async def websocket_chat(ws: WebSocket):
                         )
 
                 await ws.send_text(
-                    json.dumps(
+                    _dump_ws_payload(
                         {
                             "type": "session",
                             "session_id": current_conv_id,
                             "conversation_id": current_conv_id,
                             "agent_id": current_agent_id,
                         },
-                        ensure_ascii=False,
                     )
                 )
                 continue
@@ -496,9 +549,8 @@ async def websocket_chat(ws: WebSocket):
                             f"已清空对话 {current_conv_id} 的 {deleted_count} 条消息记录"
                         )
                 await ws.send_text(
-                    json.dumps(
+                    _dump_ws_payload(
                         {"type": "cleared", "agent_id": current_agent_id},
-                        ensure_ascii=False,
                     )
                 )
                 continue
@@ -511,13 +563,12 @@ async def websocket_chat(ws: WebSocket):
                 if not ANTHROPIC_API_KEY:
                     logger.warning("收到消息，但未配置 ANTHROPIC_API_KEY")
                     await ws.send_text(
-                        json.dumps(
+                        _dump_ws_payload(
                             {
                                 "type": "error",
                                 "content": "未配置 ANTHROPIC_API_KEY，请在 backend/.env 文件中设置",
                                 "agent_id": current_agent_id,
                             },
-                            ensure_ascii=False,
                         )
                     )
                     continue
@@ -532,13 +583,12 @@ async def websocket_chat(ws: WebSocket):
                             )
                         except ValueError as exc:
                             await ws.send_text(
-                                json.dumps(
+                                _dump_ws_payload(
                                     {
                                         "type": "error",
                                         "content": str(exc),
                                         "agent_id": current_agent_id,
                                     },
-                                    ensure_ascii=False,
                                 )
                             )
                             continue
@@ -548,14 +598,13 @@ async def websocket_chat(ws: WebSocket):
                             f"收到新消息，已自动新建对话 {conversation.id}, agent_id={current_agent_id}"
                         )
                     await ws.send_text(
-                        json.dumps(
+                        _dump_ws_payload(
                             {
                                 "type": "session",
                                 "session_id": current_conv_id,
                                 "conversation_id": current_conv_id,
                                 "agent_id": current_agent_id,
                             },
-                            ensure_ascii=False,
                         )
                     )
 
@@ -563,13 +612,12 @@ async def websocket_chat(ws: WebSocket):
                     content
                 ):
                     await ws.send_text(
-                        json.dumps(
+                        _dump_ws_payload(
                             {
                                 "type": "error",
                                 "content": cloud_credentials_rejection_message(),
                                 "agent_id": current_agent_id,
                             },
-                            ensure_ascii=False,
                         )
                     )
                     continue
@@ -595,14 +643,13 @@ async def websocket_chat(ws: WebSocket):
                     if conversation and is_default_conversation_title(conversation.title):
                         title = await auto_title(current_conv_id, content)
                         await ws.send_text(
-                            json.dumps(
+                            _dump_ws_payload(
                                 {
                                     "type": "title_update",
                                     "conversation_id": current_conv_id,
                                     "title": title,
                                     "agent_id": current_agent_id,
                                 },
-                                ensure_ascii=False,
                             )
                         )
 
@@ -633,13 +680,12 @@ async def websocket_chat(ws: WebSocket):
             agent_task.cancel()
         try:
             await ws.send_text(
-                json.dumps(
+                _dump_ws_payload(
                     {
                         "type": "error",
                         "content": f"服务器错误: {str(exc)}",
                         "agent_id": current_agent_id,
                     },
-                    ensure_ascii=False,
                 )
             )
         except Exception:
