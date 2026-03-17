@@ -22,17 +22,6 @@ def test_skill_catalog_loads_volcengine_rds_report_summarizer():
     ]
 
 
-def test_skill_catalog_loads_agent_browser():
-    catalog = load_skill_catalog()
-
-    assert "agent-browser" in catalog
-
-    skill = catalog["agent-browser"]
-    assert skill.name == "agent-browser"
-    assert skill.description
-    assert resolve_skill_paths(["agent-browser"]) == ["./skills/agent-browser"]
-
-
 def test_dba_agent_exposes_volcengine_rds_report_summarizer():
     profile = get_agent_profile("dba")
 
@@ -41,21 +30,6 @@ def test_dba_agent_exposes_volcengine_rds_report_summarizer():
         skill.id == "volcengine-rds-report-summarizer"
         for skill in list_skills("dba")
     )
-
-
-def test_browser_runtime_agent_exposes_agent_browser_skill():
-    profile = get_agent_profile("browser-runtime")
-
-    assert "agent-browser" in profile.skills
-    assert any(skill.id == "agent-browser" for skill in list_skills("browser-runtime"))
-
-
-def test_agent_browser_skill_requires_post_action_screenshots():
-    skill_text = read_backend_text("skills", "agent-browser", "SKILL.md")
-
-    assert "After every browser action, immediately run `agent-browser screenshot`" in skill_text
-    assert "Do not take the next browser action until the screenshot succeeds." in skill_text
-    assert "If the screenshot fails, stop and report the failure." in skill_text
 
 
 def test_volcengine_rds_report_summarizer_documents_actual_values():

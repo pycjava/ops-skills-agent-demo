@@ -144,8 +144,7 @@ def test_browser_runtime_agent_profile_is_registered_with_expected_skill_boundar
 
     assert profile.id == "browser-runtime"
     assert profile.execution_mode == "direct"
-    assert "agent-browser" in profile.skills
-    assert "shell_command" in profile.skills
+    assert list(profile.skills) == ["using-superpowers"]
     assert profile.allowed_handoffs == ()
     assert profile.subagent_configs == ()
 
