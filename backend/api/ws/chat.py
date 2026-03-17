@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
-from agent import resolve_default_agent, run_agent
+import agent as agent_runtime
 from auth.config import get_auth_settings
 from auth.dependencies import ensure_websocket_permission
 from config import ANTHROPIC_API_KEY
@@ -79,10 +79,13 @@ def _should_suppress_normalized_event(normalized_event: dict) -> bool:
     tool_name = normalized_event.get("tool_name")
     tool_input = normalized_event.get("tool_input")
     return (
-        normalized_event.get("type") == "tool_result"
-        and tool_name == "task"
-        and isinstance(tool_input, dict)
-        and tool_input.get("subagent_type") == "ocr"
+        (
+            normalized_event.get("type") == "tool_result"
+            and tool_name == "task"
+            and isinstance(tool_input, dict)
+            and tool_input.get("subagent_type") == "ocr"
+        )
+        or normalized_event.get("type") == "ocr_result"
     )
 
 
@@ -111,6 +114,48 @@ def _build_ocr_status_payload(
         "agent_id": "ocr",
     }
     return payload, not available
+
+
+async def _persist_ocr_result_event(
+    *,
+    current_conv_id: str | None,
+    current_turn_attachments: list[dict],
+    result_text: str,
+    ocr_path: str | None = None,
+) -> dict[str, Any]:
+    image_attachments = [
+        attachment
+        for attachment in current_turn_attachments
+        if is_image_attachment_record(attachment)
+    ]
+    resolved_ocr_path = ocr_path
+    if not resolved_ocr_path and current_conv_id and image_attachments:
+        resolved_ocr_path = save_ocr_result(
+            current_conv_id,
+            image_attachments,
+            result_text,
+        )
+
+    ocr_message = "OCR 宸插畬鎴愶紝缁撴灉宸插姞鍏ヤ細璇濅笂涓嬫枃銆?"
+    if resolved_ocr_path:
+        ocr_message += f"\n\nSaved OCR result: `{resolved_ocr_path}`"
+    ocr_message += f"\n\n{result_text}"
+
+    if current_conv_id:
+        await save_message(
+            current_conv_id,
+            "system",
+            ocr_message,
+            "text",
+            agent_id="ocr",
+        )
+
+    return {
+        "type": "ocr_result",
+        "content": ocr_message,
+        "agent_id": "ocr",
+        "ocr_path": resolved_ocr_path,
+    }
 
 
 def _json_safe_value(value: Any, *, depth: int = 0, max_depth: int = 5) -> Any:
@@ -179,7 +224,7 @@ async def websocket_chat(ws: WebSocket):
     await realtime_event_manager.register(ws)
     logger.info("WebSocket 客户端已连接")
     current_conv_id: str | None = None
-    current_agent_id = resolve_default_agent()
+    current_agent_id = agent_runtime.resolve_default_agent()
     agent_task: asyncio.Task | None = None
 
     abort_event = asyncio.Event()
@@ -326,6 +371,23 @@ async def websocket_chat(ws: WebSocket):
                         tool_input=tool_input,
                     )
                     return
+                ocr_payload = await _persist_ocr_result_event(
+                    current_conv_id=current_conv_id,
+                    current_turn_attachments=current_turn_attachments,
+                    result_text=str(normalized_event.get("result", "")),
+                )
+                await ws.send_text(_dump_ws_payload(ocr_payload))
+                await save_message(
+                    current_conv_id,
+                    "system",
+                    normalized_event.get("result", ""),
+                    "tool_result",
+                    agent_id=event_agent_id,
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                )
+                suppress_ocr_tool_result = False
+                return
 
                 image_attachments = [
                     attachment
@@ -374,6 +436,20 @@ async def websocket_chat(ws: WebSocket):
                 tool_input=tool_input,
             )
             suppress_ocr_tool_result = False
+        elif etype == "ocr_result":
+            ocr_payload = await _persist_ocr_result_event(
+                current_conv_id=current_conv_id,
+                current_turn_attachments=current_turn_attachments,
+                result_text=str(
+                    normalized_event.get("result", normalized_event.get("content", ""))
+                ),
+                ocr_path=(
+                    str(normalized_event.get("ocr_path"))
+                    if normalized_event.get("ocr_path")
+                    else None
+                ),
+            )
+            await ws.send_text(_dump_ws_payload(ocr_payload))
         elif etype == "error":
             logger.error(f"Agent 报错事件: {normalized_event.get('content')}")
             if event_agent_id == "ocr":
@@ -502,7 +578,7 @@ async def websocket_chat(ws: WebSocket):
                                 )
                             except ValueError:
                                 current_conv_id = None
-                                current_agent_id = resolve_default_agent()
+                                current_agent_id = agent_runtime.resolve_default_agent()
                             else:
                                 current_conv_id = conversation.id
                                 current_agent_id = conversation.agent_id
@@ -515,7 +591,7 @@ async def websocket_chat(ws: WebSocket):
                         try:
                             current_agent_id = resolve_agent_id(requested_agent_id)
                         except ValueError:
-                            current_agent_id = resolve_default_agent()
+                            current_agent_id = agent_runtime.resolve_default_agent()
                         logger.info(
                             "客户端 init 未传 conversation_id，等待首条消息创建对话"
                         )
@@ -661,11 +737,12 @@ async def websocket_chat(ws: WebSocket):
                     f"正在为对话 {current_conv_id} 启动 Agent, agent_id={current_agent_id}"
                 )
                 agent_task = asyncio.create_task(
-                    run_agent(
+                    getattr(agent_runtime, "run_agent_turn", agent_runtime.run_agent)(
                         user_message=content,
                         conv_id=current_conv_id,
                         on_event=on_event,
                         agent_id=current_agent_id,
+                        attachment_records=current_turn_attachments,
                     )
                 )
 

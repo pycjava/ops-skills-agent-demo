@@ -2,6 +2,7 @@ import importlib
 import json
 import sys
 import types
+from datetime import UTC, datetime
 
 import tomli
 from langgraph.prebuilt import ToolRuntime
@@ -102,3 +103,65 @@ def test_dump_ws_payload_preserves_plain_json_values():
     }
 
     assert json.loads(chat_module._dump_ws_payload(payload)) == payload
+
+
+async def test_persist_ocr_result_event_saves_text_message(monkeypatch):
+    saved_records = []
+
+    async def fake_save_message(
+        conv_id,
+        role,
+        content,
+        msg_type,
+        *,
+        agent_id=None,
+        **kwargs,
+    ):
+        saved_records.append(
+            {
+                "conv_id": conv_id,
+                "role": role,
+                "content": content,
+                "msg_type": msg_type,
+                "agent_id": agent_id,
+                "kwargs": kwargs,
+            }
+        )
+
+    monkeypatch.setattr(chat_module, "save_message", fake_save_message)
+    monkeypatch.setattr(
+        chat_module,
+        "save_ocr_result",
+        lambda conversation_id, source_attachments, content: (
+            "data/conversation_attachments/conv-1/_ocr/ocr-preprocessed.md"
+        ),
+    )
+
+    payload = await chat_module._persist_ocr_result_event(
+        current_conv_id="conv-1",
+        current_turn_attachments=[
+            {
+                "id": "att-1",
+                "original_name": "console.png",
+                "stored_name": "console.png",
+                "relative_path": "data/conversation_attachments/conv-1/console.png",
+                "mime_type": "image/png",
+                "size_bytes": 123,
+                "created_at": datetime.now(UTC).isoformat(),
+            }
+        ],
+        result_text="mysql error 1045",
+    )
+
+    assert payload["type"] == "ocr_result"
+    assert payload["agent_id"] == "ocr"
+    assert "mysql error 1045" in payload["content"]
+    assert "Saved OCR result:" in payload["content"]
+    assert payload["ocr_path"] == "data/conversation_attachments/conv-1/_ocr/ocr-preprocessed.md"
+
+    assert len(saved_records) == 1
+    assert saved_records[0]["conv_id"] == "conv-1"
+    assert saved_records[0]["role"] == "system"
+    assert saved_records[0]["msg_type"] == "text"
+    assert saved_records[0]["agent_id"] == "ocr"
+    assert "mysql error 1045" in saved_records[0]["content"]

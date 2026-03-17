@@ -9,7 +9,10 @@ from langchain_core.messages import HumanMessage
 from agent_manager import AgentManager
 from agent_profiles import canonicalize_agent_id, get_agent_memory_roots
 from config import ANTHROPIC_API_KEY, MAX_TURNS
+from services.agent_event_state import AgentEventSnapshot, AgentEventState
 from services.agent_event_identity import resolve_event_agent_id
+from services.conversation_attachments import save_ocr_result
+from services.message_preprocess import resolve_message_preprocess_plan
 from services.multimodal_ocr import (
     build_multimodal_capability_context,
     should_attach_multimodal_images,
@@ -23,6 +26,8 @@ EVENT_TOOL_CALL = "tool_call"
 EVENT_TOOL_RESULT = "tool_result"
 EVENT_DONE = "done"
 EVENT_ERROR = "error"
+EVENT_OCR_STATUS = "ocr_status"
+EVENT_OCR_RESULT = "ocr_result"
 
 ARTIFACT_KIND_MEMORY = "memory"
 ARTIFACT_KIND_REPORT = "report"
@@ -250,17 +255,20 @@ async def _build_rag_context(
 async def _build_image_attachment_blocks(
     conv_id: str,
     agent_id: str,
+    *,
+    attachment_records: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if not conv_id or not should_attach_multimodal_images(agent_id):
         return []
 
     try:
-        from services.conversation_attachments import (
-            build_image_attachment_blocks,
-            list_conversation_attachments,
-        )
+        from services.conversation_attachments import build_image_attachment_blocks
 
-        attachments = await list_conversation_attachments(conv_id)
+        attachments = attachment_records
+        if attachments is None:
+            from services.conversation_attachments import list_conversation_attachments
+
+            attachments = await list_conversation_attachments(conv_id)
         return build_image_attachment_blocks(conv_id, attachments)
     except Exception as exc:
         logger.warning(
@@ -269,17 +277,23 @@ async def _build_image_attachment_blocks(
         return []
 
 
-async def _build_multimodal_context(conv_id: str, agent_id: str) -> str | None:
+async def _build_multimodal_context(
+    conv_id: str,
+    agent_id: str,
+    *,
+    attachment_records: list[dict[str, Any]] | None = None,
+) -> str | None:
     if not conv_id:
         return None
 
     try:
-        from services.conversation_attachments import (
-            is_image_attachment_record,
-            list_conversation_attachments,
-        )
+        from services.conversation_attachments import is_image_attachment_record
 
-        attachments = await list_conversation_attachments(conv_id)
+        attachments = attachment_records
+        if attachments is None:
+            from services.conversation_attachments import list_conversation_attachments
+
+            attachments = await list_conversation_attachments(conv_id)
         has_image_attachments = any(
             is_image_attachment_record(attachment) for attachment in attachments
         )
@@ -387,18 +401,35 @@ async def run_agent(
     conv_id: str,
     on_event: Callable[[dict[str, Any]], Awaitable[None]],
     agent_id: str | None = None,
-):
+    attachment_records: list[dict[str, Any]] | None = None,
+    allow_image_blocks: bool = True,
+    emit_done: bool = True,
+) -> AgentEventSnapshot | None:
     """使用 deepagents (LangGraph) 运行指定 Agent，并处理流式事件。"""
     resolved_agent_id = canonicalize_agent_id(agent_id)
     runtime = await get_runtime(resolved_agent_id)
+    event_state = AgentEventState()
+
+    async def emit(event: dict[str, Any]) -> None:
+        event_state.apply_event(event)
+        await on_event(event)
+
     rag_context = await _build_rag_context(user_message, conv_id, resolved_agent_id)
     memory_context = None
     attachment_context = None
     if rag_context is None:
         memory_context = await _build_memory_context(user_message, resolved_agent_id)
         attachment_context = await _build_attachment_context(conv_id)
-    multimodal_context = await _build_multimodal_context(conv_id, resolved_agent_id)
-    image_blocks = await _build_image_attachment_blocks(conv_id, resolved_agent_id)
+    multimodal_context = await _build_multimodal_context(
+        conv_id,
+        resolved_agent_id,
+        attachment_records=attachment_records,
+    )
+    image_blocks = await _build_image_attachment_blocks(
+        conv_id,
+        resolved_agent_id,
+        attachment_records=attachment_records,
+    )
     composed_user_message = _compose_user_message_with_contexts(
         user_message,
         memory_context,
@@ -411,7 +442,8 @@ async def run_agent(
             content=_build_human_message_content(
                 composed_user_message,
                 image_blocks,
-                allow_image_blocks=should_attach_multimodal_images(resolved_agent_id),
+                allow_image_blocks=allow_image_blocks
+                and should_attach_multimodal_images(resolved_agent_id),
             )
         )
     ]
@@ -447,7 +479,7 @@ async def run_agent(
                                 elif "thinking" in block:
                                     thinking_text = block.get("thinking", "")
                                     if thinking_text:
-                                        await on_event(
+                                        await emit(
                                             {
                                                 "type": EVENT_THINKING_DELTA,
                                                 "content": thinking_text,
@@ -458,7 +490,7 @@ async def run_agent(
                                 text_delta += block
 
                     if text_delta:
-                        await on_event(
+                        await emit(
                             {
                                 "type": EVENT_TEXT_DELTA,
                                 "content": text_delta,
@@ -491,7 +523,7 @@ async def run_agent(
                 elif name in ["write_file", "edit_file", "write_todos"]:
                     tool_desc = "正在修改本地代码/文件..."
 
-                await on_event(
+                await emit(
                     {
                         "type": EVENT_TOOL_CALL,
                         "tool_name": name,
@@ -518,7 +550,7 @@ async def run_agent(
                 else:
                     result_text = str(output)
 
-                await on_event(
+                await emit(
                     {
                         "type": EVENT_TOOL_RESULT,
                         "tool_name": name,
@@ -530,14 +562,182 @@ async def run_agent(
                     }
                 )
 
-        await on_event({"type": EVENT_DONE, "agent_id": event_agent_id})
+        if emit_done:
+            await emit({"type": EVENT_DONE, "agent_id": event_agent_id})
+        return event_state.snapshot()
 
     except Exception as exc:
         logger.exception(f"Agent 执行异常: {exc}")
-        await on_event(
+        await emit(
             {
                 "type": EVENT_ERROR,
                 "content": f"Agent 执行出错: {str(exc)}",
                 "agent_id": resolved_agent_id,
             }
         )
+        return event_state.snapshot()
+
+
+def _build_ocr_stage_message(user_message: str) -> str:
+    return (
+        "OCR preprocessing stage: extract text from current-turn image attachments "
+        "and preserve original order.\n\n"
+        f"User request: {user_message}"
+    )
+
+
+def _build_downstream_message(
+    user_message: str,
+    *,
+    ocr_text: str,
+    ocr_path: str | None,
+) -> str:
+    ocr_result_body = (ocr_text or "").strip() or "(empty)"
+    path_line = f"\nOCR result path: {ocr_path}" if ocr_path else ""
+    return (
+        f"{user_message}\n\n"
+        "<ocr_preprocess_result>\n"
+        "OCR preprocessing has completed for this turn."
+        f"{path_line}\n\n"
+        f"{ocr_result_body}\n"
+        "</ocr_preprocess_result>"
+    )
+
+
+def _resolve_snapshot(
+    maybe_snapshot: AgentEventSnapshot | None,
+    event_state: AgentEventState,
+) -> AgentEventSnapshot:
+    if isinstance(maybe_snapshot, AgentEventSnapshot):
+        return maybe_snapshot
+    return event_state.snapshot()
+
+
+async def run_agent_turn(
+    user_message: str,
+    conv_id: str,
+    on_event: Callable[[dict[str, Any]], Awaitable[None]],
+    agent_id: str | None = None,
+    attachment_records: list[dict[str, Any]] | None = None,
+) -> AgentEventSnapshot:
+    resolved_agent_id = canonicalize_agent_id(agent_id)
+    current_turn_attachments = list(attachment_records or [])
+    preprocess_plan = resolve_message_preprocess_plan(
+        user_message=user_message,
+        agent_id=resolved_agent_id,
+        attachments=current_turn_attachments,
+        api_key_configured=bool(ANTHROPIC_API_KEY),
+    )
+    if preprocess_plan is None:
+        passthrough_state = AgentEventState()
+
+        async def on_passthrough_event(event: dict[str, Any]) -> None:
+            passthrough_state.apply_event(event)
+            await on_event(event)
+
+        passthrough_result = await run_agent(
+            user_message=user_message,
+            conv_id=conv_id,
+            on_event=on_passthrough_event,
+            agent_id=resolved_agent_id,
+            attachment_records=current_turn_attachments,
+        )
+        return _resolve_snapshot(passthrough_result, passthrough_state)
+
+    if preprocess_plan.blocked_reason:
+        await on_event(
+            {
+                "type": EVENT_OCR_STATUS,
+                "status": "failed",
+                "content": preprocess_plan.blocked_reason,
+                "agent_id": "ocr",
+            }
+        )
+        await on_event(
+            {
+                "type": EVENT_ERROR,
+                "content": preprocess_plan.blocked_reason,
+                "agent_id": "ocr",
+            }
+        )
+        return AgentEventSnapshot(text="", thinking="", tool_results=[])
+
+    await on_event(
+        {
+            "type": EVENT_OCR_STATUS,
+            "status": "processing",
+            "content": (
+                f"OCR preprocessing is analyzing {max(1, len(preprocess_plan.image_attachments))} "
+                "image attachment(s)..."
+            ),
+            "agent_id": "ocr",
+        }
+    )
+    ocr_event_state = AgentEventState()
+    ocr_error_message: str | None = None
+
+    async def on_ocr_event(event: dict[str, Any]) -> None:
+        nonlocal ocr_error_message
+        ocr_event_state.apply_event(event)
+        if event.get("type") == EVENT_ERROR:
+            ocr_error_message = (
+                str(event.get("content", "")).strip() or "OCR preprocessing failed."
+            )
+
+    ocr_result = await run_agent(
+        user_message=_build_ocr_stage_message(user_message),
+        conv_id=conv_id,
+        on_event=on_ocr_event,
+        agent_id="ocr",
+        attachment_records=list(preprocess_plan.image_attachments),
+        allow_image_blocks=True,
+        emit_done=False,
+    )
+    if ocr_error_message:
+        await on_event(
+            {
+                "type": EVENT_ERROR,
+                "content": ocr_error_message,
+                "agent_id": "ocr",
+            }
+        )
+        return AgentEventSnapshot(text="", thinking="", tool_results=[])
+    ocr_snapshot = _resolve_snapshot(ocr_result, ocr_event_state)
+    ocr_text = ocr_snapshot.text.strip()
+    ocr_path = (
+        save_ocr_result(
+            conv_id,
+            list(preprocess_plan.image_attachments),
+            ocr_text,
+        )
+        if conv_id
+        else None
+    )
+    await on_event(
+        {
+            "type": EVENT_OCR_RESULT,
+            "content": ocr_text or "(empty)",
+            "agent_id": "ocr",
+            "ocr_path": ocr_path,
+        }
+    )
+
+    downstream_state = AgentEventState()
+
+    async def on_downstream_event(event: dict[str, Any]) -> None:
+        downstream_state.apply_event(event)
+        await on_event(event)
+
+    downstream_result = await run_agent(
+        user_message=_build_downstream_message(
+            user_message,
+            ocr_text=ocr_text,
+            ocr_path=ocr_path,
+        ),
+        conv_id=conv_id,
+        on_event=on_downstream_event,
+        agent_id=preprocess_plan.downstream_agent_id,
+        attachment_records=[],
+        allow_image_blocks=False,
+    )
+    return _resolve_snapshot(downstream_result, downstream_state)
