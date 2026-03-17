@@ -26,6 +26,11 @@ agents/__pycache__/**
 backend/data/conversation_attachments/*
 backend/data/rag/*
 agents/
+!backend/agents/
+backend/agents/**
+!backend/agents/*.py
+!backend/agents/**/
+!backend/agents/**/agent.toml
 
 # Celery
 celerybeat-schedule

@@ -39,3 +39,9 @@
 - call `ocr` first for image extraction before domain analysis
 - if OCR succeeds, pass the extracted text to the relevant leaf agent for diagnosis
 - if multimodal OCR is unavailable, state the limitation and do not fabricate image content
+
+## Browser Runtime Orchestration
+
+- delegate live browser interaction and evidence capture to `browser-runtime`
+- keep code-only frontend work on `frontend`
+- combine `browser-runtime` findings with other leaf-agent outputs when the task spans multiple domains

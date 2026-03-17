@@ -11,6 +11,7 @@ from agent_profiles import canonicalize_agent_id, get_agent_memory_roots
 from config import ANTHROPIC_API_KEY, MAX_TURNS
 from services.agent_event_state import AgentEventSnapshot, AgentEventState
 from services.agent_event_identity import resolve_event_agent_id
+from services.browser_runtime import maybe_capture_followup_screenshot
 from services.conversation_attachments import save_ocr_result
 from services.message_preprocess import resolve_message_preprocess_plan
 from services.multimodal_ocr import (
@@ -449,6 +450,7 @@ async def run_agent(
     ]
     inputs = {"messages": messages}
     pending_tool_inputs: dict[str, deque[dict[str, Any]]] = defaultdict(deque)
+    browser_screenshot_step = 1
 
     try:
         config = {
@@ -560,6 +562,14 @@ async def run_agent(
                         "artifact_kind": artifact_kind,
                         "agent_id": event_agent_id,
                     }
+                )
+                browser_screenshot_step = await maybe_capture_followup_screenshot(
+                    agent_id=event_agent_id,
+                    tool_name=name,
+                    tool_input=tool_input,
+                    conversation_id=conv_id,
+                    step_index=browser_screenshot_step,
+                    emit=emit,
                 )
 
         if emit_done:

@@ -33,3 +33,9 @@
 - route image-only OCR requests to `ocr`
 - route image-plus-domain-analysis requests to `supervisor`
 - if multimodal OCR is unavailable in the provided context, do not call `ocr`; explain the limitation directly
+
+## Browser Runtime Routing
+
+- route explicit browser automation or live webpage inspection requests to `browser-runtime`
+- keep frontend implementation, UI coding, and static code analysis on `frontend`
+- if browser evidence must be combined with other domains, escalate to `supervisor`

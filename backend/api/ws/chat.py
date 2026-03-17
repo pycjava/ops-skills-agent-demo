@@ -63,6 +63,7 @@ SUBAGENT_LABELS.update(
         "general-purpose": "通用助手",
         "backend": "后端工程助手",
         "frontend": "前端工程助手",
+        "browser-runtime": "Browser Automation Assistant",
         "db-schema": "数据库设计助手",
         "db-runtime": "数据库运行态助手",
         "dba": "数据库运行态助手",
