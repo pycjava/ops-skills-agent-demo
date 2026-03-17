@@ -16,11 +16,24 @@
 
 1. `docs/system-desigin/project-overall-design.md`
 2. `docs/system-desigin/backend-design.md`
-3. `docs/system-desigin/frontend-design.md`
-4. `docs/system-desigin/agent-runtime-design.md`
-5. `docs/system-desigin/task-scheduling-design.md`
+3. `docs/system-desigin/conversation-design.md`
+4. `docs/system-desigin/capability-extension-design.md`
+5. `docs/system-desigin/memory-and-reports-design.md`
+6. `docs/system-desigin/auth-and-permissions-design.md`
+7. `docs/system-desigin/rag-design.md`
+8. `docs/system-desigin/frontend-design.md`
+9. `docs/system-desigin/agent-runtime-design.md`
+10. `docs/system-desigin/task-scheduling-design.md`
 
-### 2.2 再理解能力层
+### 2.2 再看各子系统路线图
+
+1. `docs/system-desigin/conversation-roadmap.md`
+2. `docs/system-desigin/capability-extension-roadmap.md`
+3. `docs/system-desigin/memory-and-reports-roadmap.md`
+4. `docs/system-desigin/auth-and-permissions-roadmap.md`
+5. `docs/system-desigin/rag-roadmap.md`
+
+### 2.3 再理解能力层
 
 1. `docs/skill/skills-overview.md`
 2. 按 Agent 绑定关系阅读相应 Skill 文档：
@@ -35,6 +48,16 @@
 | --- | --- | --- |
 | `project-overall-design.md` | 总体架构 | 子系统关系、关键链路、数据边界 |
 | `backend-design.md` | 后端架构 | 分层、路由、服务、模型、权限 |
+| `conversation-design.md` | 会话子系统 | 会话模型、消息流、附件快照、WebSocket 协议 |
+| `conversation-roadmap.md` | 会话子系统路线图 | 会话模型治理、流式协议、附件体验、观测能力 |
+| `capability-extension-design.md` | 能力扩展子系统 | Skills 目录、MCP 配置、运行时装配、前端面板 |
+| `capability-extension-roadmap.md` | 能力扩展子系统路线图 | 能力治理、测试审计、绑定边界、扩展标准化 |
+| `memory-and-reports-design.md` | 长期记忆与报告 | `/memories/`、报告引用、通知下载、RAG 同步 |
+| `memory-and-reports-roadmap.md` | 长期记忆与报告路线图 | 元数据治理、报告生命周期、结构化沉淀 |
+| `auth-and-permissions-design.md` | 认证与权限子系统 | Session、OIDC、本地登录、RBAC、REST/WS 权限保护 |
+| `auth-and-permissions-roadmap.md` | 认证与权限子系统路线图 | 权限边界统一、审计、最小权限、隔离预留 |
+| `rag-design.md` | 检索增强 | 文档源、索引、查询注入、回退策略 |
+| `rag-roadmap.md` | 检索增强路线图 | 普通 RAG、混合检索、结构化知识层、GraphRAG |
 | `frontend-design.md` | 前端工作台 | 状态管理、组件职责、交互流程 |
 | `agent-runtime-design.md` | Agent Runtime | Agent 配置、Skills/MCP 装配、handoff |
 | `task-scheduling-design.md` | 定时任务 | 任务草稿、调度、运行会话、提醒 |

@@ -37,7 +37,7 @@ AgentWeave 是一个面向运维、数据库分析与通用知识工作的多 Ag
 ### 3.2 应用侧
 
 - FastAPI 提供 REST API 和 WebSocket。
-- 后端服务层负责会话、任务、提醒、MCP、记忆、认证和 Agent 运行时编排。
+- 后端服务层负责会话、任务、提醒、MCP、记忆、RAG 检索增强、认证和 Agent 运行时编排。
 
 ### 3.3 运行时侧
 
@@ -49,6 +49,7 @@ AgentWeave 是一个面向运维、数据库分析与通用知识工作的多 Ag
 
 - SQLite 负责业务实体和 LangGraph 持久化。
 - `/memories/` 作为长期记忆与报告产物空间。
+- Chroma 负责本地向量索引，embedding 默认通过远程接口生成。
 - 外部依赖包括 Anthropic 模型、OIDC 提供方、远程主机、Docker/Kubernetes 集群、云 API 和外部 MCP Server。
 
 ## 4. 总体架构
@@ -62,6 +63,7 @@ AgentWeave 是一个面向运维、数据库分析与通用知识工作的多 Ag
 FastAPI 应用
   -> 路由层
   -> 业务服务层
+  -> RAG Service / Chroma Index
   -> AgentManager / Skill Catalog / MCP Registry
   -> SQLite / LangGraph Store / /memories/
 
@@ -69,6 +71,7 @@ Agent Runtime
   -> router / supervisor / general / dba / ops
   -> Skills 白名单
   -> MCP 工具绑定
+  -> <rag_context> / /memories/ 上下文注入
   -> /memories/ 长期记忆读写
 ```
 
@@ -156,7 +159,23 @@ Agent Runtime
 - 前端面板：`frontend/src/components/MemoryPanel.vue`
 - 前端状态：`frontend/src/stores/chat/memory.ts`
 
-### 5.6 认证与权限子系统
+### 5.6 RAG 检索增强子系统
+
+RAG 子系统负责把“会话附件 + `/memories/` 文档”转成可检索的统一知识源，并在聊天链路中自动召回相关片段。它承担：
+
+- 文档标准化与切块。
+- 远程 embedding 生成。
+- Chroma 本地向量索引持久化。
+- 基于会话和 Agent 边界的召回过滤。
+- 将检索结果格式化为 `<rag_context>` 注入运行时 prompt。
+
+实现映射：
+
+- 后端服务：`backend/services/rag.py`
+- 后端入口：`backend/api/routers/rag.py`
+- 聊天接入：`backend/agent.py`
+
+### 5.7 认证与权限子系统
 
 认证与权限子系统负责：
 
@@ -179,6 +198,7 @@ Agent Runtime
 用户输入消息
   -> 前端通过 WebSocket 发送消息和上下文
   -> 后端确定当前会话与 agent_id
+  -> RAG 从当前会话附件与可见 memories 中召回相关片段
   -> Agent runtime 执行
   -> 后端把 text_delta / thinking_delta / tool_call / tool_result / routing 等事件推送给前端
   -> 前端渐进更新消息气泡
@@ -189,6 +209,7 @@ Agent Runtime
 
 - 将“最终消息”拆成事件流，而不是等全部完成后一次性返回。
 - 前端展示的是一条消息的生命周期，而不是一串互不关联的字符串。
+- 检索增强默认自动发生，但任何索引或 embedding 问题都不应阻断对话主流程。
 
 ### 6.2 从会话到定时任务链路
 
@@ -265,11 +286,12 @@ Agent Runtime
 - 使用单一工作台整合多种能力，提升一体化体验，但页面状态复杂度明显上升。
 - 使用后端 runtime 白名单注入能力，治理性更强，但新增 Agent 或 Skill 时需要同步维护配置。
 - 使用 SQLite 统一承载业务数据与 LangGraph 持久化，便于演示和本地部署，但不适合高并发多节点场景。
+- 为本地开发引入 Chroma + 远程 embedding 的轻量 RAG 组合，降低了接入门槛，但仍然依赖外部 embedding 接口。
 - 使用轮询调度器实现后台任务，简单可控，但不适合复杂调度与大规模任务场景。
 
 ## 10. 演进方向
 
 - 引入更完整的运行时观测能力，例如会话耗时、任务成功率、工具使用统计。
 - 将任务系统从“巡检任务”演进为更通用的后台自动化任务框架。
-- 增强 `/memories/` 的元数据治理，使报告、记忆和通用文件具备更统一的索引能力。
+- 增强 `/memories/` 的元数据治理，使报告、记忆和通用文件具备更统一的索引能力，并与 RAG 检索边界保持一致。
 - 在保留当前轻量结构的前提下，为多租户、分布式调度和更严格审计预留扩展空间。
