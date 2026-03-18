@@ -72,6 +72,7 @@ Agent Runtime 与扩展装配
 - `agents` / `agent` / `skills`：Agent 元数据与可见 Skills。
 - `mcp`：MCP 配置读取、保存和服务测试。
 - `memories`：记忆树、内容读取和删除。
+- `rag`：检索状态、调试搜索和手动重建索引。
 - `auth`：认证状态、登录、回调和登出。
 - `cloud_credentials`：云凭证及候选实例上下文相关接口。
 
@@ -114,7 +115,10 @@ WebSocket 之所以独立于 REST，是因为聊天过程天然是长连接、�
 
 - `mcp_registry.py`：读取 MCP 配置、过滤 Agent 可见连接、测试工具连通性。
 - `memory.py`：记忆树构建、记忆内容读取、删除和路径规范化。
+- `rag.py`：文档源标准化、切块、embedding 调用、Chroma 索引、查询召回和索引状态维护。
 - `cloud_credentials.py` / `cloud_instance_candidates.py`：云侧上下文解析与实例候选推断。
+
+这里的设计重点是把 RAG 明确定位为“记忆与附件之间的检索增强层”，而不是新的业务主存储。附件和 `/memories/` 仍由各自服务负责真值读写，RAG 只负责索引和召回。
 
 ### 4.4 Agent 事件服务
 
@@ -160,6 +164,7 @@ Agent 定义来自两层配置：
 - Skills 通过 `skill_catalog.py` 从 `backend/skills/` 解析并转为 runtime 可用路径。
 - MCP 工具通过 `McpRegistryService` 按 Agent 过滤后注入。
 - `/memories/` 路径通过 `StoreBackend` 暴露给 runtime。
+- 聊天请求在进入 runtime 前可先由 `backend/agent.py` 调用 RAG 服务，生成 `<rag_context>` 并注入最终用户消息。
 
 重点不是“给 Agent 更多工具”，而是“只给正确 Agent 必要工具”。
 
@@ -228,6 +233,7 @@ Agent 定义来自两层配置：
 ```text
 前端发起消息
   -> 后端查找当前会话和 Agent
+  -> RAG 服务按 conversation_id 和 agent_id 查询附件 / memory 片段
   -> runtime 执行
   -> 事件缓冲与聚合
   -> 消息落库
@@ -254,21 +260,25 @@ Agent 定义来自两层配置：
 - 读取旧数据中无效 `agent_id` 时回退到默认 Agent。
 - MCP 加载失败时不阻塞整体 runtime 构建，而是降级为无 MCP 工具。
 - 未配置 `ANTHROPIC_API_KEY` 时，服务可启动，但 Agent 对话能力不可用。
+- RAG 未启用、Chroma 不可用或 embedding 配置缺失时，聊天链路自动回退到原有 memory/attachment 上下文构建方式。
 
 ### 9.2 异常处理
 
 - 配置加载失败时记录日志并抛出显式异常。
 - 单个 MCP server 失败时跳过该 server，而不是让全部 Agent runtime 构建失败。
 - 调度和任务执行失败时写入 `InspectionTaskRun.error_message` 并生成失败通知。
+- 附件或 memory 的索引增量同步失败时仅记录 warning，不影响原始上传、删除或写入流程。
 
 ## 10. 设计取舍
 
 - 让后端承担大部分能力治理，提升一致性，但后端职责更重。
 - 使用服务层显式编排业务流程，代码更清晰，但相对增加了模块数量。
 - 使用统一 SQLite 持久化简化部署，但对高并发与大规模运行并不理想。
+- 为后端新增独立 RAG 服务层，提升了知识召回质量，但同时引入了 embedding 配置、索引状态和增量同步的维护成本。
 
 ## 11. 演进方向
 
 - 引入更细粒度的 runtime 观测与审计日志。
 - 为 MCP 加入更强的连接健康状态和重试策略。
 - 把任务执行链路中的报告、消息、通知关系进一步抽象成统一产物模型。
+- 继续拆分 RAG 的 source loader、parser 和检索策略，使其能承载更复杂的附件格式和更细粒度的索引治理。

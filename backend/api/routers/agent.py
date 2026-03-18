@@ -11,6 +11,7 @@ from agent import run_agent
 from auth.dependencies import require_permission
 from config import ANTHROPIC_API_KEY
 from db.session import AsyncSessionLocal
+from services.agent_errors import resolve_error_event_content
 from services.agent_event_state import AgentEventState
 from services.conversation_messages import save_message
 from services.conversation_state import (
@@ -152,7 +153,8 @@ async def agent_chat(req: ChatRequest):
 
         elif etype == "error":
             raise HTTPException(
-                status_code=500, detail=normalized_event.get("content", "Agent 执行出错")
+                status_code=500,
+                detail=resolve_error_event_content(normalized_event),
             )
 
         elif etype == "done":

@@ -1,8 +1,36 @@
 import importlib
+import json
 import sys
 import types
+from datetime import datetime, timezone
 
 import tomli
+try:
+    from langgraph.prebuilt import ToolRuntime
+except ModuleNotFoundError:
+    class ToolRuntime:  # type: ignore[override]
+        def __init__(
+            self,
+            *,
+            state,
+            context,
+            config,
+            stream_writer,
+            tool_call_id,
+            store,
+        ):
+            self.state = state
+            self.context = context
+            self.config = config
+            self.stream_writer = stream_writer
+            self.tool_call_id = tool_call_id
+            self.store = store
+
+        def __repr__(self):
+            return (
+                "ToolRuntime("
+                f"tool_call_id={self.tool_call_id!r}, state={self.state!r})"
+            )
 
 
 sys.modules.setdefault("tomllib", tomli)
@@ -63,3 +91,207 @@ def test_build_ocr_status_payload_returns_failed_status_when_ocr_is_unavailable(
         "agent_id": "ocr",
     }
     assert suppress_result is True
+
+
+def test_dump_ws_payload_stringifies_runtime_objects():
+    runtime = ToolRuntime(
+        state={"messages": []},
+        context=None,
+        config={},
+        stream_writer=lambda *_: None,
+        tool_call_id="call-1",
+        store=None,
+    )
+
+    payload = {
+        "type": "tool_call",
+        "tool_name": "MiniMax_web_search",
+        "tool_input": {
+            "query": "latest status",
+            "runtime": runtime,
+        },
+    }
+
+    dumped = chat_module._dump_ws_payload(payload)
+    restored = json.loads(dumped)
+
+    assert restored["tool_input"]["query"] == "latest status"
+    assert "ToolRuntime(" in restored["tool_input"]["runtime"]
+
+
+def test_dump_ws_payload_preserves_plain_json_values():
+    payload = {
+        "type": "session",
+        "conversation_id": "conv-1",
+        "agent_id": "router",
+        "flags": [True, False],
+    }
+
+    assert json.loads(chat_module._dump_ws_payload(payload)) == payload
+
+
+def test_resolve_error_event_content_uses_error_type_when_content_is_blank():
+    assert (
+        chat_module._resolve_error_event_content(
+            {
+                "type": "error",
+                "content": "",
+                "agent_id": "browser-runtime",
+                "error_type": "NotImplementedError",
+                "error_message": "",
+            }
+        )
+        == "Agent 执行出错: NotImplementedError"
+    )
+
+
+async def test_persist_ocr_result_event_saves_text_message(monkeypatch):
+    saved_records = []
+
+    async def fake_save_message(
+        conv_id,
+        role,
+        content,
+        msg_type,
+        *,
+        agent_id=None,
+        **kwargs,
+    ):
+        saved_records.append(
+            {
+                "conv_id": conv_id,
+                "role": role,
+                "content": content,
+                "msg_type": msg_type,
+                "agent_id": agent_id,
+                "kwargs": kwargs,
+            }
+        )
+
+    monkeypatch.setattr(chat_module, "save_message", fake_save_message)
+    monkeypatch.setattr(
+        chat_module,
+        "save_ocr_result",
+        lambda conversation_id, source_attachments, content: (
+            "data/conversation_attachments/conv-1/_ocr/ocr-preprocessed.md"
+        ),
+    )
+
+    payload = await chat_module._persist_ocr_result_event(
+        current_conv_id="conv-1",
+        current_turn_attachments=[
+            {
+                "id": "att-1",
+                "original_name": "console.png",
+                "stored_name": "console.png",
+                "relative_path": "data/conversation_attachments/conv-1/console.png",
+                "mime_type": "image/png",
+                "size_bytes": 123,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ],
+        result_text="mysql error 1045",
+    )
+
+    assert payload["type"] == "ocr_result"
+    assert payload["agent_id"] == "ocr"
+    assert "mysql error 1045" in payload["content"]
+    assert "Saved OCR result:" in payload["content"]
+    assert payload["ocr_path"] == "data/conversation_attachments/conv-1/_ocr/ocr-preprocessed.md"
+
+    assert len(saved_records) == 1
+    assert saved_records[0]["conv_id"] == "conv-1"
+    assert saved_records[0]["role"] == "system"
+    assert saved_records[0]["msg_type"] == "text"
+    assert saved_records[0]["agent_id"] == "ocr"
+    assert "mysql error 1045" in saved_records[0]["content"]
+
+
+async def test_maybe_persist_assistant_image_message_from_execute_tool_result(monkeypatch):
+    saved_records = []
+
+    class SavedImageMessage:
+        id = "msg-image-1"
+        conversation_id = "conv-1"
+
+        def to_dict(self):
+            return {
+                "id": self.id,
+                "conversation_id": self.conversation_id,
+                "role": "assistant",
+                "content": "",
+                "type": "image",
+                "agent_id": "frontend",
+                "tool_name": None,
+                "tool_input": None,
+                "attachments_snapshot": None,
+                "thinking": None,
+                "created_at": "2026-03-17T12:00:00.000",
+                "asset_path": "data/conversation_assets/conv-1/browser-shot.png",
+                "asset_url": "/api/conversations/conv-1/messages/msg-image-1/asset",
+                "asset_mime_type": "image/png",
+                "asset_source": "agent-browser",
+                "asset_alt": "Agent Browser screenshot",
+                "asset_width": 1280,
+                "asset_height": 720,
+            }
+
+    def fake_persist_asset(conversation_id, command):
+        assert conversation_id == "conv-1"
+        assert command == "agent-browser screenshot tmp/browser-shot.png"
+        return {
+            "asset_path": "data/conversation_assets/conv-1/browser-shot.png",
+            "asset_mime_type": "image/png",
+            "asset_source": "agent-browser",
+            "asset_alt": "Agent Browser screenshot",
+            "asset_width": 1280,
+            "asset_height": 720,
+        }
+
+    async def fake_save_message(conv_id, role, content, msg_type, **kwargs):
+        saved_records.append(
+            {
+                "conv_id": conv_id,
+                "role": role,
+                "content": content,
+                "msg_type": msg_type,
+                "kwargs": kwargs,
+            }
+        )
+        return SavedImageMessage()
+
+    monkeypatch.setattr(
+        chat_module,
+        "persist_agent_browser_screenshot_asset",
+        fake_persist_asset,
+    )
+    monkeypatch.setattr(chat_module, "save_message", fake_save_message)
+
+    payload = await chat_module._maybe_persist_assistant_image_message(
+        current_conv_id="conv-1",
+        event_agent_id="frontend",
+        tool_name="execute",
+        tool_input={"command": "agent-browser screenshot tmp/browser-shot.png"},
+    )
+
+    assert payload == {
+        "type": "message",
+        "message": SavedImageMessage().to_dict(),
+    }
+    assert saved_records == [
+        {
+            "conv_id": "conv-1",
+            "role": "assistant",
+            "content": "",
+            "msg_type": "image",
+            "kwargs": {
+                "agent_id": "frontend",
+                "asset_path": "data/conversation_assets/conv-1/browser-shot.png",
+                "asset_mime_type": "image/png",
+                "asset_source": "agent-browser",
+                "asset_alt": "Agent Browser screenshot",
+                "asset_width": 1280,
+                "asset_height": 720,
+            },
+        }
+    ]

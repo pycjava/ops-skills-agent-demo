@@ -1,9 +1,11 @@
 import type {
   AgentInfo,
+  AssistantImageAsset,
   ChatMessage,
   ConversationAttachment,
   ConversationAttachmentSnapshot,
   ConversationItem,
+  ConversationHistoryMessage,
 } from './types'
 
 export const CHAT_ENTRY_AGENT_ID = 'router'
@@ -74,6 +76,14 @@ export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
     ...init,
     credentials: 'include',
   })
+}
+
+export function resolveBackendPath(backendUrl: string, path: string | null | undefined): string | undefined {
+  const normalizedPath = typeof path === 'string' ? path.trim() : ''
+  if (!normalizedPath) return undefined
+  if (/^https?:\/\//i.test(normalizedPath)) return normalizedPath
+  if (!backendUrl) return normalizedPath
+  return `${backendUrl}${normalizedPath}`
 }
 
 export function getDefaultAgentId(agents: AgentInfo[]): string {
@@ -181,4 +191,29 @@ export function normalizeAttachmentSnapshots(
   }
 
   return attachments.map((attachment) => toAttachmentSnapshot(attachment))
+}
+
+export function normalizeAssistantImageAsset(
+  message: Pick<
+    ConversationHistoryMessage,
+    | 'asset_path'
+    | 'asset_url'
+    | 'asset_mime_type'
+    | 'asset_source'
+    | 'asset_alt'
+    | 'asset_width'
+    | 'asset_height'
+  >,
+  backendUrl: string,
+): AssistantImageAsset {
+  return {
+    assetPath: typeof message.asset_path === 'string' ? message.asset_path : undefined,
+    assetUrl: resolveBackendPath(backendUrl, message.asset_url),
+    assetMimeType:
+      typeof message.asset_mime_type === 'string' ? message.asset_mime_type : undefined,
+    assetSource: typeof message.asset_source === 'string' ? message.asset_source : undefined,
+    assetAlt: typeof message.asset_alt === 'string' ? message.asset_alt : undefined,
+    assetWidth: typeof message.asset_width === 'number' ? message.asset_width : undefined,
+    assetHeight: typeof message.asset_height === 'number' ? message.asset_height : undefined,
+  }
 }

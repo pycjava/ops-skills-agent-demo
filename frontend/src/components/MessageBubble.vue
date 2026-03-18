@@ -139,12 +139,21 @@ const toolInputJson = computed(() => {
 
 const isUser = computed(() => props.message.role === 'user' && props.message.type === 'text')
 const isAssistant = computed(
-  () => props.message.role === 'assistant' && props.message.type === 'text',
+  () =>
+    props.message.role === 'assistant' &&
+    (props.message.type === 'text' || props.message.type === 'image'),
+)
+const isAssistantImage = computed(
+  () => props.message.role === 'assistant' && props.message.type === 'image',
 )
 const isToolCall = computed(() => props.message.type === 'tool_call')
 const isToolResult = computed(() => props.message.type === 'tool_result')
 const isError = computed(() => props.message.type === 'error')
 const userAttachments = computed(() => props.message.attachments || [])
+const assistantImageUrl = computed(() => props.message.assetUrl || '')
+const assistantImageAlt = computed(
+  () => props.message.assetAlt || props.message.content || 'Assistant image',
+)
 const activeConversationAttachmentIds = computed(
   () => new Set(chatStore.conversationAttachments.map((attachment) => attachment.id)),
 )
@@ -368,7 +377,24 @@ const artifactActionLabel = computed(() => {
         </div>
       </div>
 
-      <div class="assistant-content" v-html="renderedContent"></div>
+      <div class="assistant-content">
+        <a
+          v-if="isAssistantImage && assistantImageUrl"
+          class="assistant-image-link"
+          :href="assistantImageUrl"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <img
+            data-testid="assistant-image"
+            class="assistant-image"
+            :src="assistantImageUrl"
+            :alt="assistantImageAlt"
+          />
+        </a>
+
+        <div v-if="message.content" v-html="renderedContent"></div>
+      </div>
     </article>
 
     <div v-else class="system-row">
@@ -595,6 +621,21 @@ const artifactActionLabel = computed(() => {
 .assistant-content {
   font-size: 18px;
   line-height: 1.85;
+}
+
+.assistant-image-link {
+  display: block;
+  margin-bottom: 16px;
+}
+
+.assistant-image {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: 0 12px 28px rgba(31, 24, 15, 0.08);
 }
 
 .assistant-content :deep(p) {

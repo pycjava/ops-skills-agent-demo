@@ -21,6 +21,7 @@ from api.routers import (
     inspection_tasks,
     mcp,
     memories,
+    rag,
     skills,
     task_notifications,
 )
@@ -28,6 +29,7 @@ from api.ws import chat
 from auth.config import get_auth_settings
 from config import ANTHROPIC_API_KEY, BASE_DIR, SKILLS_DIR, get_cors_allowed_origins
 from db.session import close_db, init_db
+from services.browser_runtime import verify_agent_browser_cli
 from services.inspection_scheduler import InspectionSchedulerRuntime
 from utils.logger import logger
 
@@ -72,6 +74,7 @@ def build_uvicorn_reload_kwargs() -> dict[str, object]:
 
 @app.on_event("startup")
 async def startup():
+    verify_agent_browser_cli()
     await init_db()
     await init_agent_runtime()
     await inspection_scheduler.start()
@@ -114,6 +117,7 @@ app.include_router(mcp.router)
 app.include_router(cloud_credentials.router)
 app.include_router(agent.router)
 app.include_router(memories.router)
+app.include_router(rag.router)
 app.include_router(chat.router)
 
 

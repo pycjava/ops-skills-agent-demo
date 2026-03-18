@@ -3,6 +3,7 @@ import {
   CHAT_ENTRY_AGENT_ID,
   findRecentToolInput,
   normalizeAgentId,
+  normalizeAssistantImageAsset,
   resolveConversationAgentId,
   toAttachmentSnapshot,
 } from './helpers'
@@ -16,6 +17,7 @@ import type {
 } from './types'
 
 interface SocketDomainDeps {
+  backendUrl: string
   wsUrl: string
   messages: ChatMessage[]
   conversations: Ref<ConversationItem[]>
@@ -39,12 +41,18 @@ function finishStreamingAssistantMessage(messages: ChatMessage[]) {
   if (messages.length === 0) return
 
   const lastMessage = messages[messages.length - 1]
-  if (lastMessage && lastMessage.role === 'assistant' && lastMessage.streaming) {
+  if (
+    lastMessage &&
+    lastMessage.role === 'assistant' &&
+    lastMessage.streaming &&
+    (lastMessage.type === 'text' || lastMessage.type === 'image')
+  ) {
     lastMessage.streaming = false
   }
 }
 
 export function createSocketDomain({
+  backendUrl,
   wsUrl,
   messages,
   conversations,
@@ -63,6 +71,52 @@ export function createSocketDomain({
   void activeAgentId
   const pendingRoutedAgentIds: string[] = []
   let pendingAssistantAgentId: string | undefined
+
+  function pushIncomingAssistantMessage(message: Record<string, unknown>) {
+    const normalizedMessage = message as {
+      id?: string
+      role?: string
+      content?: string
+      type?: string
+      agent_id?: string | null
+      tool_name?: string | null
+      tool_input?: Record<string, unknown> | null
+      attachments_snapshot?: unknown
+      thinking?: string | null
+      created_at?: string | null
+      asset_path?: string | null
+      asset_url?: string | null
+      asset_mime_type?: string | null
+      asset_source?: string | null
+      asset_alt?: string | null
+      asset_width?: number | null
+      asset_height?: number | null
+    }
+
+    messages.push({
+      id: normalizedMessage.id || genId(),
+      role: (normalizedMessage.role as 'user' | 'assistant' | 'system') || 'assistant',
+      content: typeof normalizedMessage.content === 'string' ? normalizedMessage.content : '',
+      type:
+        (normalizedMessage.type as 'text' | 'image' | 'tool_call' | 'tool_result' | 'error') ||
+        'text',
+      agentId: normalizeAgentId(normalizedMessage.agent_id) || pendingAssistantAgentId,
+      toolName: normalizedMessage.tool_name || undefined,
+      toolInput: normalizedMessage.tool_input || undefined,
+      thinking: normalizedMessage.thinking || undefined,
+      ...normalizeAssistantImageAsset(
+        normalizedMessage as Parameters<typeof normalizeAssistantImageAsset>[0],
+        backendUrl,
+      ),
+      timestamp: normalizedMessage.created_at
+        ? new Date(normalizedMessage.created_at).getTime()
+        : Date.now(),
+      streaming:
+        normalizedMessage.role === 'assistant' &&
+        normalizedMessage.type === 'image' &&
+        !normalizedMessage.content,
+    })
+  }
 
   function connect() {
     if (
@@ -120,7 +174,7 @@ export function createSocketDomain({
           if (
             lastMessage &&
             lastMessage.role === 'assistant' &&
-            lastMessage.type === 'text' &&
+            (lastMessage.type === 'text' || lastMessage.type === 'image') &&
             lastMessage.agentId === incomingAgentId &&
             lastMessage.streaming
           ) {
@@ -149,7 +203,7 @@ export function createSocketDomain({
           if (
             lastMessage &&
             lastMessage.role === 'assistant' &&
-            lastMessage.type === 'text' &&
+            (lastMessage.type === 'text' || lastMessage.type === 'image') &&
             lastMessage.agentId === incomingAgentId &&
             lastMessage.streaming
           ) {
@@ -248,6 +302,12 @@ export function createSocketDomain({
           handleMemoryArtifact(toolResultInput)
           break
         }
+
+        case 'message':
+          if (data.message && typeof data.message === 'object') {
+            pushIncomingAssistantMessage(data.message as Record<string, unknown>)
+          }
+          break
 
         case 'done':
           isLoading.value = false

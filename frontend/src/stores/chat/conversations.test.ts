@@ -199,6 +199,92 @@ describe('createConversationDomain', () => {
     ])
   })
 
+  test('restores assistant image messages from conversation history', async () => {
+    const messages: Array<Record<string, unknown>> = []
+    const conversations = ref<ConversationItem[]>([
+      {
+        id: 'conv-1',
+        title: 'New Conversation',
+        source: 'web',
+        agent_id: 'frontend',
+        created_at: null,
+        updated_at: null,
+      },
+    ])
+    const currentConversationId = ref<string | null>(null)
+    const draftAgentId = ref('frontend')
+    const agents = ref<AgentInfo[]>([
+      {
+        id: 'frontend',
+        label: 'Frontend',
+        description: '',
+        capabilities: [],
+        is_default: true,
+      },
+    ])
+    const isLoading = ref(false)
+    const wsState = {
+      current: {
+        readyState: WebSocket.OPEN,
+        send: vi.fn(),
+      } as Pick<WebSocket, 'readyState' | 'send'> as WebSocket,
+    }
+
+    global.fetch = vi.fn(async () =>
+      createFetchResponse([
+        {
+          id: 'msg-image-1',
+          role: 'assistant',
+          content: 'Captured the current dashboard state.',
+          type: 'image',
+          agent_id: 'frontend',
+          tool_name: null,
+          tool_input: null,
+          attachments_snapshot: null,
+          thinking: null,
+          created_at: '2026-03-17T12:00:00.000',
+          asset_path: 'data/conversation_assets/conv-1/browser-shot.png',
+          asset_url: '/api/conversations/conv-1/messages/msg-image-1/asset',
+          asset_mime_type: 'image/png',
+          asset_source: 'agent-browser',
+          asset_alt: 'Agent Browser screenshot',
+          asset_width: 1280,
+          asset_height: 720,
+        },
+      ]),
+    ) as typeof fetch
+
+    const domain = createConversationDomain({
+      backendUrl: 'http://localhost:8000',
+      messages: messages as never[],
+      conversations,
+      currentConversationId,
+      draftAgentId,
+      activeAgentId: computed(() => draftAgentId.value),
+      agents,
+      isLoading,
+      wsState,
+      fetchSkills: vi.fn(async () => {}),
+    })
+
+    await domain.switchConversation('conv-1')
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        id: 'msg-image-1',
+        role: 'assistant',
+        type: 'image',
+        content: 'Captured the current dashboard state.',
+        assetUrl: 'http://localhost:8000/api/conversations/conv-1/messages/msg-image-1/asset',
+        assetMimeType: 'image/png',
+        assetSource: 'agent-browser',
+        assetAlt: 'Agent Browser screenshot',
+        assetWidth: 1280,
+        assetHeight: 720,
+      }),
+    ])
+  })
+
   test('streams a task run conversation and binds the websocket session after playback', async () => {
     const messages: Array<Record<string, unknown>> = []
     const conversations = ref<ConversationItem[]>([])

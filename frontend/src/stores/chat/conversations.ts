@@ -6,6 +6,7 @@ import {
   findRecentToolInput,
   normalizeAgentId,
   normalizeAttachmentSnapshots,
+  normalizeAssistantImageAsset,
   readErrorMessage,
   resolveConversationAgentId,
   stripSystemHint,
@@ -50,12 +51,13 @@ function sendConversationInit(
 function pushConversationHistoryMessage(
   messages: ChatMessage[],
   message: ConversationHistoryMessage,
+  backendUrl: string,
 ) {
   messages.push({
     id: message.id,
     role: message.role as 'user' | 'assistant' | 'system',
     content: message.role === 'user' ? stripSystemHint(message.content) : message.content,
-    type: message.type as 'text' | 'tool_call' | 'tool_result' | 'error',
+    type: message.type as 'text' | 'image' | 'tool_call' | 'tool_result' | 'error',
     agentId: normalizeAgentId(message.agent_id),
     toolName: message.tool_name || undefined,
     toolInput:
@@ -65,6 +67,7 @@ function pushConversationHistoryMessage(
         : undefined),
     attachments: normalizeAttachmentSnapshots(message.attachments_snapshot),
     thinking: message.thinking || undefined,
+    ...normalizeAssistantImageAsset(message, backendUrl),
     timestamp: message.created_at ? new Date(message.created_at).getTime() : Date.now(),
   })
 }
@@ -125,7 +128,7 @@ export function createConversationDomain({
       const historyMessages: ConversationHistoryMessage[] = await res.json()
 
       for (const message of historyMessages) {
-        pushConversationHistoryMessage(messages, message)
+        pushConversationHistoryMessage(messages, message, backendUrl)
       }
     } catch (error) {
       console.warn('加载历史消息失败:', error)
@@ -218,7 +221,7 @@ export function createConversationDomain({
         }
 
         if (event.type === 'message') {
-          pushConversationHistoryMessage(messages, event.message)
+          pushConversationHistoryMessage(messages, event.message, backendUrl)
           continue
         }
 

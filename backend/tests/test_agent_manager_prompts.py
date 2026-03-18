@@ -65,6 +65,7 @@ ROUTER_LEAF_AGENTS = [
     "ocr",
     "backend",
     "frontend",
+    "browser-runtime",
     "db-schema",
     "db-runtime",
     "ops-runtime",
@@ -78,6 +79,7 @@ SUPERVISOR_LEAF_AGENTS = [
     "ocr",
     "backend",
     "frontend",
+    "browser-runtime",
     "db-schema",
     "db-runtime",
     "ops-runtime",
@@ -137,6 +139,16 @@ def test_ocr_agent_profile_is_registered():
     assert get_agent_profile("ocr").id == "ocr"
 
 
+def test_browser_runtime_agent_profile_is_registered_with_expected_skill_boundary():
+    profile = get_agent_profile("browser-runtime")
+
+    assert profile.id == "browser-runtime"
+    assert profile.execution_mode == "direct"
+    assert list(profile.skills) == ["agent-browser", "using-superpowers"]
+    assert profile.allowed_handoffs == ()
+    assert profile.subagent_configs == ()
+
+
 def test_router_and_supervisor_profiles_have_expected_subagent_layout():
     router_profile = get_agent_profile("router")
     supervisor_profile = get_agent_profile("supervisor")
@@ -176,3 +188,24 @@ def test_router_supervisor_and_ocr_prompts_define_multimodal_ocr_boundaries():
     assert "route image-only OCR requests to `ocr`" in router_prompt
     assert "call `ocr` first for image extraction before domain analysis" in supervisor_prompt
     assert "If image input is unavailable, say so explicitly and do not guess." in ocr_prompt
+
+
+def test_router_supervisor_and_browser_runtime_prompts_define_browser_boundaries():
+    manager = AgentManager()
+
+    router_prompt = manager._compose_system_prompt(get_agent_profile("router"))
+    supervisor_prompt = manager._compose_system_prompt(get_agent_profile("supervisor"))
+    browser_prompt = manager._compose_system_prompt(get_agent_profile("browser-runtime"))
+
+    assert (
+        "route explicit browser automation or live webpage inspection requests to `browser-runtime`"
+        in router_prompt
+    )
+    assert (
+        "delegate live browser interaction and evidence capture to `browser-runtime`"
+        in supervisor_prompt
+    )
+    assert (
+        "After every browser action, immediately run `agent-browser screenshot`"
+        in browser_prompt
+    )

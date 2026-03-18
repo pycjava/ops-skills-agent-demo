@@ -92,6 +92,26 @@ def _bootstrap_sqlite_compat_columns(sync_conn):
     if not _has_column(sync_conn, "messages", "attachments_snapshot"):
         sync_conn.execute(text("ALTER TABLE messages ADD COLUMN attachments_snapshot JSON"))
 
+    if not _has_column(sync_conn, "messages", "asset_path"):
+        sync_conn.execute(text("ALTER TABLE messages ADD COLUMN asset_path VARCHAR(500)"))
+
+    if not _has_column(sync_conn, "messages", "asset_mime_type"):
+        sync_conn.execute(
+            text("ALTER TABLE messages ADD COLUMN asset_mime_type VARCHAR(255)")
+        )
+
+    if not _has_column(sync_conn, "messages", "asset_source"):
+        sync_conn.execute(text("ALTER TABLE messages ADD COLUMN asset_source VARCHAR(100)"))
+
+    if not _has_column(sync_conn, "messages", "asset_alt"):
+        sync_conn.execute(text("ALTER TABLE messages ADD COLUMN asset_alt TEXT"))
+
+    if not _has_column(sync_conn, "messages", "asset_width"):
+        sync_conn.execute(text("ALTER TABLE messages ADD COLUMN asset_width INTEGER"))
+
+    if not _has_column(sync_conn, "messages", "asset_height"):
+        sync_conn.execute(text("ALTER TABLE messages ADD COLUMN asset_height INTEGER"))
+
     sync_conn.execute(
         text(
             "UPDATE messages "

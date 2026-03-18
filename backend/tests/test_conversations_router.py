@@ -184,3 +184,83 @@ async def test_get_messages_falls_back_for_removed_legacy_message_agent_id(sessi
     assert response.status_code == 200
     payload = response.json()
     assert payload[0]["agent_id"] == "router"
+
+
+@pytest.mark.asyncio
+async def test_get_messages_returns_assistant_image_metadata(session_factory, seeded_conversation):
+    async with session_factory() as session:
+        session.add(
+            Message(
+                conversation_id=seeded_conversation.id,
+                role="assistant",
+                content="Captured the current dashboard state.",
+                type="image",
+                agent_id="frontend",
+                asset_path=(
+                    f"data/conversation_assets/{seeded_conversation.id}/browser-shot.png"
+                ),
+                asset_mime_type="image/png",
+                asset_source="agent-browser",
+                asset_alt="Current dashboard screenshot",
+                asset_width=1280,
+                asset_height=720,
+            )
+        )
+        await session.commit()
+
+    client = create_test_client(session_factory)
+    response = client.get(f"/api/conversations/{seeded_conversation.id}/messages")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["type"] == "image"
+    assert payload[0]["asset_path"] == (
+        f"data/conversation_assets/{seeded_conversation.id}/browser-shot.png"
+    )
+    assert payload[0]["asset_url"] == (
+        f"/api/conversations/{seeded_conversation.id}/messages/{payload[0]['id']}/asset"
+    )
+    assert payload[0]["asset_mime_type"] == "image/png"
+    assert payload[0]["asset_source"] == "agent-browser"
+    assert payload[0]["asset_alt"] == "Current dashboard screenshot"
+    assert payload[0]["asset_width"] == 1280
+    assert payload[0]["asset_height"] == 720
+
+
+@pytest.mark.asyncio
+async def test_get_message_asset_returns_image_file(
+    session_factory, seeded_conversation, monkeypatch, tmp_path
+):
+    import services.assistant_images as assistant_images
+
+    asset_root = tmp_path / "conversation_assets"
+    monkeypatch.setattr(assistant_images, "ASSISTANT_IMAGE_ROOT", asset_root)
+
+    relative_path = f"data/conversation_assets/{seeded_conversation.id}/browser-shot.png"
+    stored_file = asset_root / seeded_conversation.id / "browser-shot.png"
+    stored_file.parent.mkdir(parents=True, exist_ok=True)
+    stored_file.write_bytes(b"\x89PNG\r\n\x1a\nmock")
+
+    async with session_factory() as session:
+        message = Message(
+            conversation_id=seeded_conversation.id,
+            role="assistant",
+            content="Captured the current dashboard state.",
+            type="image",
+            agent_id="frontend",
+            asset_path=relative_path,
+            asset_mime_type="image/png",
+            asset_source="agent-browser",
+        )
+        session.add(message)
+        await session.commit()
+        await session.refresh(message)
+
+    client = create_test_client(session_factory)
+    response = client.get(
+        f"/api/conversations/{seeded_conversation.id}/messages/{message.id}/asset"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == b"\x89PNG\r\n\x1a\nmock"

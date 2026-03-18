@@ -10,6 +10,7 @@ from services.conversation_messages import (
     build_auto_title,
     is_default_conversation_title,
     save_message,
+    update_message,
     update_conversation_title,
 )
 
@@ -115,6 +116,67 @@ async def test_save_message_persists_attachment_snapshots(
 
     message = message_result.scalar_one()
     assert message.attachments_snapshot == attachments_snapshot
+
+
+async def test_save_message_persists_assistant_image_metadata(
+    session_factory, seeded_conversation
+):
+    await save_message(
+        seeded_conversation.id,
+        "assistant",
+        "Captured the current dashboard state.",
+        "image",
+        agent_id="frontend",
+        asset_path=f"data/conversation_assets/{seeded_conversation.id}/browser-shot.png",
+        asset_mime_type="image/png",
+        asset_source="agent-browser",
+        asset_alt="Current dashboard screenshot",
+        asset_width=1280,
+        asset_height=720,
+        session_factory=session_factory,
+    )
+
+    async with session_factory() as session:
+        message_result = await session.execute(
+            select(Message).where(Message.conversation_id == seeded_conversation.id)
+        )
+
+    message = message_result.scalar_one()
+    assert message.type == "image"
+    assert message.asset_path == (
+        f"data/conversation_assets/{seeded_conversation.id}/browser-shot.png"
+    )
+    assert message.asset_mime_type == "image/png"
+    assert message.asset_source == "agent-browser"
+    assert message.asset_alt == "Current dashboard screenshot"
+    assert message.asset_width == 1280
+    assert message.asset_height == 720
+
+
+async def test_update_message_persists_inline_text_for_assistant_image_message(
+    session_factory, seeded_conversation
+):
+    message = await save_message(
+        seeded_conversation.id,
+        "assistant",
+        "",
+        "image",
+        agent_id="frontend",
+        asset_path=f"data/conversation_assets/{seeded_conversation.id}/browser-shot.png",
+        asset_mime_type="image/png",
+        asset_source="agent-browser",
+        session_factory=session_factory,
+    )
+
+    updated = await update_message(
+        message.id,
+        content="Captured the current dashboard state.",
+        thinking="Used Agent Browser for inspection.",
+        session_factory=session_factory,
+    )
+
+    assert updated.content == "Captured the current dashboard state."
+    assert updated.thinking == "Used Agent Browser for inspection."
 
 
 def test_is_default_conversation_title_supports_legacy_mojibake_title():

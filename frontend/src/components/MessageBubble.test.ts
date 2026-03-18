@@ -108,4 +108,34 @@ describe('MessageBubble', () => {
     expect(wrapper.emitted('delete-attachment')).toEqual([['att-1']])
     expect(wrapper.find('[data-testid="message-attachment-delete-att-2"]').exists()).toBe(false)
   })
+
+  test('renders assistant image messages inline with the assistant reply body', () => {
+    const wrapper = mount(MessageBubble, {
+      props: {
+        message: {
+          id: 'msg-image-1',
+          role: 'assistant',
+          content: 'Captured the current dashboard state.',
+          type: 'image',
+          agentId: 'frontend',
+          assetUrl: 'http://localhost:8000/api/conversations/conv-1/messages/msg-image-1/asset',
+          assetMimeType: 'image/png',
+          assetSource: 'agent-browser',
+          assetAlt: 'Agent Browser screenshot',
+          assetWidth: 1280,
+          assetHeight: 720,
+          timestamp: Date.now(),
+        },
+      },
+    })
+
+    const image = wrapper.get('[data-testid="assistant-image"]')
+    expect(image.attributes('src')).toBe(
+      'http://localhost:8000/api/conversations/conv-1/messages/msg-image-1/asset',
+    )
+    expect(image.attributes('alt')).toBe('Agent Browser screenshot')
+    expect(wrapper.get('.assistant-content').text()).toContain(
+      'Captured the current dashboard state.',
+    )
+  })
 })

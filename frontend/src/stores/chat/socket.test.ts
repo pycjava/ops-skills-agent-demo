@@ -96,6 +96,7 @@ describe('createSocketDomain', () => {
 
     const wsState = { current: null as WebSocket | null }
     const domain = createSocketDomain({
+      backendUrl: '',
       wsUrl: 'ws://localhost/ws/chat',
       messages: messages as never[],
       conversations,
@@ -209,6 +210,7 @@ describe('createSocketDomain', () => {
 
     const wsState = { current: null as WebSocket | null }
     const domain = createSocketDomain({
+      backendUrl: '',
       wsUrl: 'ws://localhost/ws/chat',
       messages: messages as never[],
       conversations,
@@ -271,6 +273,7 @@ describe('createSocketDomain', () => {
     const attachment = createAttachment()
 
     const domain = createSocketDomain({
+      backendUrl: '',
       wsUrl: 'ws://localhost/ws/chat',
       messages: messages as never[],
       conversations,
@@ -358,6 +361,7 @@ describe('createSocketDomain', () => {
 
     const wsState = { current: null as WebSocket | null }
     const domain = createSocketDomain({
+      backendUrl: '',
       wsUrl: 'ws://localhost/ws/chat',
       messages: messages as never[],
       conversations,
@@ -449,6 +453,7 @@ describe('createSocketDomain', () => {
 
     const wsState = { current: null as WebSocket | null }
     const domain = createSocketDomain({
+      backendUrl: '',
       wsUrl: 'ws://localhost/ws/chat',
       messages: messages as never[],
       conversations,
@@ -504,6 +509,140 @@ describe('createSocketDomain', () => {
         type: 'text',
         content: '## OCR Result\n\n- text: mysql error 1045',
         agentId: 'ocr',
+      }),
+    ])
+
+    vi.unstubAllGlobals()
+  })
+
+  test('adds assistant image messages from websocket message events and streams text into them', () => {
+    const messages: Array<Record<string, unknown>> = []
+    const conversations = ref<ConversationItem[]>([])
+    const currentConversationId = ref<string | null>('conv-1')
+    const draftAgentId = ref('frontend')
+    const agents = ref<AgentInfo[]>([
+      {
+        id: 'frontend',
+        label: 'Frontend',
+        description: '',
+        capabilities: [],
+        is_default: true,
+      },
+    ])
+    const isConnected = ref(false)
+    const isLoading = ref(false)
+    const handleTaskNotificationEvent = vi.fn()
+    const wsInstances: Array<{
+      onopen: null | (() => void)
+      onmessage: null | ((event: MessageEvent<string>) => void)
+      onclose: null | (() => void)
+      onerror: null | (() => void)
+      readyState: number
+      send: ReturnType<typeof vi.fn>
+    }> = []
+
+    class FakeWebSocket {
+      static readonly CONNECTING = 0
+      static readonly OPEN = 1
+      static readonly CLOSING = 2
+      static readonly CLOSED = 3
+
+      onopen: null | (() => void) = null
+      onmessage: null | ((event: MessageEvent<string>) => void) = null
+      onclose: null | (() => void) = null
+      onerror: null | (() => void) = null
+      readyState = FakeWebSocket.OPEN
+      send = vi.fn()
+
+      constructor(_url: string) {
+        wsInstances.push(this)
+      }
+    }
+
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+
+    const wsState = { current: null as WebSocket | null }
+    const domain = createSocketDomain({
+      backendUrl: '',
+      wsUrl: 'ws://localhost/ws/chat',
+      messages: messages as never[],
+      conversations,
+      currentConversationId,
+      draftAgentId,
+      activeAgentId: computed(() => 'frontend'),
+      agents,
+      isConnected,
+      isLoading,
+      wsState,
+      genId: (() => {
+        let id = 0
+        return () => `msg-${++id}`
+      })(),
+      fetchConversations: vi.fn(async () => {}),
+      handleMemoryArtifact: vi.fn(),
+      handleTaskNotificationEvent,
+    })
+
+    domain.connect()
+
+    const socket = wsInstances[0]
+    if (!socket?.onmessage) {
+      throw new Error('socket onmessage handler was not registered')
+    }
+
+    socket.onmessage({
+      data: JSON.stringify({
+        type: 'message',
+        message: {
+          id: 'msg-image-1',
+          role: 'assistant',
+          content: '',
+          type: 'image',
+          agent_id: 'frontend',
+          tool_name: null,
+          tool_input: null,
+          attachments_snapshot: null,
+          thinking: null,
+          created_at: '2026-03-17T12:00:00.000',
+          asset_path: 'data/conversation_assets/conv-1/browser-shot.png',
+          asset_url: '/api/conversations/conv-1/messages/msg-image-1/asset',
+          asset_mime_type: 'image/png',
+          asset_source: 'agent-browser',
+          asset_alt: 'Agent Browser screenshot',
+          asset_width: 1280,
+          asset_height: 720,
+        },
+      }),
+    } as MessageEvent<string>)
+
+    socket.onmessage({
+      data: JSON.stringify({
+        type: 'text_delta',
+        content: 'Captured the current dashboard state.',
+        agent_id: 'frontend',
+      }),
+    } as MessageEvent<string>)
+
+    socket.onmessage({
+      data: JSON.stringify({
+        type: 'done',
+        agent_id: 'frontend',
+      }),
+    } as MessageEvent<string>)
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        id: 'msg-image-1',
+        role: 'assistant',
+        type: 'image',
+        content: 'Captured the current dashboard state.',
+        assetUrl: '/api/conversations/conv-1/messages/msg-image-1/asset',
+        assetMimeType: 'image/png',
+        assetSource: 'agent-browser',
+        assetAlt: 'Agent Browser screenshot',
+        assetWidth: 1280,
+        assetHeight: 720,
+        streaming: false,
       }),
     ])
 
