@@ -1,94 +1,104 @@
-# Technology Stack
+﻿# 技术栈
 
-**Analysis Date:** 2026-03-18
+**分析日期：** 2026-03-18
 
-## Languages
+## 语言
 
-**Primary:**
-- Python 3.12 in containers, with Python 3.10+ documented for local development in `README.md`. The backend service, agent runtime, API routers, services, and ORM models all live under `backend/` (`backend/main.py`, `backend/api/`, `backend/services/`, `backend/models/`).
-- TypeScript 5.9 (`frontend/package.json`) for the SPA, frontend store/router layer, Vitest tests, and the bundled OpenClaw plugin source in `backend/cli/plugin/index.ts`.
+**主语言：**
+- Python 是后端主语言，服务入口、API 路由、Agent 运行时、服务层和 ORM 模型都位于 `backend/`，典型文件包括 `backend/main.py`、`backend/api/`、`backend/services/`、`backend/models/`。
+- TypeScript 是前端主语言，负责单页应用、Pinia 状态层、路由层以及前端测试；另外 `backend/cli/plugin/index.ts` 中也包含一份打包到插件侧的 TypeScript 源码。
 
-**Secondary:**
-- Vue Single File Components in `frontend/src/App.vue`, `frontend/src/RootApp.vue`, and `frontend/src/components/*.vue`.
-- Bash for install and diagnostic scripts in `backend/cli/install.sh`, `backend/skills/docker/scripts/docker_readonly_diagnose.sh`, and `backend/skills/kubernetes/scripts/k8s_readonly_diagnose.sh`.
-- TOML for agent registry/manifests in `backend/agents/registry.toml` and `backend/agents/*/agent.toml`.
-- Markdown as executable prompt/skill content in `backend/prompts/*.md` and `backend/skills/*/SKILL.md`.
+**次要语言与内容格式：**
+- Vue 单文件组件位于 `frontend/src/App.vue`、`frontend/src/RootApp.vue` 和 `frontend/src/components/*.vue`。
+- Bash 脚本用于安装和诊断，例如 `backend/cli/install.sh`、`backend/skills/docker/scripts/docker_readonly_diagnose.sh`、`backend/skills/kubernetes/scripts/k8s_readonly_diagnose.sh`。
+- TOML 用于 Agent 清单和注册表，例如 `backend/agents/registry.toml` 与 `backend/agents/*/agent.toml`。
+- Markdown 既是文档格式，也是 Prompt 与 Skill 的可执行内容载体，例如 `backend/prompts/*.md` 与 `backend/skills/*/SKILL.md`。
 
-## Runtime
+## 运行时
 
-**Environment:**
-- Backend runtime: CPython. The container image is `python:3.12-slim` in `backend/Dockerfile`; local setup in `README.md` uses a standard virtualenv plus `pip install -r backend/requirements.txt`.
-- Frontend runtime: Node.js for development/build. The builder image is `node:22.22-slim` in `frontend/Dockerfile`; local setup in `README.md` uses `npm install`.
-- Frontend serving layer: `nginx:alpine` in `frontend/Dockerfile`, configured by `frontend/nginx.conf`.
+**后端运行时：**
+- 容器镜像基于 `python:3.12-slim`，定义在 `backend/Dockerfile`。
+- 本地开发说明写在 `README.md` 中，默认使用虚拟环境加 `pip install -r backend/requirements.txt`。
+- Web 服务通过 `uvicorn` 运行，入口是 `backend/main.py`。
 
-**Package Manager:**
-- Backend: `pip` against `backend/requirements.txt`. No `pyproject.toml`, Poetry, Pipenv, or Python lockfile is detected.
-- Backend image also installs Astral `uv` in `backend/Dockerfile`, but the app still installs dependencies with `pip` and starts with `uvicorn`.
-- Frontend: npm with `frontend/package-lock.json`.
-- Lockfile: `frontend/package-lock.json` is present; no Python dependency lockfile is present.
+**前端运行时：**
+- 开发与构建依赖 Node.js，构建镜像使用 `node:22.22-slim`，定义在 `frontend/Dockerfile`。
+- 本地开发通过 `npm install` 与 `npm run dev` 启动，依赖清单位于 `frontend/package.json`。
 
-## Frameworks
+**前端交付层：**
+- 生产态静态文件由 `nginx:alpine` 承载，配置文件为 `frontend/nginx.conf`。
+- `frontend/Dockerfile` 采用构建镜像 + Nginx 运行镜像的多阶段构建方式。
 
-**Core:**
-- FastAPI `>=0.115.0` and Uvicorn `>=0.34.0` power the HTTP and WebSocket service in `backend/main.py`, `backend/api/routers/`, and `backend/api/ws/chat.py`.
-- DeepAgents `>=0.4.7,<0.5` plus LangGraph SQLite checkpoint/store drive the multi-agent runtime in `backend/agent_manager.py`.
-- Vue `^3.5.25`, Pinia `^3.0.4`, and Vue Router `^4.5.1` implement the frontend workspace in `frontend/src/main.ts`, `frontend/src/stores/chat.ts`, and `frontend/src/router.ts`.
-- SQLAlchemy `>=2.0` with `aiosqlite>=0.20.0` handles persistence in `backend/db/session.py` and `backend/models/*.py`.
+**包管理：**
+- 后端依赖通过 `pip` + `backend/requirements.txt` 管理；当前仓库未发现 `pyproject.toml`、Poetry、Pipenv 或 Python 锁文件。
+- `backend/Dockerfile` 额外安装了 Astral `uv`，但依赖安装与应用启动仍然走 `pip` 和 `uvicorn`。
+- 前端依赖通过 `npm` 管理，并提交了 `frontend/package-lock.json`。
 
-**Testing:**
-- pytest `>=8.3.0` with `pytest-asyncio>=0.24.0` for backend tests in `backend/tests/` and `backend/pytest.ini`.
-- Vitest `^2.1.8` with `@vue/test-utils` and `jsdom` for frontend tests in `frontend/src/**/*.test.ts` and `frontend/vite.config.ts`.
+## 框架与核心库
 
-**Build/Dev:**
-- Vite `^7.3.1`, `@vitejs/plugin-vue`, `vue-tsc`, and strict TS configs in `frontend/vite.config.ts`, `frontend/tsconfig.json`, `frontend/tsconfig.app.json`, and `frontend/tsconfig.node.json`.
-- Docker Compose for the demo/deployment stack in `docker-compose.yml`.
-- Nginx reverse proxy configuration in `frontend/nginx.conf`.
-- Shell-based CLI/plugin installer for Skillhub/OpenClaw in `backend/cli/install.sh`.
+**后端框架：**
+- `FastAPI` 与 `Uvicorn` 负责 HTTP 和 WebSocket 服务，主要代码位于 `backend/main.py`、`backend/api/routers/`、`backend/api/ws/chat.py`。
+- `DeepAgents` + `LangGraph` 负责多 Agent 运行时、子 Agent 组合与记忆存储，核心装配点在 `backend/agent_manager.py`。
+- `SQLAlchemy` + `aiosqlite` 负责业务数据持久化，数据库接线在 `backend/db/session.py`，模型位于 `backend/models/*.py`。
 
-## Key Dependencies
+**前端框架：**
+- `Vue 3` 承担工作台 UI。
+- `Pinia` 负责浏览器端状态汇聚，核心入口是 `frontend/src/stores/chat.ts`。
+- `Vue Router` 负责登录页与主工作台的路由切换，入口位于 `frontend/src/router.ts`。
 
-**Critical:**
-- `deepagents>=0.4.7,<0.5` - creates the multi-agent runtime and tool/skill injection path in `backend/agent_manager.py`.
-- `langchain-anthropic>=0.3.0` - `ChatAnthropic` is the main LLM client in `backend/agent_manager.py` and `backend/services/inspection_task_llm.py`.
-- `langchain-mcp-adapters>=0.1.8` - bridges configured MCP servers into runtime tools in `backend/services/mcp_registry.py` and `backend/agent_manager.py`.
-- `sqlalchemy[asyncio]>=2.0` and `aiosqlite>=0.20.0` - back both the REST data model and async SQLite access in `backend/db/session.py`.
-- `chromadb>=0.5.20` - persistent vector index for RAG in `backend/services/rag.py`.
-- `httpx>=0.28.0` - outbound HTTP client for OIDC and embeddings in `backend/auth/service.py` and `backend/services/rag.py`.
-- `dompurify` and `marked` - sanitize/render assistant markdown in `frontend/src/components/MessageBubble.vue`.
+**测试框架：**
+- 后端使用 `pytest` 与 `pytest-asyncio`，测试位于 `backend/tests/`。
+- 前端使用 `Vitest`、`@vue/test-utils` 与 `jsdom`，测试位于 `frontend/src/**/*.test.ts`。
 
-**Infrastructure:**
-- `langgraph-checkpoint-sqlite>=2.0.11` - persists agent checkpoints/store state in `backend/agent_manager.py`.
-- `python-dotenv>=1.0.0` - loads backend env and skill env overlays in `backend/config.py`, `backend/services/cloud_credentials.py`, and skill scripts.
-- `loguru` - centralized logging in `backend/utils/logger.py`.
-- `volcengine-python-sdk==5.0.16` - powers Volcengine RDS and CloudMonitor skill scripts in `backend/skills/volcengine-rds-health-analyzer/scripts/get_instance_info.py`.
+**构建与开发工具：**
+- 前端开发工具链为 `Vite`、`vue-tsc`、`@vitejs/plugin-vue`，配置在 `frontend/vite.config.ts` 和 `frontend/tsconfig*.json`。
+- 演示/部署编排通过根目录 `docker-compose.yml` 完成。
+- Nginx 作为前端反向代理层，配置在 `frontend/nginx.conf`。
 
-## Configuration
+## 关键依赖
 
-**Environment:**
-- Backend process configuration is loaded from `backend/.env` at startup by `backend/config.py`; the auth layer extends that surface in `backend/auth/config.py`.
-- Frontend runtime configuration comes from `VITE_API_BASE_URL` and `VITE_WS_URL` in `frontend/src/stores/chat.ts`. Mode-specific files exist at `frontend/.env.development` and `frontend/.env.production` (existence noted only).
-- The live MCP source of truth is repo-root `mcp.json`, resolved through `backend/config.py` and parsed by `backend/services/mcp_registry.py`.
-- Agent/runtime wiring is configured through `backend/agents/registry.toml`, `backend/agents/*/agent.toml`, and prompt files under `backend/prompts/`.
+**核心依赖：**
+- `deepagents>=0.4.7,<0.5`：多 Agent 运行时的核心，负责 skill/tool 注入与执行图构建，代码入口在 `backend/agent_manager.py`。
+- `langchain-anthropic>=0.3.0`：通过 `ChatAnthropic` 提供主要 LLM 接口，使用点在 `backend/agent_manager.py` 和 `backend/services/inspection_task_llm.py`。
+- `langchain-mcp-adapters>=0.1.8`：将 MCP Server 暴露为 Agent 可调用工具，使用点在 `backend/services/mcp_registry.py` 和 `backend/agent_manager.py`。
+- `sqlalchemy[asyncio]>=2.0` 与 `aiosqlite>=0.20.0`：承担业务表与异步 SQLite 访问。
+- `chromadb>=0.5.20`：RAG 向量索引后端，位于 `backend/services/rag.py`。
+- `httpx>=0.28.0`：用于 OIDC、Embedding 请求等外部 HTTP 调用。
+- `dompurify` 与 `marked`：用于前端消息 Markdown 渲染与清洗，使用点在 `frontend/src/components/MessageBubble.vue`。
 
-**Build:**
-- Frontend build config lives in `frontend/vite.config.ts` and `frontend/tsconfig*.json`.
-- Container/deployment config lives in `backend/Dockerfile`, `frontend/Dockerfile`, `frontend/nginx.conf`, and `docker-compose.yml`.
-- CLI/plugin packaging config lives in `backend/cli/metadata.json`, `backend/cli/version.json`, and `backend/cli/plugin/openclaw.plugin.json`.
+**基础设施依赖：**
+- `langgraph-checkpoint-sqlite>=2.0.11`：持久化 Agent checkpoint 与 `/memories/`。
+- `python-dotenv>=1.0.0`：加载后端 `.env`，定义在 `backend/config.py`。
+- `loguru`：统一日志设施，位于 `backend/utils/logger.py`。
+- `volcengine-python-sdk==5.0.16`：支撑火山云 RDS 巡检相关 skill 脚本。
 
-## Platform Requirements
+## 配置面
 
-**Development:**
-- Local Python virtualenv plus npm are assumed by `README.md`, `backend/requirements.txt`, and `frontend/package.json`.
-- Writable local filesystem storage is required for `backend/data/` because SQLite, Chroma, attachments, assistant screenshots, and RAG status files all persist there (`backend/config.py`, `backend/services/conversation_attachments.py`, `backend/services/assistant_images.py`, `backend/services/rag.py`).
-- `agent-browser` must be available on `PATH` because `backend/main.py` calls `verify_agent_browser_cli()` from `backend/services/browser_runtime.py` during startup.
-- Optional skill-specific system tools are assumed by the shipped skills: `ssh` in `backend/skills/remote-ops/SKILL.md`, `/usr/local/bin/docker` in `backend/skills/docker/SKILL.md`, `/usr/local/bin/kubectl` plus kubeconfig in `backend/skills/kubernetes/SKILL.md`.
-- The MySQL analysis skill in `backend/skills/mysql-sql-analyzer/scripts/analyze_mysql_sql.py` expects a working `mysql+pymysql` SQLAlchemy driver plus env-provided credentials.
+**环境配置：**
+- 后端配置集中在 `backend/config.py`；认证相关扩展配置位于 `backend/auth/config.py`。
+- 前端运行时配置由 `frontend/src/stores/chat.ts` 读取 `VITE_API_BASE_URL` 与 `VITE_WS_URL`。
+- MCP 的实际配置源是仓库根目录 `mcp.json`，由 `backend/services/mcp_registry.py` 解析。
+- Agent/Prompt/Skill 装配由 `backend/agents/registry.toml`、`backend/agents/*/agent.toml` 和 `backend/prompts/*.md` 控制。
 
-**Production:**
-- The committed deployment target is a two-container Docker Compose setup in `docker-compose.yml`: `backend` binds port 8000 and `frontend`/Nginx binds port 80 on `agent-network`.
-- Persistent backend state is mounted from `./backend/data` to `/app/data` in `docker-compose.yml`.
-- The stack assumes outbound access to Anthropic, any configured OIDC issuer, the configured embedding endpoint, any configured MCP servers, and optional Volcengine/Skillhub/OpenClaw endpoints referenced from `backend/auth/service.py`, `backend/services/rag.py`, `backend/services/mcp_registry.py`, and `backend/cli/metadata.json`.
+**构建配置：**
+- 前端构建配置位于 `frontend/vite.config.ts` 和 `frontend/tsconfig*.json`。
+- 容器与部署配置位于 `backend/Dockerfile`、`frontend/Dockerfile`、`frontend/nginx.conf`、`docker-compose.yml`。
+- CLI/插件打包配置位于 `backend/cli/metadata.json`、`backend/cli/version.json`、`backend/cli/plugin/openclaw.plugin.json`。
+
+## 平台要求
+
+**本地开发要求：**
+- 需要 Python 虚拟环境与 npm，参见 `README.md`、`backend/requirements.txt`、`frontend/package.json`。
+- 需要可写本地文件系统，因为 SQLite、Chroma、附件、截图和 RAG 状态文件都持久化到 `backend/data/`。
+- `agent-browser` 需要在 `PATH` 中可用，因为 `backend/main.py` 会在启动时调用 `verify_agent_browser_cli()`。
+- 若启用某些运维类 skill，还需要额外系统工具，例如 `ssh`、`docker`、`kubectl`。
+- MySQL 分析 skill 依赖可用的 `mysql+pymysql` 驱动和环境变量注入的数据库凭据。
+
+**部署要求：**
+- 当前仓库默认的部署方式是 `docker-compose.yml` 定义的双容器结构：`backend` 监听 `8000`，`frontend`/Nginx 暴露 `80`。
+- `./backend/data` 会挂载到容器内 `/app/data` 以保存持久化状态。
+- 对外网络依赖包括 Anthropic、OIDC 提供方、Embedding 接口、MCP Server，以及可选的火山云/Skillhub/OpenClaw 端点。
 
 ---
 
-*Stack analysis: 2026-03-18*
+*技术栈分析：2026-03-18*

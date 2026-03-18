@@ -1,249 +1,192 @@
-# Architecture
+﻿# 架构
 
-**Analysis Date:** 2026-03-18
+**分析日期：** 2026-03-18
 
-## Pattern Overview
+## 模式概览
 
-**Overall:** Split frontend/backend monorepo with an agent-runtime-centered backend and a single-workspace frontend.
+**整体形态：**
+- 这是一个前后端分离的单仓项目，后端以 Agent 运行时为核心，前端提供统一工作台界面。
+- `backend/main.py` 在一个 `FastAPI` 进程中同时承载 REST 路由和 `/ws/chat` WebSocket。
+- Agent 执行逻辑没有直接塞进路由层，而是拆分到 `backend/agent.py`、`backend/agent_manager.py`、`backend/agent_profiles.py`、`backend/agents/`、`backend/prompts/` 和 `backend/skills/` 这一整套运行时装配层。
+- 前端通过 `frontend/src/stores/chat.ts` 暴露一个统一的 Pinia 门面，再把认证、会话、任务、MCP、记忆和 WebSocket 逻辑拆到 `frontend/src/stores/chat/` 的多个 domain 模块中。
+- SQLite 在这里承担双重角色：`backend/models/` 下的 SQLAlchemy 模型用于业务数据持久化，`backend/agent_manager.py` 中的 LangGraph saver/store 用于运行时状态与 `/memories/`。
+- 长流程主要走事件驱动：交互式聊天通过 `backend/api/ws/chat.py` 流式传输；定时任务通过 `backend/services/inspection_tasks.py` 复用相同的 Agent 执行器；任务通知通过 `backend/services/realtime_events.py` 广播到在线客户端。
 
-**Key Characteristics:**
-- `backend/main.py` creates one `FastAPI` application that serves REST routers and the `/ws/chat` websocket from the same process.
-- Agent execution is not embedded in routers. `backend/agent.py`, `backend/agent_manager.py`, `backend/agent_profiles.py`, `backend/agents/`, `backend/prompts/`, and `backend/skills/` form a separate runtime assembly layer.
-- The frontend keeps one Pinia facade in `frontend/src/stores/chat.ts` and pushes transport, auth, tasks, memory, MCP, and websocket behavior into small domain modules under `frontend/src/stores/chat/`.
-- SQLite is used twice: SQLAlchemy models in `backend/models/` persist product data, while LangGraph saver/store in `backend/agent_manager.py` persist agent runtime state and `/memories/`.
-- Long-running behavior is event-driven. Interactive chat streams over `backend/api/ws/chat.py`; scheduled task execution reuses the same agent runner from `backend/services/inspection_tasks.py`; cross-session task notifications fan out through `backend/services/realtime_events.py`.
+## 主要子系统
 
-## Major Subsystems
+**会话与流式聊天：**
+- 关键文件：`backend/api/ws/chat.py`、`backend/services/conversation_state.py`、`backend/services/conversation_messages.py`、`backend/services/conversation_attachments.py`、`frontend/src/stores/chat/socket.ts`、`frontend/src/stores/chat/conversations.ts`、`frontend/src/components/MessageBubble.vue`
+- 职责：维护实时会话绑定、消息持久化、附件快照、工具事件、OCR 结果以及历史回放。
 
-**Conversation And Streaming Chat:**
-- `backend/api/ws/chat.py`
-- `backend/services/conversation_state.py`
-- `backend/services/conversation_messages.py`
-- `backend/services/conversation_attachments.py`
-- `frontend/src/stores/chat/socket.ts`
-- `frontend/src/stores/chat/conversations.ts`
-- `frontend/src/components/MessageBubble.vue`
+**Agent 运行时与能力装配：**
+- 关键文件：`backend/agent.py`、`backend/agent_manager.py`、`backend/agent_profiles.py`、`backend/agents/registry.toml`、`backend/agents/*/agent.toml`、`backend/prompts/*.md`、`backend/skill_catalog.py`、`backend/services/mcp_registry.py`
+- 职责：把 Agent 清单、Prompt 片段、Skill 目录、MCP 配置和 LangGraph 持久化组合成可执行 DeepAgents runtime。
 
-This subsystem owns live chat session binding, user/assistant/system message persistence, attachment snapshots, streamed tool events, and replay of stored conversation history.
+**任务调度与通知：**
+- 关键文件：`backend/services/inspection_tasks.py`、`backend/services/inspection_scheduler.py`、`backend/services/inspection_task_llm.py`、`backend/services/task_notifications.py`、`backend/api/routers/inspection_tasks.py`、`backend/api/routers/task_notifications.py`、`frontend/src/stores/chat/tasks.ts`、`frontend/src/components/TaskDrawer.vue`、`frontend/src/components/TaskNotificationCenter.vue`
+- 职责：从对话中提炼巡检任务、调度执行、生成运行会话，并把结果通知回工作台。
 
-**Agent Runtime And Capability Assembly:**
-- `backend/agent.py`
-- `backend/agent_manager.py`
-- `backend/agent_profiles.py`
-- `backend/agents/registry.toml`
-- `backend/agents/*/agent.toml`
-- `backend/prompts/*.md`
-- `backend/skill_catalog.py`
-- `backend/services/mcp_registry.py`
+**记忆、RAG 与云上下文：**
+- 关键文件：`backend/services/memory.py`、`backend/services/rag.py`、`backend/services/cloud_credentials.py`、`backend/services/cloud_instance_candidates.py`、`backend/api/routers/memories.py`、`backend/api/routers/rag.py`、`backend/api/routers/cloud_credentials.py`、`frontend/src/stores/chat/memory.ts`、`frontend/src/components/MemoryPanel.vue`
+- 职责：维护 `/memories/` 文档树、索引附件与记忆到 RAG、解析云凭据引用并为 DBA/OPS 类 Agent 提供上下文。
 
-This subsystem turns manifest files, prompt fragments, skill directories, MCP server configuration, and LangGraph persistence into executable DeepAgents runtimes.
+**认证与授权：**
+- 关键文件：`backend/auth/config.py`、`backend/auth/service.py`、`backend/auth/dependencies.py`、`backend/auth/permissions.py`、`backend/api/routers/auth.py`、`frontend/src/router.ts`、`frontend/src/stores/chat/auth.ts`、`frontend/src/views/LoginPage.vue`
+- 职责：提供 Session、OIDC、本地管理员登录、RBAC、路由守卫和 WebSocket 权限控制。
 
-**Task Scheduling And Notifications:**
-- `backend/services/inspection_tasks.py`
-- `backend/services/inspection_scheduler.py`
-- `backend/services/inspection_task_llm.py`
-- `backend/services/task_notifications.py`
-- `backend/api/routers/inspection_tasks.py`
-- `backend/api/routers/task_notifications.py`
-- `frontend/src/stores/chat/tasks.ts`
-- `frontend/src/components/TaskDrawer.vue`
-- `frontend/src/components/TaskNotificationCenter.vue`
+## 分层结构
 
-This subsystem derives inspection tasks from conversations, schedules and executes them, creates run-specific conversations, and pushes completion notifications back to connected workspaces.
+**前端展示层：**
+- 位置：`frontend/src/App.vue`、`frontend/src/views/`、`frontend/src/components/`
+- 负责：渲染主工作台、登录页、抽屉、面板、消息 UI。
+- 依赖：`frontend/src/stores/chat.ts`、`frontend/src/composables/useAppChrome.ts`、`frontend/src/composables/useChatComposer.ts`
 
-**Memory, RAG, And Cloud Context:**
-- `backend/services/memory.py`
-- `backend/services/rag.py`
-- `backend/services/cloud_credentials.py`
-- `backend/services/cloud_instance_candidates.py`
-- `backend/api/routers/memories.py`
-- `backend/api/routers/rag.py`
-- `backend/api/routers/cloud_credentials.py`
-- `frontend/src/stores/chat/memory.ts`
-- `frontend/src/components/MemoryPanel.vue`
+**前端状态与传输层：**
+- 位置：`frontend/src/stores/chat.ts`、`frontend/src/stores/chat/*.ts`
+- 负责：集中管理浏览器端状态、HTTP 调用和 WebSocket 通信。
+- 对外暴露：供 `App.vue`、`LoginPage.vue` 以及各个面板组件统一消费。
 
-This subsystem manages `/memories/` documents, indexes attachments and memory docs into RAG, and resolves cloud credential references from long-term memory rather than raw secrets in chat.
+**API 与传输边界层：**
+- 位置：`backend/api/routers/*.py`、`backend/api/ws/chat.py`
+- 负责：暴露 HTTP/WebSocket 接口，做请求校验、权限检查和传输格式转换。
+- 依赖：`backend/services/*`、`backend/auth/dependencies.py`、`backend/db/session.py`
 
-**Authentication And Authorization:**
-- `backend/auth/config.py`
-- `backend/auth/service.py`
-- `backend/auth/dependencies.py`
-- `backend/auth/permissions.py`
-- `backend/api/routers/auth.py`
-- `frontend/src/router.ts`
-- `frontend/src/stores/chat/auth.ts`
-- `frontend/src/views/LoginPage.vue`
+**领域服务层：**
+- 位置：`backend/services/`
+- 负责：封装会话、附件、任务、记忆、RAG、MCP、OCR、浏览器运行时、通知和云上下文等业务逻辑。
+- 调用方：REST 路由、WebSocket 处理器、任务调度器、Agent 运行时。
 
-This subsystem owns session cookies, optional OIDC and local admin login, RBAC seed data, REST guards, websocket guards, and frontend route gating.
+**Agent 运行时层：**
+- 位置：`backend/agent.py`、`backend/agent_manager.py`、`backend/agent_profiles.py`、`backend/agents/`、`backend/prompts/`、`backend/skills/`
+- 负责：加载 Agent 配置、构建子 Agent 图、注入 Skill/MCP、拼装记忆/RAG/附件上下文，并统一输出事件流。
 
-## Layers
+**持久化层：**
+- 位置：`backend/db/`、`backend/models/`、`backend/data/`
+- 负责：保存结构化业务数据、附件文件、RAG 数据、日志和运行时资产。
 
-**Frontend Presentation Layer:**
-- Purpose: Render the workspace, login page, drawers, panels, and message UI.
-- Location: `frontend/src/App.vue`, `frontend/src/views/`, `frontend/src/components/`
-- Contains: Routed pages, visual shell, message rendering, task drawer, notification center, MCP and memory panels.
-- Depends on: `frontend/src/stores/chat.ts`, `frontend/src/composables/useAppChrome.ts`, `frontend/src/composables/useChatComposer.ts`
-- Used by: Browser clients bootstrapped by `frontend/src/main.ts`
+## 数据流
 
-**Frontend State And Transport Layer:**
-- Purpose: Centralize all browser-side state and backend I/O.
-- Location: `frontend/src/stores/chat.ts`, `frontend/src/stores/chat/*.ts`
-- Contains: Domain modules for websocket chat, conversations, auth, tasks, attachments, notifications, MCP, and memory.
-- Depends on: Browser `fetch`, `WebSocket`, backend endpoints such as `/api/*` and `/ws/chat`
-- Used by: `frontend/src/App.vue`, `frontend/src/views/LoginPage.vue`, and panel components
+**交互式聊天流：**
+1. `frontend/src/main.ts` 启动应用，`frontend/src/composables/useAppChrome.ts` 初始化认证、Agent 列表、会话列表、通知、MCP 数据和 WebSocket。
+2. `frontend/src/stores/chat/socket.ts` 连接 `/ws/chat`，发送 `init`，后续再发送携带 `attachment_ids` 的 `message` 事件。
+3. `backend/api/ws/chat.py` 解析或创建 `Conversation`，通过 `backend/services/conversation_messages.py` 保存用户消息，并触发 `agent.run_agent_turn(...)`。
+4. `backend/agent.py` 先决定是否做 OCR 预处理，然后从 `backend/services/rag.py` 构造 RAG 上下文，必要时回退到长时记忆与附件摘要，再调用 `backend/agent_manager.py` 构建的 runtime。
+5. `backend/api/ws/chat.py` 把 runtime 事件转成 WebSocket 消息，同时持久化工具消息、助手消息、OCR 结果或截图文件，最后发送 `done` 或 `error`。
+6. `frontend/src/stores/chat/socket.ts` 把事件映射为 `ChatMessage`，由 `frontend/src/App.vue` 和 `frontend/src/components/MessageBubble.vue` 渲染。
 
-**API And Transport Layer:**
-- Purpose: Expose HTTP and websocket interfaces and convert transport errors into API-level responses.
-- Location: `backend/api/routers/*.py`, `backend/api/ws/chat.py`
-- Contains: Pydantic request models, route handlers, SSE stream producers, websocket session loop, permission dependencies.
-- Depends on: `backend/services/*`, `backend/auth/dependencies.py`, `backend/db/session.py`
-- Used by: The Vue frontend, programmatic clients, and background browser sessions
+**定时巡检流：**
+1. 前端通过 `frontend/src/App.vue` 和 `frontend/src/stores/chat/tasks.ts` 调用 `/api/inspection-tasks/draft`、`/api/inspection-tasks/from-conversation-message/stream` 或 `/api/inspection-tasks/{task_id}/trigger`。
+2. `backend/api/routers/inspection_tasks.py` 将请求委派给 `backend/services/inspection_tasks.py`；需要 LLM 帮助时，再交给 `backend/services/inspection_task_llm.py`。
+3. `backend/services/inspection_tasks.py` 创建 `InspectionTaskRun`、生成专用任务会话，把任务提示词作为用户消息写入，再复用 `backend/agent.py` 执行目标 Agent。
+4. 执行过程中产生的工具输出和助手输出会继续落到运行会话中，并同步更新 `InspectionTask` / `InspectionTaskRun` 状态。
+5. 任务结束后，`backend/services/task_notifications.py` 创建 `TaskNotification`，再由 `backend/services/realtime_events.py` 广播给在线客户端。
+6. 前端通过 `frontend/src/stores/chat/tasks.ts`、`frontend/src/stores/chat/notifications.ts` 和 `frontend/src/stores/chat/socket.ts` 刷新运行记录、徽标与任务抽屉。
 
-**Domain Service Layer:**
-- Purpose: Hold business logic outside transport code.
-- Location: `backend/services/`
-- Contains: Conversation, attachment, task, memory, RAG, MCP, OCR preprocessing, browser runtime, notification, and cloud-context services.
-- Depends on: `backend/models/*`, `backend/db/session.py`, `backend/agent.py`, filesystem paths under `backend/data/`, and selected external clients configured elsewhere
-- Used by: REST routers, websocket handlers, scheduler runtime, and the agent runtime
+**记忆与检索流：**
+1. `/memories/` 文档由 `backend/services/memory.py` 管理，底层依赖 `backend/agent_manager.py` 暴露的 LangGraph store。
+2. 附件上传后会被 `backend/services/conversation_attachments.py` 落到 `backend/data/conversation_attachments/<conversation_id>/`，并同步索引到 `backend/services/rag.py`。
+3. 记忆写入也会触发 RAG 同步，因此手工记忆和附件内容都能参与检索。
+4. 聊天执行时，`backend/agent.py` 会优先尝试 `build_rag_context(...)`；如果没检索到结果，再回退到 `/memories/` 树扫描与附件摘要。
+5. 这套记忆能力同时通过 `backend/api/routers/memories.py` 暴露给前端，在 `frontend/src/components/MemoryPanel.vue` 中浏览。
 
-**Agent Runtime Layer:**
-- Purpose: Construct and execute agent runtimes from manifests, prompts, skills, MCP tools, and shared stores.
-- Location: `backend/agent.py`, `backend/agent_manager.py`, `backend/agent_profiles.py`, `backend/agents/`, `backend/prompts/`, `backend/skills/`
-- Contains: Agent registry loading, runtime caching, subagent graph construction, context injection, OCR preprocessing policy, tool/result normalization.
-- Depends on: `backend/services/mcp_registry.py`, `backend/services/memory.py`, `backend/services/rag.py`, `backend/services/message_preprocess.py`, `backend/skill_catalog.py`
-- Used by: `backend/api/ws/chat.py`, `backend/api/routers/agent.py`, `backend/services/inspection_tasks.py`
+**认证流：**
+1. `frontend/src/router.ts` 在路由跳转前调用 `chatStore.fetchAuthStatus()`；若 `auth_enabled=true` 且用户未登录，则跳转 `/login`。
+2. `backend/api/routers/auth.py` 负责返回认证状态、发起 OIDC 跳转、处理密码登录和注销。
+3. `backend/auth/dependencies.py` 负责将同一套权限模型应用到 REST 和 `/ws/chat`。
+4. `backend/main.py` 安装 `SessionMiddleware`，所以 `Request` 和 `WebSocket` 都能共享会话状态。
 
-**Persistence Layer:**
-- Purpose: Persist structured product state and runtime artifacts.
-- Location: `backend/db/`, `backend/models/`, `backend/data/`
-- Contains: SQLAlchemy session setup, ORM models, SQLite database, conversation attachments, RAG index data, logs, and generated assistant image assets.
-- Depends on: `backend/config.py`
-- Used by: Every backend service that reads or writes conversations, tasks, auth state, MCP metadata, or reports
+## 状态管理
 
-## Data Flow
+- 浏览器端状态集中在 `frontend/src/stores/chat.ts`，该文件组合多个 domain factory，而不是把网络调用分散到组件中。
+- 业务数据通过 `backend/models/` 中的 ORM 模型落到 `backend/data/app.db`。
+- Agent 运行时状态和 `/memories/` 则通过 `backend/agent_manager.py` 初始化的 LangGraph SQLite saver/store 保存。
+- 单轮流式执行中的临时状态主要存在于 `backend/api/ws/chat.py`，例如 `AgentEventState`、delta 缓冲、abort 状态与附件上下文。
 
-**Interactive Chat Flow:**
+## 关键抽象
 
-1. `frontend/src/main.ts` mounts the app, and `frontend/src/composables/useAppChrome.ts` initializes auth, agents, conversations, notifications, MCP data, and the websocket connection.
-2. `frontend/src/stores/chat/socket.ts` opens `/ws/chat`, sends an `init` payload, and later sends `message` payloads with optional `attachment_ids`.
-3. `backend/api/ws/chat.py` resolves or creates a `Conversation`, persists the user message through `backend/services/conversation_messages.py`, applies default-title logic, and starts `agent.run_agent_turn`.
-4. `backend/agent.py` optionally runs OCR preprocessing, builds RAG context from `backend/services/rag.py`, falls back to long-term memory and attachment context, and streams DeepAgents events from the runtime built by `backend/agent_manager.py`.
-5. `backend/api/ws/chat.py` converts runtime events into websocket payloads, persists tool and assistant messages, saves OCR outputs or assistant screenshots when needed, and sends `done` or `error` events.
-6. `frontend/src/stores/chat/socket.ts` turns those events into `ChatMessage` records consumed by `frontend/src/App.vue` and `frontend/src/components/MessageBubble.vue`.
+**Agent Profile 注册表：**
+- 作用：声明某个 Agent 应该加载哪些 Prompt、Skill、可转交目标和执行模式。
+- 相关文件：`backend/agent_profiles.py`、`backend/agents/registry.toml`、`backend/agents/router/agent.toml`、`backend/agents/supervisor/agent.toml`
+- 模式：基于文件的 manifest 先被标准化成 `AgentProfile`，再用于创建 runtime。
 
-**Scheduled Inspection Flow:**
+**会话事件日志：**
+- 作用：作为聊天、工具事件、附件、OCR 结果、截图和任务回放的统一事实来源。
+- 相关文件：`backend/models/conversation.py`、`backend/models/message.py`、`backend/services/conversation_messages.py`、`backend/api/ws/chat.py`
+- 模式：所有重要事件最终都要保存为 `Message` 行，再通过 REST、SSE 或 WebSocket 回放给客户端。
 
-1. `frontend/src/App.vue` and `frontend/src/stores/chat/tasks.ts` call `/api/inspection-tasks/draft`, `/api/inspection-tasks/from-conversation-message/stream`, or `/api/inspection-tasks/{task_id}/trigger`.
-2. `backend/api/routers/inspection_tasks.py` delegates to `backend/services/inspection_tasks.py` and, when task creation needs LLM help, `backend/services/inspection_task_llm.py`.
-3. `backend/services/inspection_tasks.py` creates an `InspectionTaskRun`, creates a dedicated task `Conversation`, stores the task prompt as a user message, and reuses `backend/agent.py` to execute the target agent.
-4. As agent events arrive, `backend/services/inspection_tasks.py` persists tool and assistant output into the run conversation and updates `InspectionTask` / `InspectionTaskRun` status fields.
-5. After completion or failure, `backend/services/task_notifications.py` creates a `TaskNotification`, and `backend/services/realtime_events.py` broadcasts it to connected websocket clients.
-6. The frontend updates `inspectionTaskRuns`, notification badges, and task drawers through `frontend/src/stores/chat/tasks.ts`, `frontend/src/stores/chat/notifications.ts`, and `frontend/src/stores/chat/socket.ts`.
+**任务自动化三元组：**
+- 作用：分别表示周期任务配置、单次任务运行和面对操作者的通知。
+- 相关文件：`backend/models/inspection_task.py`、`backend/models/inspection_task_run.py`、`backend/models/task_notification.py`、`backend/services/inspection_tasks.py`
+- 模式：`InspectionTask` 保存配置，`InspectionTaskRun` 保存执行状态，`TaskNotification` 保存广播摘要。
 
-**Memory And Retrieval Flow:**
+**记忆与检索边界：**
+- 作用：把人工/Agent 生成的长期记忆从业务 SQL 表中分离出来，但仍可被检索。
+- 相关文件：`backend/services/memory.py`、`backend/services/rag.py`、`backend/api/routers/memories.py`
+- 模式：`/memories/` 走 LangGraph store，RAG 则把这些路径与会话附件作为二级读模型。
 
-1. Memory documents are stored under the virtual `/memories/` namespace by `backend/services/memory.py`, which wraps the LangGraph store exposed through `backend/agent_manager.py`.
-2. Attachment uploads are persisted by `backend/services/conversation_attachments.py` into `backend/data/conversation_attachments/<conversation_id>/` and mirrored into the RAG index via `backend/services/rag.py`.
-3. Memory writes in `backend/services/memory.py` also trigger RAG synchronization, so both manual memory content and attachment content become searchable.
-4. During a chat turn, `backend/agent.py` calls `build_rag_context(...)`; if retrieval does not return context, it falls back to `/memories/` tree scanning and attachment summaries.
-5. The same memory surface is exposed to operators via `backend/api/routers/memories.py` and browsed in `frontend/src/components/MemoryPanel.vue`.
+**MCP 注册层：**
+- 作用：把外部 MCP Server 绑定到可用 Agent，并把 `mcp.json` 转为真正的工具连接。
+- 相关文件：`backend/services/mcp_registry.py`、`backend/api/routers/mcp.py`、`mcp.json`
+- 模式：当前实际运行路径是基于文件的 JSON 配置，而不是数据库优先。
 
-**Authentication Flow:**
+**前端聊天门面：**
+- 作用：给 UI 一个稳定 API，屏蔽后端多个子系统的复杂度。
+- 相关文件：`frontend/src/stores/chat.ts`、`frontend/src/stores/chat/socket.ts`、`frontend/src/stores/chat/tasks.ts`、`frontend/src/stores/chat/memory.ts`
+- 模式：单个 Pinia store 组合多个 domain factory，再向 `frontend/src/App.vue` 暴露扁平接口。
 
-1. `frontend/src/router.ts` calls `chatStore.fetchAuthStatus()` before each route and redirects unauthenticated users to `/login` when `auth_enabled` is true.
-2. `backend/api/routers/auth.py` returns auth status, starts OIDC redirects, handles password login, and clears sessions on logout.
-3. `backend/auth/dependencies.py` enforces the same permission strings on REST routes and on the `/ws/chat` websocket.
-4. `backend/main.py` installs `SessionMiddleware`, so permission state is available to both `Request` and `WebSocket` handlers.
+## 入口点
 
-**State Management:**
-- Browser state is centralized in `frontend/src/stores/chat.ts`, which composes domain-specific modules instead of distributing network calls across components.
-- Product data lives in SQLAlchemy models under `backend/models/`, persisted through `backend/db/session.py` to `backend/data/app.db`.
-- Agent runtime state and `/memories/` live in the LangGraph SQLite saver/store initialized in `backend/agent_manager.py`.
-- Per-turn streaming state is ephemeral and lives inside `backend/api/ws/chat.py` via `AgentEventState`, delta buffering, abort tracking, and pending attachment context.
+**后端 HTTP / WebSocket 应用：**
+- 位置：`backend/main.py`
+- 触发方式：`python main.py`、`docker-compose.yml` 启动容器、或任意导入 `main:app` 的 ASGI 运行器
+- 职责：创建 FastAPI 应用、安装中间件、初始化数据库与 Agent 运行时、启动调度器并注册全部路由
 
-## Key Abstractions
+**交互式聊天 Socket：**
+- 位置：`backend/api/ws/chat.py`
+- 触发方式：浏览器通过 `frontend/src/stores/chat/socket.ts` 建立 WebSocket
+- 职责：绑定会话、持久化消息、流式发送 Agent 事件、处理中断与通知
 
-**Agent Profile Registry:**
-- Purpose: Declare which prompts, skills, handoffs, and execution mode belong to an agent.
-- Examples: `backend/agent_profiles.py`, `backend/agents/registry.toml`, `backend/agents/router/agent.toml`, `backend/agents/supervisor/agent.toml`
-- Pattern: File-backed manifests loaded once and normalized into `AgentProfile` objects before runtime creation
+**程序化聊天 API：**
+- 位置：`backend/api/routers/agent.py`
+- 触发方式：HTTP `POST /api/agent/chat`
+- 职责：为非浏览器调用方提供同步整轮调用接口，并复用同一套 Agent runtime 与消息存储逻辑
 
-**Conversation Event Log:**
-- Purpose: Provide the canonical history for chat, tool events, attachments, OCR outputs, assistant screenshots, and task-run replay.
-- Examples: `backend/models/conversation.py`, `backend/models/message.py`, `backend/services/conversation_messages.py`, `backend/api/ws/chat.py`
-- Pattern: Every meaningful runtime event is saved as a `Message` row and then replayed by REST or SSE consumers
+**巡检调度器：**
+- 位置：`backend/services/inspection_scheduler.py`
+- 触发方式：`backend/main.py` 的 startup hook
+- 职责：轮询到期任务并调用 `backend/services/inspection_tasks.py`
 
-**Task Automation Triplet:**
-- Purpose: Represent recurring work, one execution of that work, and the operator-facing notification for that execution.
-- Examples: `backend/models/inspection_task.py`, `backend/models/inspection_task_run.py`, `backend/models/task_notification.py`, `backend/services/inspection_tasks.py`
-- Pattern: `InspectionTask` stores configuration, `InspectionTaskRun` stores execution state, and `TaskNotification` stores the broadcast summary
+**前端引导入口：**
+- 位置：`frontend/src/main.ts`
+- 触发方式：Vite dev server 或打包后的前端页面加载
+- 职责：创建 Pinia、创建 Vue Router，并挂载 `frontend/src/RootApp.vue`
 
-**Memory And Retrieval Boundary:**
-- Purpose: Separate human-curated or agent-written memory from SQL domain tables while still making it searchable.
-- Examples: `backend/services/memory.py`, `backend/services/rag.py`, `backend/api/routers/memories.py`
-- Pattern: `/memories/` is backed by LangGraph store paths; RAG indexes those paths and conversation attachments as secondary read models
+## 错误处理
 
-**MCP Registry:**
-- Purpose: Map external MCP servers to eligible agents and turn `mcp.json` into runtime tool connections.
-- Examples: `backend/services/mcp_registry.py`, `backend/api/routers/mcp.py`, `mcp.json`
-- Pattern: File-backed JSON registry with in-memory test state; `backend/models/mcp_server.py` exists, but the active runtime path uses `mcp.json`
+**总体策略：**
+- 传输层尽早校验输入，服务层抛出明确的 Python 异常，WebSocket 路径把运行时失败转换为可持久化的错误消息和终止事件。
 
-**Frontend Chat Store:**
-- Purpose: Give the UI one stable facade even though behavior is split across several backend subsystems.
-- Examples: `frontend/src/stores/chat.ts`, `frontend/src/stores/chat/socket.ts`, `frontend/src/stores/chat/tasks.ts`, `frontend/src/stores/chat/memory.ts`
-- Pattern: One Pinia store composes multiple domain factories and exposes a flat API to `frontend/src/App.vue`
+**具体模式：**
+- REST 路由通常把 `ValueError` 映射为 `400`，把 `LookupError` 映射为 `404`，可见于 `backend/api/routers/conversations.py`、`backend/api/routers/mcp.py`、`backend/api/routers/inspection_tasks.py`。
+- `backend/api/ws/chat.py` 维护 `AgentEventState`，在 abort 时也会把部分助手输出写回数据库，再发送最终 `done`。
+- `backend/services/agent_errors.py` 与 `backend/services/agent_event_state.py` 负责把运行时错误和快照统一成标准结构。
+- 某些二级能力的失败不会中断主流程，例如 RAG 同步失败时，`backend/services/conversation_attachments.py` 与 `backend/services/memory.py` 会记录 warning，但不会让主请求失败。
+- 涉及敏感凭据的聊天内容会在进入 runtime 前由 `backend/utils/credential_safety.py` 先拦截。
 
-## Entry Points
+## 横切关注点
 
-**Backend HTTP/WebSocket App:**
-- Location: `backend/main.py`
-- Triggers: `python main.py`, container startup from `docker-compose.yml`, or any ASGI runner importing `main:app`
-- Responsibilities: Build the FastAPI app, install session/CORS middleware, initialize DB and agent runtime, start the scheduler, and include all routers
+**日志：**
+- `backend/utils/logger.py` 提供全局 `logger`，后端模块基本都复用它而不是自建 logger。
 
-**Interactive Chat Socket:**
-- Location: `backend/api/ws/chat.py`
-- Triggers: Browser websocket connection from `frontend/src/stores/chat/socket.ts`
-- Responsibilities: Bind session to a conversation, persist inbound/outbound messages, stream agent events, support abort, and broadcast notifications
+**校验：**
+- 请求结构校验主要在 `backend/api/routers/*.py` 完成。
+- 领域规则校验位于服务层，例如 `backend/services/inspection_tasks.py` 中的 cron 规范化、`backend/services/memory.py` 中的路径规范化、`backend/services/conversation_attachments.py` 中的附件校验。
 
-**Programmatic Chat API:**
-- Location: `backend/api/routers/agent.py`
-- Triggers: HTTP `POST /api/agent/chat`
-- Responsibilities: Provide a synchronous, full-turn API for external callers while reusing the same agent runtime and message persistence
-
-**Inspection Scheduler:**
-- Location: `backend/services/inspection_scheduler.py`
-- Triggers: Startup hook in `backend/main.py`
-- Responsibilities: Poll for due task IDs and invoke `backend/services/inspection_tasks.py` on a background loop
-
-**Frontend Bootstrap:**
-- Location: `frontend/src/main.ts`
-- Triggers: Vite dev server or built frontend loading in the browser
-- Responsibilities: Create Pinia, create the Vue Router, and mount `frontend/src/RootApp.vue`
-
-**Frontend Route Gate:**
-- Location: `frontend/src/router.ts`
-- Triggers: Every route navigation
-- Responsibilities: Load auth status, redirect between `/login` and the workspace, and keep login flow on the frontend side thin
-
-## Error Handling
-
-**Strategy:** Transport layers validate early, domain services raise typed Python exceptions or `HTTPException`, and the websocket path converts runtime failures into persisted error messages plus terminal events.
-
-**Patterns:**
-- REST routers translate `ValueError` into `400` and `LookupError` into `404`, as seen in `backend/api/routers/conversations.py`, `backend/api/routers/mcp.py`, and `backend/api/routers/inspection_tasks.py`.
-- `backend/api/ws/chat.py` keeps an `AgentEventState`, buffers partial deltas, and on abort writes a partial assistant message before sending a final `done` event.
-- `backend/services/agent_errors.py` and `backend/services/agent_event_state.py` normalize runtime errors and event snapshots before they are persisted or sent to the client.
-- Secondary indexing failures do not fail the primary request path. `backend/services/conversation_attachments.py` and `backend/services/memory.py` log warnings when RAG sync fails after the main write succeeds.
-- Security-sensitive chat input is rejected before runtime execution in `backend/api/ws/chat.py` and `backend/api/routers/agent.py` when `backend/utils/credential_safety.py` detects raw cloud credentials.
-
-## Cross-Cutting Concerns
-
-**Logging:** `backend/utils/logger.py` configures the global Loguru logger, and backend modules log through `logger` rather than creating per-module logging stacks.
-
-**Validation:** Transport models in `backend/api/routers/*.py` handle request-shape validation, while service-level normalizers such as `_normalize_cron_expr` in `backend/services/inspection_tasks.py`, `_normalize_memory_path` in `backend/services/memory.py`, and `validate_attachment_upload` in `backend/services/conversation_attachments.py` enforce domain rules.
-
-**Authentication:** `backend/main.py` installs `SessionMiddleware`; `backend/auth/dependencies.py` applies RBAC to both REST and websocket flows; `frontend/src/stores/chat/auth.ts` and `frontend/src/router.ts` mirror that state into route guards and permission-based UI toggles.
+**认证：**
+- `backend/main.py` 安装 `SessionMiddleware`。
+- `backend/auth/dependencies.py` 把同一套 RBAC 应用于 REST 和 WebSocket。
+- `frontend/src/stores/chat/auth.ts` 与 `frontend/src/router.ts` 则把权限状态反映到路由守卫和 UI 开关上。
 
 ---
 
-*Architecture analysis: 2026-03-18*
+*架构分析：2026-03-18*

@@ -1,150 +1,151 @@
-# Coding Conventions
+﻿# 编码约定
 
-**Analysis Date:** 2026-03-18
+**分析日期：** 2026-03-18
 
-## Naming Patterns
+## 命名模式
 
-**Files:**
-- Frontend Vue components, views, and large UI modules use `PascalCase.vue` with matching `PascalCase.test.ts` files. Examples: `frontend/src/components/TaskDrawer.vue`, `frontend/src/components/TaskDrawer.test.ts`, `frontend/src/views/LoginPage.vue`, `frontend/src/views/LoginPage.test.ts`.
-- Frontend composables use the `useX.ts` pattern. Examples: `frontend/src/composables/useChatComposer.ts`, `frontend/src/composables/useAppChrome.ts`.
-- Frontend store domains and helpers use lower-case or lower camel case module names inside `frontend/src/stores/chat/`. Examples: `frontend/src/stores/chat/auth.ts`, `frontend/src/stores/chat/attachments.ts`, `frontend/src/stores/chat/helpers.ts`.
-- Frontend utility modules also use lower camel case file names. Examples: `frontend/src/utils/conversationTitle.ts`, `frontend/src/utils/mysqlInspection.ts`, `frontend/src/utils/taskIntent.ts`.
-- Backend Python modules use `snake_case.py`, and tests use `test_*.py`. Examples: `backend/services/conversation_messages.py`, `backend/services/mcp_registry.py`, `backend/tests/test_conversations_router.py`.
-- Backend ORM model files are singular resource names in `backend/models/`. Examples: `backend/models/conversation.py`, `backend/models/task_notification.py`, `backend/models/conversation_attachment.py`.
+**文件命名：**
+- 前端 Vue 组件、页面和较大的 UI 模块使用 `PascalCase.vue`，并常配套 `PascalCase.test.ts`，例如 `frontend/src/components/TaskDrawer.vue` 与 `frontend/src/components/TaskDrawer.test.ts`。
+- 前端 composable 使用 `useX.ts` 模式，例如 `frontend/src/composables/useChatComposer.ts`、`frontend/src/composables/useAppChrome.ts`。
+- 前端 store domain 与 helper 模块在 `frontend/src/stores/chat/` 下多使用小写或 lower camel case，例如 `frontend/src/stores/chat/auth.ts`、`frontend/src/stores/chat/helpers.ts`。
+- 前端工具模块通常也是 lower camel case 文件名，例如 `frontend/src/utils/conversationTitle.ts`、`frontend/src/utils/mysqlInspection.ts`、`frontend/src/utils/taskIntent.ts`。
+- 后端 Python 模块统一使用 `snake_case.py`；测试文件统一使用 `test_*.py`，例如 `backend/services/conversation_messages.py`、`backend/tests/test_conversations_router.py`。
+- ORM 模型文件通常使用单数资源名，例如 `backend/models/conversation.py`、`backend/models/task_notification.py`、`backend/models/conversation_attachment.py`。
 
-**Functions:**
-- TypeScript functions use `camelCase`. Examples: `createAppRouter` in `frontend/src/router.ts`, `resolveBackendPath` in `frontend/src/stores/chat/helpers.ts`, `streamInspectionTaskRunConversation` in `frontend/src/stores/chat/conversations.ts`.
-- Vue emitted event names use kebab-case string literals. Examples in `frontend/src/components/TaskDrawer.vue`: `'save-draft'`, `'open-conversation'`, `'delete-task'`.
-- Python functions use `snake_case`, including async services. Examples: `create_conversation` in `backend/services/conversation_state.py`, `update_conversation_title` in `backend/services/conversation_messages.py`, `save_config_text` in `backend/services/mcp_registry.py`.
+**函数命名：**
+- TypeScript 函数与方法使用 `camelCase`，例如 `createAppRouter`、`resolveBackendPath`、`streamInspectionTaskRunConversation`。
+- Vue 组件触发的事件名使用 kebab-case 字符串，例如 `save-draft`、`open-conversation`、`delete-task`。
+- Python 函数包括异步服务函数统一使用 `snake_case`，例如 `create_conversation`、`update_conversation_title`、`save_config_text`。
 
-**Variables:**
-- Boolean refs and computed values usually start with `is`, `has`, or `can`. Examples: `isAuthLoading`, `hasMessages`, `canWriteTasks` in `frontend/src/stores/chat.ts` and `frontend/src/App.vue`.
-- Shared constants use `UPPER_SNAKE_CASE`. Examples: `CHAT_ENTRY_AGENT_ID` in `frontend/src/stores/chat/helpers.ts`, `TITLE_MAX_LENGTH` in `backend/services/conversation_messages.py`, `DEFAULT_SQLITE_PATH` in `backend/config.py`.
-- Short-lived factory helpers in tests use `createX` naming. Examples: `createUser` in `frontend/src/stores/chat/auth.test.ts`, `createNotification` in `backend/tests/test_task_notifications_router.py`.
+**变量命名：**
+- 布尔型 `ref` / `computed` 值通常以 `is`、`has`、`can` 开头，例如 `isAuthLoading`、`hasMessages`、`canWriteTasks`。
+- 共享常量使用 `UPPER_SNAKE_CASE`，例如 `CHAT_ENTRY_AGENT_ID`、`TITLE_MAX_LENGTH`、`DEFAULT_SQLITE_PATH`。
+- 测试中的轻量工厂函数常使用 `createX` 命名，例如 `createUser`、`createNotification`。
 
-**Types:**
-- TypeScript interfaces, type aliases, and unions use `PascalCase`. Examples: `AuthStatusResponse`, `InspectionTaskRunConversationStreamEvent`, `TaskDrawerTab` in `frontend/src/stores/chat/types.ts` and `frontend/src/components/TaskDrawer.vue`.
-- SQLAlchemy models, dataclasses, and service records use `PascalCase`. Examples: `Conversation` in `backend/models/conversation.py`, `AuthSettings` in `backend/auth/config.py`, `McpServerRecord` in `backend/services/mcp_registry.py`.
-- Literal unions are preferred over raw strings where the shape is stable. Examples: `ArtifactKind` in `frontend/src/stores/chat/types.ts`, `McpTransport` and `McpTestStatus` in `backend/services/mcp_registry.py`.
+**类型命名：**
+- TypeScript 的 interface、type alias、union 使用 `PascalCase`，例如 `AuthStatusResponse`、`InspectionTaskRunConversationStreamEvent`、`TaskDrawerTab`。
+- SQLAlchemy 模型、dataclass 和服务记录对象也使用 `PascalCase`，例如 `Conversation`、`AuthSettings`、`McpServerRecord`。
+- 当结构稳定时，项目偏好使用字面量联合类型而不是任意字符串，例如 `ArtifactKind`、`McpTransport`、`McpTestStatus`。
 
-## Code Style
+## 代码风格
 
-**Formatting:**
-- No dedicated frontend formatter or linter config is detected. There is no `eslint.config.*`, `.eslintrc*`, `.prettierrc*`, or `biome.json` in the repo root or `frontend/`.
-- Frontend code in `frontend/src` follows a consistent Prettier-like style anyway: 2-space indentation, no semicolons, trailing commas in multiline arrays and objects, and blank lines between import groups. Examples: `frontend/src/router.ts`, `frontend/src/stores/chat.ts`, `frontend/src/views/LoginPage.vue`.
-- Vue single-file components follow the section order `<script setup lang="ts">`, `<template>`, `<style scoped>`. Examples: `frontend/src/components/ConversationTitleEditor.vue`, `frontend/src/components/TaskDrawer.vue`, `frontend/src/views/LoginPage.vue`.
-- No Python formatter or lint config is detected in `backend/`. There is no `pyproject.toml`, `ruff.toml`, `mypy.ini`, `setup.cfg`, or `.flake8`.
-- Backend Python follows standard handwritten style: 4-space indentation, blank lines between stdlib, third-party, and local imports, and minimal inline comments. Examples: `backend/tests/conftest.py`, `backend/services/mcp_registry.py`, `backend/db/session.py`.
+**格式习惯：**
+- 前端未发现独立的格式化或 lint 配置；仓库中没有 `eslint.config.*`、`.eslintrc*`、`.prettierrc*`、`biome.json`。
+- 虽然没有显式配置，`frontend/src` 代码仍大体遵循 Prettier 风格：2 空格缩进、不写分号、多行数组/对象保留尾逗号、导入组之间留空行。
+- Vue 单文件组件通常采用 `<script setup lang="ts">`、`<template>`、`<style scoped>` 的顺序。
+- 后端也未发现 `ruff`、`flake8`、`mypy` 或 `pyproject.toml` 配置。
+- Python 代码总体遵循手写但稳定的风格：4 空格缩进、标准库/第三方/本地导入分组、极少使用内联注释。
 
-**Linting:**
-- Frontend static quality gates come from `frontend/tsconfig.app.json`, not from ESLint.
-- New frontend code should stay compatible with the existing TypeScript compiler rules in `frontend/tsconfig.app.json`: `strict`, `noUnusedLocals`, `noUnusedParameters`, `erasableSyntaxOnly`, `noFallthroughCasesInSwitch`, and `noUncheckedSideEffectImports`.
-- No equivalent automated lint gate is configured for backend Python. Match the existing style instead of introducing a one-off formatter profile.
+**静态检查：**
+- 前端主要依赖 `frontend/tsconfig.app.json` 的 TypeScript 严格检查，而不是 ESLint。
+- 新增前端代码应继续兼容现有 TS 编译选项，例如 `strict`、`noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch`。
+- 后端没有同等级别的自动 lint 门禁，因此新增 Python 代码应尽量贴合现有风格，不要引入孤立的格式化偏好。
 
-## Import Organization
+## 导入组织
 
-**Order:**
-1. Standard library or framework imports first.
-2. Third-party packages next.
-3. Local project imports last, separated by a blank line.
+**顺序：**
+1. 标准库或框架导入优先。
+2. 第三方依赖其次。
+3. 项目内模块最后，并与前两组留空行分隔。
 
-**Observed examples:**
-- Frontend framework-first imports: `frontend/src/main.ts`, `frontend/src/router.ts`, `frontend/src/composables/useChatComposer.ts`.
-- Frontend type-only imports are explicit with `import type`. Examples: `frontend/src/router.ts`, `frontend/src/stores/chat/auth.ts`, `frontend/src/stores/chat/types.ts`.
-- Backend stdlib -> third-party -> local grouping: `backend/tests/conftest.py`, `backend/services/mcp_registry.py`, `backend/auth/config.py`.
+**已观察到的模式：**
+- 前端常把 `vue`、`pinia`、`vue-router` 等框架导入放在最前面。
+- 前端类型导入会显式使用 `import type`。
+- 后端普遍遵循 `stdlib -> third-party -> local` 的三段式导入。
 
-**Path Aliases:**
-- Not detected.
-- Frontend uses relative paths only, such as `../stores/chat`, `./helpers`, and `../../utils/conversationTitle`.
-- Backend code imports project modules as top-level packages from within `backend/`, such as `from services.mcp_registry import McpRegistryService` and `from models import Conversation`.
-- Backend tests rely on `backend/tests/conftest.py` inserting `backend/` into `sys.path` so test imports resolve the same way as runtime imports.
+**路径别名：**
+- 未发现统一路径别名。
+- 前端大量使用相对路径，例如 `../stores/chat`、`./helpers`、`../../utils/conversationTitle`。
+- 后端在 `backend/` 目录内部以顶层包方式导入，例如 `from services.mcp_registry import McpRegistryService`、`from models import Conversation`。
+- 后端测试通过 `backend/tests/conftest.py` 把 `backend/` 加入 `sys.path`，从而让测试导入方式与运行时保持一致。
 
-## Typing
+## 类型约定
 
-**Frontend TypeScript:**
-- Prefer explicit interfaces and tagged unions from `frontend/src/stores/chat/types.ts` instead of anonymous object types.
-- Type component props and emits inline with `defineProps<...>()` and `defineEmits<...>()`. Examples: `frontend/src/components/ConversationTitleEditor.vue`, `frontend/src/components/TaskDrawer.vue`, `frontend/src/components/MemoryPanel.vue`.
-- Domain factories take typed dependency objects built from `Ref` and `ComputedRef`. Examples: `frontend/src/stores/chat/auth.ts`, `frontend/src/stores/chat/attachments.ts`, `frontend/src/stores/chat/conversations.ts`, `frontend/src/composables/useChatComposer.ts`.
-- API payloads are usually cast once after `res.json()` and then handled with strict types. Example: `const payload = (await res.json()) as AuthStatusResponse` in `frontend/src/stores/chat/auth.ts`.
+**前端 TypeScript：**
+- 优先复用 `frontend/src/stores/chat/types.ts` 中的明确接口和联合类型，而不是在局部堆匿名对象类型。
+- 组件 props 与 emits 常通过 `defineProps<...>()` 和 `defineEmits<...>()` 内联声明。
+- domain factory 的入参通常是由 `Ref`、`ComputedRef` 组成的依赖对象，而不是一长串位置参数。
+- API 返回值一般在 `res.json()` 后只做一次类型断言，然后再用严格类型继续处理。
 
-**Backend Python:**
-- Prefer modern Python typing syntax such as `str | None`, `list[str]`, and `dict[str, Any]`. This appears across `backend/auth/config.py`, `backend/services/mcp_registry.py`, and `backend/services/conversation_messages.py`.
-- Newer backend service modules use `from __future__ import annotations` when type references would otherwise be forward-declared. Examples: `backend/services/conversation_messages.py`, `backend/services/mcp_registry.py`, `backend/services/rag.py`.
-- ORM models use SQLAlchemy 2 typed mappings with `Mapped[...]` and `mapped_column(...)`. Example: `backend/models/conversation.py`.
-- Stable DTO-like objects use dataclasses instead of loose dicts. Examples: `AuthSettings` in `backend/auth/config.py`, `McpServerRecord` and `McpTestState` in `backend/services/mcp_registry.py`.
-- Request bodies at the HTTP edge use small Pydantic models where the shape is stable. Example: `CreateConversationRequest` in `backend/api/routers/conversations.py`.
+**后端 Python：**
+- 优先使用现代 Python 类型语法，例如 `str | None`、`list[str]`、`dict[str, Any]`。
+- 较新的后端服务文件在需要前向引用时会使用 `from __future__ import annotations`。
+- ORM 模型使用 SQLAlchemy 2 风格的 `Mapped[...]` 和 `mapped_column(...)`。
+- 对结构稳定的 DTO 类对象，项目更偏好 dataclass 而不是松散的字典。
+- 在 HTTP 边界，当请求结构稳定时会定义小型 Pydantic 模型。
 
-## Error Handling
+## 错误处理
 
-**Patterns:**
-- Frontend domain modules prefer user-facing error refs plus a boolean or nullable return value over throwing for every failure.
-- `frontend/src/stores/chat/helpers.ts` centralizes response parsing in `readErrorMessage(...)`. Reuse it instead of duplicating JSON and text fallback logic.
-- Frontend modules that can recover locally set an error ref and log a warning. Examples:
-  - `frontend/src/stores/chat/attachments.ts` sets `attachmentError` and returns `false`.
-  - `frontend/src/stores/chat/notifications.ts` sets `taskNotificationError` and returns `null` or `false`.
-  - `frontend/src/stores/chat/conversations.ts` uses `console.warn(...)` for non-fatal history loading failures.
-- Frontend functions throw only when the caller needs to branch on failure, such as `loginWithPassword(...)` in `frontend/src/stores/chat/auth.ts` and `updateConversationTitle(...)` in `frontend/src/stores/chat/conversations.ts`.
-- Backend services separate validation and lookup failures with exception type:
-  - `ValueError` for invalid user input or invalid config in `backend/services/conversation_messages.py`, `backend/services/mcp_registry.py`, and `backend/services/inspection_tasks.py`.
-  - `LookupError` for missing persisted state in `backend/services/conversation_messages.py`, `backend/services/task_notifications.py`, and `backend/services/inspection_tasks.py`.
-  - `HTTPException` only inside service modules that are already HTTP-bound, such as `backend/services/memory.py`, `backend/services/conversation_attachments.py`, and `backend/services/cloud_credentials.py`.
-- API routers convert service exceptions to HTTP status codes near the boundary. Examples: `backend/api/routers/conversations.py`, `backend/api/routers/mcp.py`, `backend/api/routers/inspection_tasks.py`.
-- Long-running backend flows log and degrade unexpected failures into structured error events instead of crashing the process. Examples: `backend/agent.py`, `backend/api/ws/chat.py`, `backend/services/inspection_scheduler.py`.
+**常见模式：**
+- 前端 domain 模块通常更偏好“设置错误状态 + 返回 `false`/`null`”而不是一律抛异常。
+- `frontend/src/stores/chat/helpers.ts` 中的 `readErrorMessage(...)` 用于统一响应错误解析，应优先复用。
+- 可恢复的前端错误通常会写入某个 `error` ref，并配合 `console.warn(...)` 记录。
+- 只有调用方确实需要分支处理时，前端函数才会抛异常，例如登录和会话重命名。
+- 后端服务层普遍用异常类型来表达失败语义：
+  - `ValueError` 表示输入无效或配置非法
+  - `LookupError` 表示持久化数据不存在
+  - `HTTPException` 主要用于已经和 HTTP 强绑定的服务模块
+- API 路由会在边界处把服务异常转换为 HTTP 状态码。
+- 长流程执行中，后端倾向于把异常降级为结构化错误事件而不是直接让进程崩溃，例如 `backend/agent.py`、`backend/api/ws/chat.py`、`backend/services/inspection_scheduler.py`。
 
-## Logging
+## 日志约定
 
-**Framework:** `loguru` via the shared `logger` exported from `backend/utils/logger.py`.
+**日志框架：**
+- 后端统一使用 `backend/utils/logger.py` 导出的 `loguru` `logger`。
 
-**Patterns:**
-- Import `logger` from `backend/utils/logger.py` instead of creating a per-module logger. Examples: `backend/main.py`, `backend/db/session.py`, `backend/api/routers/conversations.py`, `backend/services/mcp_registry.py`.
-- Use `logger.info(...)` for lifecycle events, `logger.warning(...)` for recoverable issues, `logger.debug(...)` for lower-level persistence traces, and `logger.exception(...)` when stack context matters.
-- Frontend does not define a logging abstraction. Non-fatal client failures use `console.warn(...)`. Examples: `frontend/src/stores/chat.ts`, `frontend/src/stores/chat/attachments.ts`, `frontend/src/stores/chat/conversations.ts`, `frontend/src/App.vue`.
+**使用方式：**
+- 模块中优先 `from utils.logger import logger`，而不是自己新建 logger。
+- 生命周期事件使用 `logger.info(...)`。
+- 可恢复问题使用 `logger.warning(...)`。
+- 更底层的跟踪信息使用 `logger.debug(...)`。
+- 需要保留堆栈时使用 `logger.exception(...)`。
+- 前端没有统一日志抽象，非致命错误基本使用 `console.warn(...)`。
 
-## Comments
+## 注释风格
 
-**When to Comment:**
-- Backend infrastructure modules use short module docstrings or function docstrings for setup and compatibility code. Examples: `backend/config.py`, `backend/utils/logger.py`, `backend/db/session.py`.
-- Inline comments are sparse and only appear where the code is doing compatibility or setup work that is not obvious from the statements alone. Examples: SQLite bootstrap comments in `backend/db/session.py`, logger setup notes in `backend/utils/logger.py`.
-- Frontend source in `frontend/src` is almost entirely comment-free. Favor clear helper names and typed interfaces over inline commentary.
+**什么时候写注释：**
+- 后端基础设施模块会保留简短模块 docstring 或函数 docstring，例如 `backend/config.py`、`backend/utils/logger.py`、`backend/db/session.py`。
+- 内联注释比较少，只在兼容性补丁、启动逻辑或明显不直观的地方出现。
+- 前端源码几乎不靠注释解释业务，更多依赖清晰的 helper 名称和类型定义。
 
-**JSDoc/TSDoc:**
-- Not detected in `frontend/src`.
-- Do not add large doc blocks unless a module is unusually opaque; that would be out of pattern for the current codebase.
+**JSDoc / TSDoc：**
+- 在 `frontend/src` 中几乎未见系统性使用。
+- 若新增模块不算特别晦涩，一般不建议突然引入大块注释文档。
 
-## Configuration Access
+## 配置访问方式
 
-- Frontend runtime env access is centralized in `frontend/src/stores/chat.ts` through `import.meta.env.VITE_WS_URL` and `import.meta.env.VITE_API_BASE_URL`.
-- Downstream frontend domains receive `backendUrl` and `wsUrl` as constructor dependencies instead of reading env vars directly. Examples: `frontend/src/stores/chat/auth.ts`, `frontend/src/stores/chat/attachments.ts`, `frontend/src/stores/chat/conversations.ts`.
-- Backend environment access is centralized in `backend/config.py` and `backend/auth/config.py`.
-- Auth settings are cached with `@lru_cache` in `backend/auth/config.py`; tests that mutate auth env vars clear that cache explicitly in `backend/tests/test_auth_rbac.py`.
+- 前端环境变量读取集中在 `frontend/src/stores/chat.ts`，通过 `import.meta.env.VITE_WS_URL` 与 `import.meta.env.VITE_API_BASE_URL` 完成。
+- 下游前端 domain 模块通过构造参数接收 `backendUrl` 和 `wsUrl`，而不是各自直接读取环境变量。
+- 后端环境变量访问集中在 `backend/config.py` 与 `backend/auth/config.py`。
+- 认证配置通过 `backend/auth/config.py` 中的 `@lru_cache` 缓存；相关测试会主动清缓存以保证行为稳定。
 
-## Function Design
+## 函数设计
 
-**Size:**
-- Small normalization and validation helpers are defined above the exported factory or handler. Examples: `sanitizeNextPath` in `frontend/src/router.ts`, `normalizeAttachmentSnapshots` in `frontend/src/stores/chat/helpers.ts`, `normalize_conversation_title` in `backend/services/conversation_messages.py`.
-- Larger orchestration modules are acceptable when they compose multiple domains or streaming states, but they still extract helpers first. Examples: `frontend/src/stores/chat.ts`, `frontend/src/App.vue`, `backend/services/inspection_tasks.py`.
+**规模控制：**
+- 小型归一化/校验函数通常写在导出的工厂或处理函数之前，例如 `sanitizeNextPath`、`normalizeAttachmentSnapshots`、`normalize_conversation_title`。
+- 更大的编排模块是允许的，但通常也会把通用 helper 先抽出来，例如 `frontend/src/stores/chat.ts`、`frontend/src/App.vue`、`backend/services/inspection_tasks.py`。
 
-**Parameters:**
-- Frontend factories take a single dependency object instead of long positional parameter lists. Examples: `createAuthDomain`, `createAttachmentDomain`, `createConversationDomain`, `useChatComposer`.
-- Backend service APIs use keyword-only arguments after `*` when optional collaborators or contextual inputs are passed in. Examples: `save_message(...)` in `backend/services/conversation_messages.py`, `McpRegistryService.__init__(...)` in `backend/services/mcp_registry.py`.
+**参数设计：**
+- 前端 factory 倾向接收单个依赖对象，而不是长位置参数列表。
+- 后端在需要传入可选协作者或上下文时，常通过 `*` 后的 keyword-only 参数增加可读性。
 
-**Return Values:**
-- Frontend handlers often return `boolean`, `null`, or a typed payload so the caller can decide whether to continue the UI flow. Examples: `uploadConversationAttachment(...)`, `markTaskNotificationRead(...)`, `loginWithPassword(...)`.
-- Backend services return domain objects or serializable summaries rather than leaving callers with raw query results. Examples: `Conversation.to_dict()` in `backend/models/conversation.py`, `McpServerRecord.to_public_dict()` in `backend/services/mcp_registry.py`.
+**返回值设计：**
+- 前端处理函数经常返回 `boolean`、`null` 或类型化 payload，让调用方决定 UI 是否继续推进。
+- 后端服务倾向返回领域对象或可序列化摘要，而不是把原始查询结果直接甩给调用方。
 
-## Module Design
+## 模块设计
 
-**Exports:**
-- Frontend modules prefer named exports. `frontend/src/stores/chat.ts` is the main public store entry point and also re-exports shared types via `export * from './chat/types'`.
-- Backend uses selective barrel exports for major boundaries only. `backend/models/__init__.py` collects ORM models, and `backend/utils/logger.py` exports a single shared `logger`.
-- New backend modules should remain importable with the existing top-level style, such as `from services...` and `from models...`, rather than switching to package-relative imports.
+**导出方式：**
+- 前端以命名导出为主；`frontend/src/stores/chat.ts` 同时承担统一入口与共享类型转发。
+- 后端只在少数大边界使用 barrel，例如 `backend/models/__init__.py`。
+- 新增后端模块最好继续保持现有顶层导入风格，不要突然切成包内相对导入。
 
-**Barrel Files:**
-- Use existing barrels where they already define the public surface:
+**barrel 文件：**
+- 当前仓库只在真正的公共边界使用 barrel：
   - `frontend/src/stores/chat.ts`
   - `backend/models/__init__.py`
-- Do not introduce broad new barrel files for every folder. The current repo uses them sparingly and only at major boundaries.
+- 不建议为每个目录额外引入新的 barrel 文件，和现有风格不一致。
 
 ---
 
-*Convention analysis: 2026-03-18*
+*编码约定分析：2026-03-18*

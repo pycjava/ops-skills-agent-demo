@@ -1,40 +1,40 @@
-# Testing Patterns
+﻿# 测试模式
 
-**Analysis Date:** 2026-03-18
+**分析日期：** 2026-03-18
 
-## Test Framework
+## 测试框架
 
-**Runner:**
-- Frontend: `vitest` `^2.1.8` from `frontend/package.json`, configured in `frontend/vite.config.ts`.
-- Frontend config details in `frontend/vite.config.ts`: `environment: 'jsdom'`, `globals: true`, `fileParallelism: false`, `maxWorkers: 1`.
-- Backend: `pytest>=8.3.0` and `pytest-asyncio>=0.24.0` from `backend/requirements.txt`.
-- Backend config in `backend/pytest.ini`: `asyncio_mode = auto` and `testpaths = tests`.
+**执行器：**
+- 前端使用 `vitest` `^2.1.8`，定义在 `frontend/package.json`，配置位于 `frontend/vite.config.ts`。
+- 前端测试环境设置包括：`environment: 'jsdom'`、`globals: true`、`fileParallelism: false`、`maxWorkers: 1`。
+- 后端使用 `pytest>=8.3.0` 与 `pytest-asyncio>=0.24.0`，依赖定义在 `backend/requirements.txt`。
+- 后端配置位于 `backend/pytest.ini`，当前开启 `asyncio_mode = auto` 且 `testpaths = tests`。
 
-**Assertion Library:**
-- Frontend: Vitest `expect` with `@vue/test-utils` mount helpers.
-- Backend: plain pytest assertions, `pytest.raises(...)`, and FastAPI `TestClient` response assertions.
+**断言风格：**
+- 前端主要依赖 Vitest 的 `expect`，配合 `@vue/test-utils` 的 mount 能力。
+- 后端主要使用原生 pytest 断言、`pytest.raises(...)` 与 FastAPI `TestClient` 响应断言。
 
-**Run Commands:**
+**运行命令：**
 ```bash
-cd frontend && npm run test   # Run the Vitest suite documented in `README.md`
-cd backend && pytest          # Run the pytest suite documented in `README.md`
-# Watch mode: Not configured in package scripts
-# Coverage: Not configured in package scripts or dependencies
+cd frontend && npm run test   # 运行 Vitest 测试集
+cd backend && pytest          # 运行 pytest 测试集
+# 未发现 watch 模式脚本
+# 未发现覆盖率脚本或依赖
 ```
 
-## Test File Organization
+## 测试文件组织
 
-**Location:**
-- Frontend tests are co-located with source files under `frontend/src`. Twenty-four `*.test.ts` files are present.
-- Backend tests live in a dedicated `backend/tests` package. Thirty-six `test_*.py` files are present, plus shared fixtures in `backend/tests/conftest.py`.
-- Backend also tests build and packaging assets from the same suite. Examples: `backend/tests/test_backend_dockerfile.py`, `backend/tests/test_backend_requirements.py`.
+**位置：**
+- 前端测试与源码就近放置在 `frontend/src` 下，目前可见 24 个 `*.test.ts` 文件。
+- 后端测试集中放在 `backend/tests/`，目前可见 36 个 `test_*.py` 文件，并通过 `backend/tests/conftest.py` 提供共享 fixture。
+- 后端还会在同一测试集里验证构建和打包资产，例如 `backend/tests/test_backend_dockerfile.py`、`backend/tests/test_backend_requirements.py`。
 
-**Naming:**
-- Frontend uses `SameName.test.ts` next to the source module. Examples: `frontend/src/components/MessageBubble.vue` + `frontend/src/components/MessageBubble.test.ts`, `frontend/src/stores/chat/socket.ts` + `frontend/src/stores/chat/socket.test.ts`.
-- Backend uses `test_<feature>.py`. Examples: `backend/tests/test_conversations_router.py`, `backend/tests/test_mcp_registry.py`, `backend/tests/test_task_notifications_service.py`.
-- Large frontend containers can split tests by concern instead of keeping one file. Example: `frontend/src/App.test.ts` and `frontend/src/App.task-run-stream.test.ts`.
+**命名：**
+- 前端采用 `SameName.test.ts`，与源文件同目录放置。
+- 后端采用 `test_<feature>.py` 命名。
+- 较大的前端容器组件会按关注点拆分多份测试，例如 `frontend/src/App.test.ts` 与 `frontend/src/App.task-run-stream.test.ts`。
 
-**Structure:**
+**典型结构：**
 ```text
 frontend/src/components/ConversationTitleEditor.vue
 frontend/src/components/ConversationTitleEditor.test.ts
@@ -45,12 +45,12 @@ backend/tests/test_conversations_router.py
 backend/tests/test_task_notifications_service.py
 ```
 
-## Test Structure
+## 测试结构
 
-**Suite Organization:**
+**前端典型写法：**
 ```typescript
 describe('createAuthDomain', () => {
-  test('fetchAuthStatus stores the backend auth payload and sends cookies', async () => {
+  test('fetchAuthStatus 会保存后端认证结果并携带 cookie', async () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ... }) }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -65,6 +65,7 @@ describe('createAuthDomain', () => {
 })
 ```
 
+**后端典型写法：**
 ```python
 @pytest.mark.asyncio
 async def test_get_messages_returns_attachment_snapshot(session_factory, seeded_conversation):
@@ -79,18 +80,20 @@ async def test_get_messages_returns_attachment_snapshot(session_factory, seeded_
     assert response.json()[0]["attachments_snapshot"]
 ```
 
-**Patterns:**
-- Frontend tests keep factories and mocks at the top of the file, then use `describe(...)` and `test(...)` blocks. Examples: `frontend/src/App.test.ts`, `frontend/src/stores/chat/auth.test.ts`, `frontend/src/stores/chat/socket.test.ts`.
-- Backend mixes sync `def test_...` and async `@pytest.mark.asyncio` tests in the same file based on the unit under test. Examples: `backend/tests/test_conversations_router.py`, `backend/tests/test_auth_rbac.py`, `backend/tests/test_mcp_registry.py`.
-- Frontend setup is usually local to each file via `beforeEach(...)` and resettable mocks. Example: `frontend/src/App.test.ts`.
-- Backend shared setup uses fixtures from `backend/tests/conftest.py`, then file-local helpers like `create_test_client(...)` and `create_notification(...)`.
-- Assertions focus on behavior rather than snapshots: emitted events, CSS classes, status codes, JSON payloads, DB rows, and side-effect calls.
+**共性模式：**
+- 前端测试通常先在文件顶部准备 factory 和 mock，再用 `describe(...)` 与 `test(...)` 组织用例。
+- 后端会在同一个文件中混用同步 `def test_...` 与 `@pytest.mark.asyncio` 异步测试，取决于被测对象。
+- 前端的初始化与重置大多局部放在 `beforeEach(...)`。
+- 后端共享初始化通过 `backend/tests/conftest.py` 提供，文件内部再补充专用 helper。
+- 断言重点通常放在行为而不是 snapshot：例如事件流、状态码、JSON 结构、数据库行、副作用调用等。
 
-## Mocking
+## Mock 策略
 
-**Framework:** Vitest mocks on the frontend; pytest `monkeypatch` and fake objects on the backend.
+**使用框架：**
+- 前端：Vitest mock、`vi.stubGlobal(...)`、`vi.mock(...)`
+- 后端：pytest `monkeypatch`、fake object、小型 stub 类
 
-**Patterns:**
+**常见模式：**
 ```typescript
 vi.mock('./stores/chat', () => ({
   useChatStore: () => chatStoreMock,
@@ -101,29 +104,29 @@ vi.stubGlobal('WebSocket', FakeWebSocket)
 ```
 
 ```python
-monkeypatch.setenv("AUTH_ENABLED", "true")
-monkeypatch.setattr(auth_service, "fetch_userinfo", fake_fetch_userinfo)
-monkeypatch.setitem(sys.modules, "agent", stub_agent)
+monkeypatch.setenv('AUTH_ENABLED', 'true')
+monkeypatch.setattr(auth_service, 'fetch_userinfo', fake_fetch_userinfo)
+monkeypatch.setitem(sys.modules, 'agent', stub_agent)
 ```
 
-**What to Mock:**
-- Frontend mocks `fetch`, `WebSocket`, router dependencies, Pinia stores, and composables. Examples: `frontend/src/router.test.ts`, `frontend/src/stores/chat/auth.test.ts`, `frontend/src/stores/chat/socket.test.ts`, `frontend/src/App.test.ts`.
-- Frontend container tests often `shallow: true` mount the parent component and assert on child props and emitted events instead of rendering the whole subtree. Example: `frontend/src/App.test.ts`.
-- Backend mocks external integrations and process state with `monkeypatch`: OIDC calls in `backend/tests/test_auth_rbac.py`, LangChain/MCP behavior in `backend/tests/test_mcp_router.py`, filesystem roots in `backend/tests/test_assistant_images_service.py`, and agent runtime functions in `backend/tests/test_agent_error_handling.py`.
-- Backend service tests also use small fake classes instead of heavy mocks when a protocol is simple. Examples: `FakeEmbeddingClient` and `FakeIndexBackend` in `backend/tests/test_rag_service.py`, `FakeRagService` in `backend/tests/test_rag_router.py`.
+**哪些地方会被 mock：**
+- 前端常 mock `fetch`、`WebSocket`、router 依赖、Pinia store 和 composable。
+- 前端容器测试常用 `shallow: true`，重点验证对子组件传参和事件传递，而不是渲染整棵树。
+- 后端会 mock 外部集成和进程状态，例如 OIDC、LangChain/MCP、文件系统根路径与 Agent runtime 函数。
+- 后端服务测试在协议简单时更偏好自己写轻量 fake 类，而不是堆复杂 mock。
 
-**What NOT to Mock:**
-- Frontend pure utilities are tested directly without a mock wrapper. Examples: `frontend/src/utils/taskIntent.test.ts`, `frontend/src/utils/mysqlInspection.test.ts`.
-- Frontend style regressions for memory components read the real `.vue` source and assert on CSS tokens or selectors instead of mocking styles. Examples: `frontend/src/components/MemoryPanelStyles.test.ts`, `frontend/src/components/MemoryTreeNode.test.ts`.
-- Backend router tests usually use a real `FastAPI()` app with a real temporary SQLite database instead of mocking persistence. Examples: `backend/tests/test_conversations_router.py`, `backend/tests/test_task_notifications_router.py`, `backend/tests/test_auth_rbac.py`.
+**哪些地方通常不 mock：**
+- 前端纯工具函数会直接测试真实逻辑，例如 `frontend/src/utils/taskIntent.test.ts`、`frontend/src/utils/mysqlInspection.test.ts`。
+- 前端某些样式回归测试会读取真实 `.vue` 源码并断言 CSS token 或 selector，而不是 mock 样式。
+- 后端路由测试通常会使用真实的临时 SQLite 数据库和真实 `FastAPI()` 应用，而不是完全 mock 持久化层。
 
-## Fixtures and Factories
+## Fixtures 与工厂函数
 
-**Test Data:**
+**测试数据方式：**
 ```python
 @pytest.fixture
 async def session_factory(tmp_path):
-    db_path = tmp_path / "test.db"
+    db_path = tmp_path / 'test.db'
     engine = create_async_engine(...)
     ...
     yield factory
@@ -135,49 +138,48 @@ function createUser(overrides: Partial<AuthUser> = {}): AuthUser {
   return {
     id: 'user-1',
     subject: 'oidc-user-1',
-    ...
     ...overrides,
   }
 }
 ```
 
-**Location:**
-- Shared backend fixtures live in `backend/tests/conftest.py`. The core ones are `session_factory` and `seeded_conversation`.
-- Backend files usually add local helpers beside the tests they support. Examples: `create_test_client(...)` in `backend/tests/test_conversations_router.py`, `create_notification(...)` in `backend/tests/test_task_notifications_router.py`.
-- Frontend does not have a shared fixture library. Most test data builders stay local to each file. Examples: `createUser` in `frontend/src/stores/chat/auth.test.ts`, `createAttachment` in `frontend/src/stores/chat/socket.test.ts`, `createCloudResolution` in `frontend/src/App.test.ts`.
+**放置位置：**
+- 后端共享 fixture 在 `backend/tests/conftest.py`，最核心的是 `session_factory` 与 `seeded_conversation`。
+- 后端测试文件通常会在本地继续定义 helper，例如 `create_test_client(...)`、`create_notification(...)`。
+- 前端没有统一的 fixture 库，大多数 builder 都局部定义在各自测试文件中。
 
-## Coverage
+## 覆盖率
 
-**Requirements:** None enforced.
+**当前状态：**
+- 没有强制覆盖率门槛。
+- `backend/requirements.txt` 未发现 `pytest-cov`。
+- `frontend/package.json` 与 `frontend/vite.config.ts` 未发现覆盖率脚本或配置。
+- 唯一显式的覆盖率标记是 `backend/agents/loader.py` 中的 `# pragma: no cover`。
 
-- No `pytest-cov` dependency is listed in `backend/requirements.txt`.
-- No Vitest coverage config or `coverage` script exists in `frontend/package.json` or `frontend/vite.config.ts`.
-- The only explicit coverage annotation observed is `# pragma: no cover` in `backend/agents/loader.py` for a Python-version compatibility branch.
-
-**View Coverage:**
+**查看覆盖率：**
 ```bash
-Not configured
+当前仓库未配置覆盖率输出
 ```
 
-## Test Types
+## 测试类型
 
-**Unit Tests:**
-- Frontend pure utility and composable tests: `frontend/src/utils/taskIntent.test.ts`, `frontend/src/utils/mysqlInspection.test.ts`, `frontend/src/composables/useChatComposer.test.ts`.
-- Backend pure helper or service tests: `backend/tests/test_browser_runtime_service.py`, `backend/tests/test_mcp_registry.py`, `backend/tests/test_conversation_state.py`, `backend/tests/test_agent_event_identity.py`.
-- Build and packaging smoke tests: `backend/tests/test_backend_dockerfile.py`, `backend/tests/test_backend_requirements.py`, `backend/tests/test_agent_manager_module_syntax.py`.
+**单元测试：**
+- 前端纯工具与 composable，例如 `frontend/src/utils/taskIntent.test.ts`、`frontend/src/utils/mysqlInspection.test.ts`、`frontend/src/composables/useChatComposer.test.ts`。
+- 后端纯 helper 或服务，例如 `backend/tests/test_browser_runtime_service.py`、`backend/tests/test_mcp_registry.py`、`backend/tests/test_conversation_state.py`、`backend/tests/test_agent_event_identity.py`。
+- 构建/打包烟雾测试，例如 `backend/tests/test_backend_dockerfile.py`、`backend/tests/test_backend_requirements.py`、`backend/tests/test_agent_manager_module_syntax.py`。
 
-**Integration Tests:**
-- Frontend component-boundary tests mount components with real props and event flows in JSDOM. Examples: `frontend/src/components/TaskDrawer.test.ts`, `frontend/src/views/LoginPage.test.ts`, `frontend/src/App.test.ts`.
-- Backend router tests create a real `FastAPI()` instance, include the router under test, and drive it through `TestClient`. Examples: `backend/tests/test_conversations_router.py`, `backend/tests/test_task_notifications_router.py`, `backend/tests/test_rag_router.py`, `backend/tests/test_mcp_router.py`.
-- Backend service tests frequently use real temporary SQLite sessions to validate persistence, not just pure mocks. Examples: `backend/tests/test_inspection_tasks_service.py`, `backend/tests/test_task_notifications_service.py`, `backend/tests/test_conversation_messages.py`.
+**集成测试：**
+- 前端组件边界测试会在 JSDOM 中挂载真实组件并走真实 props / 事件流。
+- 后端路由测试通常创建真实 `FastAPI()` 实例，挂载目标 router，再通过 `TestClient` 驱动。
+- 后端服务测试也经常用真实临时 SQLite session 去验证持久化，而不只是 mock。
 
-**E2E Tests:**
-- Not used.
-- No Playwright, Cypress, Selenium, or browser automation test config is detected in the repository.
+**端到端测试：**
+- 未发现 Playwright、Cypress、Selenium 或其它浏览器自动化 E2E 配置。
+- 现阶段测试主要停在前端 JSDOM 边界和后端 API / service 边界。
 
-## Common Patterns
+## 常见模式
 
-**Async Testing:**
+**异步测试：**
 ```typescript
 await wrapper.get('form').trigger('submit.prevent')
 await flushPromises()
@@ -187,13 +189,13 @@ await flushPromises()
 @pytest.mark.asyncio
 async def test_password_login_creates_local_admin_user_record(session_factory, monkeypatch):
     ...
-    response = client.post("/api/auth/login/password", json={...})
+    response = client.post('/api/auth/login/password', json={...})
     assert response.status_code == 200
 ```
 
-**Error Testing:**
+**错误路径测试：**
 ```python
-with pytest.raises(ValueError, match="mcpServers"):
+with pytest.raises(ValueError, match='mcpServers'):
     await service.save_config_text('{"mcpServers":[]}')
 ```
 
@@ -202,14 +204,14 @@ expect(wrapper.get('[data-testid="save-title-btn"]').attributes('disabled')).toB
 expect(chatStoreMock.sendMessage).not.toHaveBeenCalled()
 ```
 
-## Missing or Thin Areas
+## 薄弱或缺失区域
 
-- Full frontend task-creation flows in `frontend/src/App.test.ts` still have three skipped tests: the direct task-creation path, the non-task fallback path, and the incomplete-schedule draft path.
-- No true frontend/backend end-to-end suite exists for login, websocket chat, uploads, or task scheduling. Current tests stop at JSDOM component boundaries or FastAPI router boundaries.
-- Several frontend modules have no dedicated test file: `frontend/src/components/SkillPanel.vue`, `frontend/src/composables/useAppChrome.ts`, `frontend/src/stores/chat/memory.ts`, `frontend/src/stores/chat/tasks.ts`, `frontend/src/stores/chat.ts`, and `frontend/src/main.ts`.
-- Backend startup and infrastructure modules are only indirectly covered. No direct tests target `backend/main.py`, `backend/utils/logger.py`, or `backend/config.py`.
-- Coverage reporting and thresholds are absent, so breadth can only be inferred from file presence and not from measured percentages.
+- `frontend/src/App.test.ts` 里仍有 3 个任务创建相关测试被跳过：直接创建任务路径、非任务消息回退路径、以及日程不完整时进入草稿路径。
+- 没有真正跨前后端的 E2E 测试来覆盖登录、WebSocket 聊天、附件上传和任务调度。
+- 一些前端模块没有专门测试文件，例如 `frontend/src/components/SkillPanel.vue`、`frontend/src/composables/useAppChrome.ts`、`frontend/src/stores/chat/memory.ts`、`frontend/src/stores/chat/tasks.ts`、`frontend/src/stores/chat.ts`、`frontend/src/main.ts`。
+- 后端启动与基础设施模块主要靠间接覆盖，没有直接测试 `backend/main.py`、`backend/utils/logger.py`、`backend/config.py`。
+- 因为缺乏覆盖率报告，当前只能通过文件存在与否大致推断覆盖面，无法得到量化百分比。
 
 ---
 
-*Testing analysis: 2026-03-18*
+*测试模式分析：2026-03-18*

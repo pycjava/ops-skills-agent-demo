@@ -1,174 +1,169 @@
-# Codebase Concerns
+﻿# 代码库关注点
 
-**Analysis Date:** 2026-03-18
+**分析日期：** 2026-03-18
 
-## Tech Debt
+## 技术债
 
-**Ad-hoc SQLite schema migration during startup:**
-- Issue: `backend/db/session.py` mutates the live schema with inline `ALTER TABLE` statements and data backfills inside `init_db()`, including compatibility columns and legacy title rewrites.
-- Files: `backend/db/session.py`
-- Impact: startup becomes the migration mechanism, schema changes are hard to review or roll back, and concurrent first boots can race on the same file-backed database.
-- Fix approach: move schema evolution into explicit migrations and keep application startup limited to readiness and seed validation.
+**启动时内联执行 SQLite 模式迁移：**
+- 问题：`backend/db/session.py` 在 `init_db()` 里直接通过 `ALTER TABLE` 和数据回填修改线上 schema，还顺便处理兼容字段和历史标题修正。
+- 影响：应用启动本身成了迁移机制，变更难审查、难回滚，多个实例首次启动时还可能对同一个 SQLite 文件竞争。
+- 涉及文件：`backend/db/session.py`
+- 建议：把 schema 演进迁移到显式 migration 流程，应用启动阶段只做 readiness 和 seed 校验。
 
-**Large, high-churn files without an enforced style gate:**
-- Issue: core behavior is concentrated in a few large files, including `frontend/src/App.vue` (1930 lines), `frontend/src/components/MessageBubble.vue` (832 lines), `backend/agent.py` (646 lines), `backend/services/inspection_tasks.py` (672 lines), `backend/services/conversation_attachments.py` (406 lines), and `backend/services/cloud_credentials.py` (341 lines). The frontend has no detected ESLint, Prettier, or Biome config, and `frontend/package.json` exposes `dev`, `build`, `build:prod`, `preview`, and `test` only.
-- Files: `frontend/src/App.vue`, `frontend/src/components/MessageBubble.vue`, `frontend/src/stores/chat.ts`, `frontend/src/stores/chat/socket.ts`, `backend/agent.py`, `backend/services/inspection_tasks.py`, `backend/services/conversation_attachments.py`, `backend/services/cloud_credentials.py`, `frontend/package.json`
-- Impact: refactors are expensive, reviews are noisy, merge conflicts become more likely, and style drift is not caught automatically.
-- Fix approach: split UI/runtime domains into smaller modules and add a lint/format gate in CI before the next round of feature work.
+**大文件集中承载核心逻辑，但缺少风格门禁：**
+- 问题：关键行为集中在几个高频变更的大文件中，例如 `frontend/src/App.vue`、`frontend/src/components/MessageBubble.vue`、`backend/agent.py`、`backend/services/inspection_tasks.py`、`backend/services/conversation_attachments.py`、`backend/services/cloud_credentials.py`。
+- 影响：重构成本高、代码评审噪声大、冲突概率上升，而且前端又没有 ESLint / Prettier / Biome 这类自动门禁。
+- 涉及文件：`frontend/src/App.vue`、`frontend/src/components/MessageBubble.vue`、`frontend/src/stores/chat.ts`、`frontend/src/stores/chat/socket.ts`、`backend/agent.py`、`backend/services/inspection_tasks.py`、`backend/services/conversation_attachments.py`、`backend/services/cloud_credentials.py`、`frontend/package.json`
+- 建议：继续拆分 UI 和 runtime domain，并在 CI 中补上 lint/format 检查。
 
-**Documentation and runtime topology drift:**
-- Issue: `frontend/README.md` contains the stock Vite template instead of project-specific instructions. `README.md` describes five built-in agents, while runtime agent profiles currently exist under `backend/agents/` for `backend`, `browser-runtime`, `db-runtime`, `db-schema`, `frontend`, `general`, `ocr`, `ops-runtime`, `platform`, `router`, `security`, and `supervisor`.
-- Files: `frontend/README.md`, `README.md`, `backend/agents/`
-- Impact: onboarding and deployment instructions are not trustworthy, and real prerequisites such as browser runtime setup are easy to miss.
-- Fix approach: replace the generated frontend README, distinguish user-facing agents from internal runtime agents, and add a docs validation checklist to releases.
+**文档与实际运行拓扑存在漂移：**
+- 问题：`frontend/README.md` 还是默认 Vite 模板，`README.md` 对“内置 Agent 数量”的描述也和 `backend/agents/` 中真实 runtime profile 不完全一致。
+- 影响：新成员 onboarding、部署准备和运行前置条件判断都会被误导。
+- 涉及文件：`frontend/README.md`、`README.md`、`backend/agents/`
+- 建议：替换掉默认前端 README，把“用户可见 Agent”和“内部运行时 Agent”明确区分，并把文档校验纳入发布前检查表。
 
-## Known Bugs
+## 已知问题
 
-**Backend container startup depends on `agent-browser`, but the image does not install it:**
-- Symptoms: backend startup raises a `RuntimeError` instructing the operator to install `agent-browser`, even when browser automation is not being used.
-- Files: `backend/main.py`, `backend/services/browser_runtime.py`, `backend/Dockerfile`, `docker-compose.yml`, `backend/tests/test_browser_runtime_service.py`
-- Trigger: start the backend in a clean environment or via `docker compose up` without manually adding the `agent-browser` CLI.
-- Workaround: manually install `agent-browser` and run its installer, or patch out the startup verification.
+**后端容器启动依赖 `agent-browser`，但镜像本身没有安装它：**
+- 现象：即使没有启用浏览器自动化，后端启动时也可能因为 `agent-browser` 不存在而抛出 `RuntimeError`。
+- 触发条件：在全新环境或 `docker compose up` 中直接启动后端且没有手动安装 `agent-browser`。
+- 涉及文件：`backend/main.py`、`backend/services/browser_runtime.py`、`backend/Dockerfile`、`docker-compose.yml`、`backend/tests/test_browser_runtime_service.py`
+- 临时绕过：人工安装 `agent-browser` 或屏蔽启动校验。
 
-**Cloud credential status reports false negatives in environment-injected deployments:**
-- Symptoms: cloud credential registry entries report `status: "missing"` unless credentials are present in `backend/.env`, even when `VOLC_CREDENTIAL_<REF>_AK` and `VOLC_CREDENTIAL_<REF>_SK` are supplied through process environment variables or container `env_file` injection.
-- Files: `backend/services/cloud_credentials.py`, `docker-compose.yml`
-- Trigger: run the backend with cloud credentials provided by runtime environment only.
-- Workaround: duplicate secrets into `backend/.env`, which increases secret sprawl and does not solve the underlying detection bug.
+**云凭据状态检测对容器注入环境变量不友好：**
+- 现象：如果凭据只通过进程环境变量或 `env_file` 注入，而不写进 `backend/.env`，云凭据注册表可能仍显示 `missing`。
+- 触发条件：部署环境通过运行时注入 `VOLC_CREDENTIAL_<REF>_AK` 和 `VOLC_CREDENTIAL_<REF>_SK`。
+- 涉及文件：`backend/services/cloud_credentials.py`、`docker-compose.yml`
+- 临时绕过：把敏感信息重复写进 `backend/.env`，但这会增加密钥扩散风险。
 
-**Conversation deletion leaves OCR artifact files behind:**
-- Symptoms: OCR markdown files under `data/conversation_attachments/<conversation_id>/_ocr/` remain on disk after the conversation is deleted.
-- Files: `backend/services/conversation_attachments.py`, `backend/api/routers/conversations.py`
-- Trigger: upload an image, generate an OCR result, then delete the conversation.
-- Workaround: remove the `_ocr` directory manually from `backend/data/conversation_attachments/`.
+**删除会话后 OCR 产物文件可能残留：**
+- 现象：`data/conversation_attachments/<conversation_id>/_ocr/` 下的 OCR Markdown 文件在删除会话后仍可能留在磁盘上。
+- 触发条件：先上传图片、生成 OCR，再删除该会话。
+- 涉及文件：`backend/services/conversation_attachments.py`、`backend/api/routers/conversations.py`
+- 临时绕过：手工清理 `backend/data/conversation_attachments/` 中对应 `_ocr` 目录。
 
-## Security Considerations
+## 安全关注点
 
-**MCP configuration secrets are committed and exposed through the API surface:**
-- Risk: `mcp.json` is tracked in the repository and contains inline `env` secrets. `backend/api/routers/mcp.py` returns raw `config_text`, and `backend/services/mcp_registry.py` plus `backend/models/mcp_server.py` include `env` in the “public” payload returned to clients. `backend/tests/test_mcp_router.py` encodes this response shape as expected behavior.
-- Files: `mcp.json`, `.gitignore`, `backend/api/routers/mcp.py`, `backend/services/mcp_registry.py`, `backend/models/mcp_server.py`, `backend/tests/test_mcp_router.py`
-- Current mitigation: route-level permission checks on `mcp_servers:*`.
-- Recommendations: rotate the exposed secret, stop storing secrets in tracked `mcp.json`, remove `env` and raw `config_text` from client responses, return only key names, and add regression tests for redaction.
+**MCP 配置中的密钥被提交并可能通过 API 返回：**
+- 风险：`mcp.json` 已纳入版本库，而且允许内联 `env` 密钥；`backend/api/routers/mcp.py` 会返回原始 `config_text`，`backend/services/mcp_registry.py` 与 `backend/models/mcp_server.py` 也会把 `env` 放进“公开”响应结构。
+- 涉及文件：`mcp.json`、`.gitignore`、`backend/api/routers/mcp.py`、`backend/services/mcp_registry.py`、`backend/models/mcp_server.py`、`backend/tests/test_mcp_router.py`
+- 当前缓解：只做了 `mcp_servers:*` 级别的权限控制。
+- 建议：立即轮换已暴露密钥，不再把真实密钥写进受版本控制的 `mcp.json`，API 只返回 key 名而不是 value，并为脱敏建立回归测试。
 
-**Authentication defaults fail open for the full API surface:**
-- Risk: when `AUTH_ENABLED=false`, `require_permission(...)` returns `None` and all protected routes become accessible without authentication. `backend/tests/test_auth_rbac.py` explicitly verifies this behavior. `backend/auth/config.py` also falls back to `SESSION_SECRET="agentweave-session-secret"`, and local admin login reads a plaintext password from environment variables.
-- Files: `backend/auth/config.py`, `backend/auth/dependencies.py`, `backend/api/routers/auth.py`, `backend/api/routers/conversations.py`, `backend/api/routers/mcp.py`, `backend/api/routers/task_notifications.py`, `backend/tests/test_auth_rbac.py`, `README.md`
-- Current mitigation: configuration guidance in `README.md`.
-- Recommendations: require an explicit development-only flag for auth bypass, refuse startup with the default session secret when auth is enabled, and replace plaintext local admin credentials with hashed credentials or an external identity provider only.
+**认证默认行为偏向 fail-open：**
+- 风险：当 `AUTH_ENABLED=false` 时，`require_permission(...)` 会直接放行，整个 API 面几乎处于无认证状态；`backend/auth/config.py` 还提供了默认 `SESSION_SECRET="agentweave-session-secret"`，本地管理员密码也以明文环境变量形式存在。
+- 涉及文件：`backend/auth/config.py`、`backend/auth/dependencies.py`、`backend/api/routers/auth.py`、`backend/api/routers/conversations.py`、`backend/api/routers/mcp.py`、`backend/api/routers/task_notifications.py`、`backend/tests/test_auth_rbac.py`、`README.md`
+- 当前缓解：主要靠 README 的配置说明。
+- 建议：增加显式“仅开发环境允许绕过认证”的开关；认证开启时若仍是默认 session secret，应拒绝启动；本地管理员凭据建议改为哈希存储或彻底交给外部身份系统。
 
-**No owner or tenant boundary exists for conversations, tasks, attachments, or notifications:**
-- Risk: RBAC gates actions by permission, but there is no user or team ownership field on conversations, tasks, attachments, or task notifications. Query handlers return global datasets, and realtime notifications are broadcast to every connected websocket in the process.
-- Files: `backend/models/conversation.py`, `backend/models/conversation_attachment.py`, `backend/models/inspection_task.py`, `backend/models/task_notification.py`, `backend/api/routers/conversations.py`, `backend/api/routers/task_notifications.py`, `backend/services/realtime_events.py`
-- Current mitigation: role-based permission checks only.
-- Recommendations: add owner or tenant columns to core tables, scope list/read/update operations to the current principal, and broadcast realtime events to user-specific channels instead of the global socket set.
+**缺少 owner / tenant 级数据边界：**
+- 风险：虽然有 RBAC，但会话、任务、附件和通知没有用户或租户归属字段；很多查询返回的是全局数据，实时通知也会广播给当前进程里的所有连接。
+- 涉及文件：`backend/models/conversation.py`、`backend/models/conversation_attachment.py`、`backend/models/inspection_task.py`、`backend/models/task_notification.py`、`backend/api/routers/conversations.py`、`backend/api/routers/task_notifications.py`、`backend/services/realtime_events.py`
+- 当前缓解：仅靠角色权限做粗粒度控制。
+- 建议：为核心表增加 owner / tenant 字段，把列表/读取/更新都收敛到当前 principal 范围内，并把实时通知改为用户级频道。
 
-## Performance Bottlenecks
+## 性能瓶颈
 
-**Cloud credential resolution scans and parses the whole memory tree per request:**
-- Problem: `resolve_cloud_request_context()` loads the entire `/memories` tree, flattens it, reads each matching markdown document, parses candidate instance records, and re-reads credential status from `.env`.
-- Files: `backend/services/cloud_credentials.py`, `backend/services/memory.py`
-- Cause: no cache or precomputed index exists for project bindings, instance records, or credential status.
-- Improvement path: cache parsed memory metadata, refresh it on write, and derive credential status from process environment once instead of re-reading a file on each request.
+**云凭据解析会扫描整个 memory 树：**
+- 问题：`resolve_cloud_request_context()` 会遍历 `/memories`、扁平化路径、逐个读取匹配文档，再重新解析实例信息和凭据状态。
+- 原因：缺少缓存或预计算索引。
+- 涉及文件：`backend/services/cloud_credentials.py`、`backend/services/memory.py`
+- 建议：缓存解析后的 memory 元数据，并在写入时增量刷新；凭据状态也应基于进程环境一次性构建，而不是每次重新读文件。
 
-**Image attachments can inflate prompt size sharply:**
-- Problem: image attachments are read from disk and embedded as base64 blocks in model input. The service allows up to 50 attachments per conversation and 1 MB per upload, with no resize, compression, or per-turn image budget before prompt assembly.
-- Files: `backend/services/conversation_attachments.py`, `backend/agent.py`, `backend/services/multimodal_ocr.py`
-- Cause: `build_image_attachment_blocks()` serializes raw file bytes directly into the message payload.
-- Improvement path: cap images per turn, resize or compress server-side, and favor OCR or extracted summaries over raw base64 blocks.
+**图片附件会快速放大 prompt 体积：**
+- 问题：图片会被读入内存并直接编码成 base64 块塞进模型输入；系统允许每会话最多 50 个附件、单文件 1 MB，但在 prompt 组装前没有压缩、缩放或每轮预算控制。
+- 原因：`build_image_attachment_blocks()` 直接序列化原始文件字节。
+- 涉及文件：`backend/services/conversation_attachments.py`、`backend/agent.py`、`backend/services/multimodal_ocr.py`
+- 建议：限制单轮图片数量，服务端压缩或缩放图片，优先使用 OCR / 摘要而不是原图 base64。
 
-**Frontend rendering and markdown processing stay in the hottest path:**
-- Problem: `frontend/src/App.vue` drives most of the workspace state and layout transitions, while `frontend/src/components/MessageBubble.vue` owns markdown rendering, sanitization, artifact inference, and attachment actions for every message.
-- Files: `frontend/src/App.vue`, `frontend/src/components/MessageBubble.vue`
-- Cause: UI behavior is centralized in component-level logic instead of isolated presentation and utility layers.
-- Improvement path: move markdown rendering into a shared utility/composable, split the workspace shell into route-level and panel-level components, and reduce the amount of state owned by `App.vue`.
+**前端热点路径中过多逻辑堆在组件层：**
+- 问题：`frontend/src/App.vue` 管着大量工作台状态与布局切换，`frontend/src/components/MessageBubble.vue` 则承载 Markdown 渲染、清洗、资产识别和附件交互。
+- 原因：展现逻辑和行为逻辑仍然高度耦合。
+- 涉及文件：`frontend/src/App.vue`、`frontend/src/components/MessageBubble.vue`
+- 建议：把 Markdown 渲染抽到共用 utility/composable 中，把工作台壳层拆成更小的路由级与面板级组件。
 
-## Fragile Areas
+## 脆弱区域
 
-**Inspection scheduler is not concurrency-safe:**
-- Files: `backend/services/inspection_scheduler.py`, `backend/services/inspection_tasks.py`
-- Why fragile: `get_due_inspection_task_ids()` selects due rows first, and `execute_inspection_task()` claims work later. Two backend instances can select the same task before `next_run_at` is advanced.
-- Safe modification: add a database claim step or lease token inside the same transaction that decides task ownership.
-- Test coverage: current tests cover task creation and single-run flows, not scheduler races across two workers.
+**任务调度器不具备并发安全：**
+- 原因：`get_due_inspection_task_ids()` 先查到期任务，`execute_inspection_task()` 再去 claim 任务；多个后端实例可能在 `next_run_at` 更新前同时捞到同一任务。
+- 涉及文件：`backend/services/inspection_scheduler.py`、`backend/services/inspection_tasks.py`
+- 安全修改方向：在同一个事务中加入数据库级 claim / lease 步骤。
+- 当前测试：覆盖了单实例流程，但没有跨进程竞争测试。
 
-**Realtime notifications are process-local only:**
-- Files: `backend/services/realtime_events.py`, `backend/services/inspection_tasks.py`, `backend/api/ws/chat.py`
-- Why fragile: websocket connections live in an in-memory set inside one process. Task notifications created on one replica do not propagate to clients connected to a different replica.
-- Safe modification: move websocket fan-out to shared pub/sub infrastructure and persist delivery state if missed notifications matter.
-- Test coverage: route and service tests verify payload shape, not multi-process behavior.
+**实时通知只在单进程内有效：**
+- 原因：WebSocket 连接保存在单进程内存集合中；如果任务在一个副本上完成，而用户连在另一个副本上，就收不到通知。
+- 涉及文件：`backend/services/realtime_events.py`、`backend/services/inspection_tasks.py`、`backend/api/ws/chat.py`
+- 安全修改方向：改为共享 pub/sub，并视需求持久化投递状态。
+- 当前测试：只验证 payload 结构，不验证多进程行为。
 
-**Browser runtime behavior is tightly coupled to startup and filesystem side effects:**
-- Files: `backend/main.py`, `backend/services/browser_runtime.py`, `backend/services/assistant_images.py`, `backend/api/ws/chat.py`
-- Why fragile: application startup, screenshot follow-up execution, and image asset persistence all assume the external `agent-browser` CLI and local workspace files behave as expected.
-- Safe modification: isolate browser automation behind a feature flag and treat it as an optional subsystem with explicit health reporting.
-- Test coverage: helper-level tests exist in `backend/tests/test_browser_runtime_service.py`, but there is no integration test for the containerized startup path.
+**浏览器运行时和启动流程耦合过紧：**
+- 原因：应用启动、截图补采和图片资产持久化都默认依赖外部 `agent-browser` CLI 与本地工作目录行为稳定。
+- 涉及文件：`backend/main.py`、`backend/services/browser_runtime.py`、`backend/services/assistant_images.py`、`backend/api/ws/chat.py`
+- 安全修改方向：把浏览器自动化改成显式特性开关或可选子系统，并暴露独立健康状态。
+- 当前测试：只有 helper 级测试，没有容器启动路径集成测试。
 
-## Scaling Limits
+## 扩展限制
 
-**One SQLite file stores both business data and agent runtime state:**
-- Current capacity: a single `SQLITE_PATH` file is reused by SQLAlchemy, `AsyncSqliteSaver`, and `AsyncSqliteStore`.
-- Limit: write contention and file locking increase as conversations, agent checkpoints, memory documents, and scheduled task runs grow, especially if multiple processes mount the same volume.
-- Scaling path: split operational tables from LangGraph checkpoint or memory state and move them to server-grade backing services.
+**同一个 SQLite 文件同时承载业务数据和 Agent 运行时状态：**
+- 现状：`SQLITE_PATH` 同时被 SQLAlchemy、`AsyncSqliteSaver` 和 `AsyncSqliteStore` 使用。
+- 限制：随着会话、checkpoint、记忆、任务运行变多，文件锁和写竞争会变明显，尤其是在多进程或共享卷场景下。
+- 方向：把业务库与 LangGraph checkpoint / memory 存储拆开，必要时迁移到更适合服务化部署的后端。
 
-**The scheduler assumes one backend process owns timed execution:**
-- Current capacity: one in-process `InspectionSchedulerRuntime` loop polling every 30 seconds.
-- Limit: duplicate task execution appears when more than one backend instance is alive.
-- Scaling path: move scheduling to a dedicated worker or use distributed locking and leased jobs.
+**调度器默认假设只有一个后端进程：**
+- 现状：`InspectionSchedulerRuntime` 在应用进程内每 30 秒轮询一次。
+- 限制：一旦多实例部署，重复执行任务的概率会上升。
+- 方向：把调度能力迁移到独立 worker，或引入分布式锁/租约机制。
 
-**Notification delivery assumes single-process websocket fan-out:**
-- Current capacity: one process-local `RealtimeEventManager`.
-- Limit: no cross-instance propagation and no durable replay for clients that disconnect during delivery.
-- Scaling path: introduce shared pub/sub plus persisted unread state keyed by user.
+**通知投递假设单进程内 WebSocket 广播即可：**
+- 现状：`RealtimeEventManager` 只维护本地进程内连接。
+- 限制：没有跨实例传播，也没有断线期间的可靠回放。
+- 方向：引入共享 pub/sub，并按用户持久化未读状态。
 
-## Dependencies at Risk
+## 风险依赖
 
-**Backend Python dependency set without a lockfile (`deepagents`, `langchain-anthropic`, `langchain-mcp-adapters`, and most of `backend/requirements.txt`):**
-- Risk: the backend installs from range-based requirements rather than a pinned lockfile, so fresh environments can drift away from the versions the tests were written against.
-- Impact: streaming event shapes, MCP client behavior, and agent runtime semantics can change across installs.
-- Migration plan: generate and commit a pinned lock or constraints file for the backend install path.
+**后端 Python 依赖没有锁文件：**
+- 风险：`backend/requirements.txt` 里很多包是区间版本，例如 `deepagents`、`langchain-anthropic`、`langchain-mcp-adapters`；新环境安装结果可能漂移。
+- 影响：事件流结构、MCP 行为、Agent runtime 语义都可能与测试时不同。
+- 建议：生成并提交后端锁文件或 constraints 文件。
 
-**`elasticsearch==7.10.0`:**
-- Risk: the package is declared in `backend/requirements.txt` but is not imported by runtime code under `backend/`.
-- Impact: larger images, unnecessary dependency maintenance, and extra attack surface for a package that does not appear to power a live feature.
-- Migration plan: verify whether any upcoming feature needs Elasticsearch; remove it from `backend/requirements.txt` if not.
+**`elasticsearch==7.10.0`：**
+- 风险：虽然写在 `backend/requirements.txt` 里，但当前运行时代码中几乎没有实际使用痕迹。
+- 影响：镜像体积更大、维护面更广、额外攻击面增加。
+- 建议：确认是否真有规划中的特性依赖它；如果没有，直接删除。
 
-## Missing Critical Features
+## 缺失的关键能力
 
-**Per-user or per-team data isolation:**
-- Problem: authenticated users are role-gated but not scoped to their own conversations, tasks, notifications, MCP configuration, or attachments.
-- Blocks: safe multi-user deployment, auditability, least-privilege data access, and any future hosted or shared-team deployment model.
+**按用户 / 团队隔离数据：**
+- 问题：当前权限模型只做角色控制，没有把会话、任务、通知、MCP 配置、附件收敛到某个用户或团队边界。
+- 阻碍：无法安全支撑多用户部署、审计和最小权限访问，也很难演进成托管型或团队共享部署模式。
 
-## Test Coverage Gaps
+## 测试缺口
 
-**MCP secret redaction and config sanitization:**
-- What's not tested: that `/api/mcp/config` and `/api/mcp/servers` redact raw `config_text`, `env` values, and any secret-bearing headers before returning data to the frontend.
-- Files: `backend/api/routers/mcp.py`, `backend/services/mcp_registry.py`, `backend/tests/test_mcp_router.py`
-- Risk: secret exposure is treated as normal API behavior and can regress silently.
-- Priority: High
+**MCP 脱敏与配置净化：**
+- 未覆盖：`/api/mcp/config` 与 `/api/mcp/servers` 是否会对 `config_text`、`env` 和 header 中的敏感信息做脱敏。
+- 涉及文件：`backend/api/routers/mcp.py`、`backend/services/mcp_registry.py`、`backend/tests/test_mcp_router.py`
+- 风险等级：高
 
-**Scheduler concurrency and cross-process delivery:**
-- What's not tested: duplicate task execution under concurrent schedulers or notification delivery across multiple backend processes.
-- Files: `backend/services/inspection_scheduler.py`, `backend/services/inspection_tasks.py`, `backend/services/realtime_events.py`
-- Risk: duplicate task runs and missing notifications appear only after scale-out.
-- Priority: High
+**调度并发与跨进程通知：**
+- 未覆盖：并发调度器下是否会重复执行同一任务，多进程部署下通知是否会漏投。
+- 涉及文件：`backend/services/inspection_scheduler.py`、`backend/services/inspection_tasks.py`、`backend/services/realtime_events.py`
+- 风险等级：高
 
-**Filesystem cleanup for OCR artifacts:**
-- What's not tested: deleting a conversation after OCR removes `_ocr` files and directories along with attachment files.
-- Files: `backend/services/conversation_attachments.py`, `backend/api/routers/conversations.py`
-- Risk: orphaned extracted text accumulates on disk and can outlive the conversation that produced it.
-- Priority: Medium
+**OCR 产物清理：**
+- 未覆盖：删除会话后 `_ocr` 文件和目录是否会一并清除。
+- 涉及文件：`backend/services/conversation_attachments.py`、`backend/api/routers/conversations.py`
+- 风险等级：中
 
-**Credential status detection from runtime environment:**
-- What's not tested: cloud credential status when secrets come from process environment variables instead of `backend/.env`.
-- Files: `backend/services/cloud_credentials.py`, `docker-compose.yml`
-- Risk: operators get misleading “missing credential” signals in containerized deployments.
-- Priority: Medium
+**运行时环境变量来源的凭据状态检测：**
+- 未覆盖：当云凭据来自进程环境而不是 `backend/.env` 时，状态检测是否准确。
+- 涉及文件：`backend/services/cloud_credentials.py`、`docker-compose.yml`
+- 风险等级：中
 
-**Runtime packaging and documentation parity:**
-- What's not tested: backend image startup with all required external runtime dependencies and alignment between repo documentation and the actual runtime topology.
-- Files: `backend/Dockerfile`, `docker-compose.yml`, `backend/main.py`, `README.md`, `frontend/README.md`
-- Risk: the default deployment path fails or confuses operators even when unit tests are green.
-- Priority: Medium
+**运行时打包与文档一致性：**
+- 未覆盖：默认镜像是否具备所有外部运行时依赖，仓库文档是否与真实运行拓扑保持一致。
+- 涉及文件：`backend/Dockerfile`、`docker-compose.yml`、`backend/main.py`、`README.md`、`frontend/README.md`
+- 风险等级：中
 
 ---
 
-*Concerns audit: 2026-03-18*
+*关注点分析：2026-03-18*
